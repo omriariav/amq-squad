@@ -44,9 +44,6 @@ const ReasonLedgerTampered = "ledger_tampered"
 type LedgerTamperedError struct {
 	Handle, Seq, Quarantine string
 	Err                     error
-	// Baseline is the recovery the refused document already recorded
-	// (nil: none, or a body that did not decode): the hold's baseline.
-	Baseline *RecoveryMark
 }
 
 func (e *LedgerTamperedError) Error() string { return e.Err.Error() }
@@ -64,10 +61,6 @@ type LedgerTamper struct {
 	// Tasks are the tasks blocked ledger_tampered on this seat: the
 	// recovery returns them to pending.
 	Tasks []string `json:"tasks,omitempty"`
-	// Baseline is the recovery the ledger already recorded when the alarm
-	// was raised (Codex on b250b951): it was not decided for this alarm, so
-	// it never releases the hold. Kept in the state file with the hold.
-	Baseline *RecoveryMark `json:"baseline,omitempty"`
 	// Decided is the lead's decision the recover verb sealed for a hold
 	// with no slot (the plan reviewer on af1a6124: such a hold is never
 	// covered by a record alone); the hold is released once the ledger
@@ -75,10 +68,11 @@ type LedgerTamper struct {
 	Decided *RecoveryMark `json:"decided,omitempty"`
 }
 
-// RecoveryMark is a recovery record as the scheduler compares it: the
+// RecoveryMark is a recovery record as the scheduler reads it: the
 // quarantined seq and slot it continued from, the link that sealed it and
-// when the lead decided. Two marks are the same decision when all four are
-// equal.
+// when the lead decided. covers matches a hold's slot against Slot; a hold
+// with no slot is released when the ledger's mark is the same decision the
+// recover verb reported (all four equal).
 type RecoveryMark struct {
 	Seq  int       `json:"seq"`
 	Slot string    `json:"slot"`
@@ -169,7 +163,7 @@ func (s *Scheduler) blockOnTamper(t task.Task, handle string, e *LedgerTamperedE
 	}
 	tm := s.tampered[handle]
 	if tm == nil {
-		tm = &LedgerTamper{Handle: handle, Seq: e.Seq, Quarantine: e.Quarantine, Detail: detail, At: now.UTC(), Baseline: e.Baseline}
+		tm = &LedgerTamper{Handle: handle, Seq: e.Seq, Quarantine: e.Quarantine, Detail: detail, At: now.UTC()}
 		s.tampered[handle] = tm
 	}
 	tm.Tasks = append(tm.Tasks, t.ID)
@@ -309,18 +303,16 @@ func reasonIdentity(reason string) string {
 
 // covers reports whether a recovery record answers this hold (the plan
 // reviewer's ruling on af1a6124): a record that names the hold's exact
-// slot and is not the baseline (the record the ledger already carried
-// when the alarm was raised; Codex on b250b951). A seq never answers a
-// hold: slot names are unique by construction (commits.<h>.seq<N>[.k]),
-// a seq is not, and the head's seq the hold was named by was never
-// verified (the incident was itself a lowered seq). A hold with no slot
-// (a refusal that quarantined nothing) is answered only by the decision
-// the lead's recover verb sealed for it (Decided), never by a record
-// alone.
+// slot. A seq never answers a hold: slot names are unique by construction
+// (commits.<h>.seq<N>[.k]), a seq is not, and the head's seq the hold was
+// named by was never verified (the incident was itself a lowered seq). A
+// record that predates the alarm cannot name a slot the alarm created,
+// which is why no baseline of the earlier record is kept (the reviewer's
+// ruling on f1edd375; a slot reused for a byte-identical refusal is the
+// stated same-uid residual). A hold with no slot (a refusal that
+// quarantined nothing) is answered only by the decision the lead's recover
+// verb sealed for it (Decided), never by a record alone.
 func (tm *LedgerTamper) covers(rec RecoveryMark) bool {
-	if tm.Baseline != nil && tm.Baseline.same(rec) {
-		return false
-	}
 	if tm.Quarantine != "" {
 		return rec.Slot == tm.Quarantine
 	}

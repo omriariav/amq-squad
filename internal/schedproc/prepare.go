@@ -72,10 +72,6 @@ func prepareError(handle string, err error) error {
 	var q *seatcommit.QuarantinedError
 	if errors.As(err, &q) {
 		e.Seq, e.Quarantine = q.Seq, q.Slot
-		if q.Prior != nil {
-			m := recoveryMark(*q.Prior)
-			e.Baseline = &m
-		}
 	}
 	return e
 }

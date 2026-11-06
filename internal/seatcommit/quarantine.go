@@ -109,23 +109,7 @@ func quarantine(root, handle, verb string, refusal error, raw ledgerRaw) error {
 	if err != nil {
 		return fmt.Errorf("%w; the quarantine copy failed: %v", refusal, err)
 	}
-	return &QuarantinedError{Handle: handle, Seq: seq, Slot: filepath.Join(dir, slot), Err: refusal, Prior: priorRecovery(raw.body)}
-}
-
-// priorRecovery is the recovery record the refused body carries, decoded
-// without verification (nil when there is none or the body does not
-// decode). It is the hold's baseline (Codex on b250b951): a record already
-// in the ledger when the alarm was raised was not decided for this alarm,
-// so it never releases the hold, even after the document verifies again.
-// Unverified is safe here: the baseline only ever stops a release.
-func priorRecovery(body []byte) *LedgerRecovery {
-	var l struct {
-		Recovered *LedgerRecovery `json:"recovered"`
-	}
-	if json.Unmarshal(body, &l) != nil {
-		return nil
-	}
-	return l.Recovered
+	return &QuarantinedError{Handle: handle, Seq: seq, Slot: filepath.Join(dir, slot), Err: refusal}
 }
 
 // QuarantinedError is a refusal whose document was quarantined (3.2.0-0c-B):
@@ -137,8 +121,6 @@ func priorRecovery(body []byte) *LedgerRecovery {
 type QuarantinedError struct {
 	Handle, Seq, Slot string
 	Err               error
-	// Prior is the recovery record the refused body carried (priorRecovery).
-	Prior *LedgerRecovery
 }
 
 func (e *QuarantinedError) Error() string {

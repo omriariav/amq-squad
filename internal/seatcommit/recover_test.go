@@ -609,11 +609,8 @@ func TestADocumentVerifyingAgainIsReleasedByARecordedDecision(t *testing.T) {
 // behind the live chain (the transient alarm at seq N, then another commit
 // step) writes the link after the live one, and a retry of the same
 // decision reports that link and Verified from the record (Link), never
-// the slot's seq plus one. And (the P2's seatcommit half): the head's seq
-// changed then, the refusal's quarantine carries the record the refused
-// body had (Prior), equal to the record the ledger answers once the head
-// is put back, which is the scheduler's baseline. Reverted (the retry's
-// link rebuilt from the slot's seq), the retry reports N+1.
+// the slot's seq plus one. Reverted (the retry's link rebuilt from the
+// slot's seq), the retry reports N+1.
 func TestAVerifiedRecoveryRetriedReportsItsLink(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root reads a mode-0 seed")
@@ -635,9 +632,6 @@ func TestAVerifiedRecoveryRetriedReportsItsLink(t *testing.T) {
 	if err := os.Chmod(seed, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if q.Prior != nil {
-		t.Fatalf("a record before any decision: %+v", q.Prior)
-	}
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// two\n")
 	if res := f.run(f.reported("cmd/")); !res.OK {
 		t.Fatalf("the second commit step: %+v", res)
@@ -657,24 +651,6 @@ func TestAVerifiedRecoveryRetriedReportsItsLink(t *testing.T) {
 	rec, ok := RecoveryOf(f.root, f.handle)
 	if !ok || rec.Link != first.NewSeq {
 		t.Fatalf("the record's link: %v %+v", ok, rec)
-	}
-	// the head's seq changed: the quarantine carries the record as it was
-	hp := sealchain.HeadPath(f.root, "commits."+f.handle)
-	orig := readFile(t, hp)
-	var hd map[string]any
-	if err := json.Unmarshal(orig, &hd); err != nil {
-		t.Fatal(err)
-	}
-	hd["seq"] = 1
-	edited, _ := json.Marshal(hd)
-	write(t, hp, string(edited))
-	q2 := f.quarantined()
-	if q2.Seq != "1" || q2.Prior == nil || q2.Prior.Seq != rec.Seq || q2.Prior.Slot != rec.Slot || q2.Prior.Link != rec.Link || !q2.Prior.At.Equal(rec.At) {
-		t.Fatalf("the quarantine's prior record: seq %s %+v, want %+v", q2.Seq, q2.Prior, rec)
-	}
-	write(t, hp, string(orig))
-	if back, ok := RecoveryOf(f.root, f.handle); !ok || back.Link != q2.Prior.Link || back.Slot != q2.Prior.Slot || !back.At.Equal(q2.Prior.At) {
-		t.Fatalf("the head put back: %v %+v", ok, back)
 	}
 }
 

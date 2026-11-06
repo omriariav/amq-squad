@@ -539,63 +539,8 @@ func TestAFailedResetKeepsTheHoldForTheRetry(t *testing.T) {
 	}
 }
 
-// The baseline (Codex on b250b951, kept by the plan reviewer's ruling on
-// af1a6124): a record equal to the one the refused document carried when
-// the alarm was raised never releases the hold, even when it names the
-// hold's own slot, nor after a restart (the baseline is in the state
-// file); a decision after the alarm (a new record for that slot) does. The
-// input is built here: with slot-only matching a refused body cannot carry
-// a record naming the slot its own refusal is quarantined into (the note,
-// "The plan reviewer on af1a6124"). Reverted (no baseline check), the old
-// record releases the hold on the first tick.
-func TestTheRecoveryPresentAtTheAlarmDoesNotReleaseIt(t *testing.T) {
-	h := newHarness(t, Config{IdleTimeout: time.Hour, StatePath: filepath.Join(t.TempDir(), "scheduler.json")})
-	old := recoveryRecord{seq: 1, slot: slotOf("seat-a", "1"), link: 4, at: h.clk.Now().Add(-time.Hour).UTC()}
-	e := tamperErr("seat-a", "1")
-	e.Baseline = &RecoveryMark{Seq: old.seq, Slot: old.slot, Link: old.link, At: old.at}
-	p := &tamperPreparer{seat: "seat-a", err: e}
-	h.s.Preparer = p
-	tk := h.add("a", &sonnet)
-	h.up("seat-a", sonnet)
-	h.tick()
-	// the head put back: the ledger verifies with the record it had
-	p.ledgers = map[string]recoveryRecord{"seat-a": old}
-	for i := 0; i < 20; i++ {
-		ds := h.tick()
-		h.clk.Add(2 * time.Second)
-		if has(ds, "ledger_hold_released", "", "seat-a") || has(ds, "task_reset", tk.ID, "") {
-			t.Fatalf("the record present at the alarm released the hold: %+v", ds)
-		}
-	}
-	st, err := ReadState(h.s.Config.StatePath)
-	if err != nil || len(st.LedgerTampered) != 1 || st.LedgerTampered[0].Baseline == nil || !st.LedgerTampered[0].Baseline.same(*e.Baseline) {
-		t.Fatalf("the state file does not keep the baseline: %v %+v", err, st.LedgerTampered)
-	}
-	next := &Scheduler{Store: h.store, Now: h.clk.Now, Launcher: h.l, Doorbell: h.bell, Config: h.s.Config, Incarnation: "u", Preparer: p}
-	next.RestoreLedgerTampers(st)
-	for i := 0; i < 5; i++ {
-		ds, err := next.Tick()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if has(ds, "ledger_hold_released", "", "seat-a") {
-			t.Fatalf("the restarted scheduler released the hold on the old record: %+v", ds)
-		}
-	}
-	if got := h.get(tk.ID); got.State != task.StateBlocked {
-		t.Fatalf("the task is %s, want blocked", got.State)
-	}
-	// the lead's decision after the alarm: a new record for the slot
-	p.ledgers["seat-a"] = recoveryRecord{seq: 1, slot: slotOf("seat-a", "1"), link: 6, at: h.clk.Now().UTC()}
-	ds, err := next.Tick()
-	if err != nil || !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "task_reset", tk.ID, "seat-a") {
-		t.Fatalf("the decision after the alarm did not release the hold: %v %+v", err, ds)
-	}
-}
-
 // The plan reviewer on af1a6124, the lowered-seq replay: the ledger keeps
 // a recovery record (seq 3, its slot); the head's seq is lowered to 1 and
-// the refused body carried no record the alarm could read (no baseline);
 // the head put back, the ledger verifies with the seq-3 record, which is
 // past the hold's seq but names another slot: no release over many ticks,
 // nor after a restart; the record of the hold's own slot releases it.
