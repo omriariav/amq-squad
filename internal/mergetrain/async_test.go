@@ -555,10 +555,30 @@ func TestRebindRefusesWhenTheBindingMovedMeanwhile(t *testing.T) {
 	if err != nil || res.PRs[0].Status != "refused" || !slices.ContainsFunc(res.PRs[0].Refusals, func(r Refusal) bool { return r.Rule == RuleForcePush }) {
 		t.Fatalf("a push of the superseded head passed as the train's own: %v %+v", err, res.PRs)
 	}
-	if _, err := s.BindPRFrom(id, fixtureRepo, 1, old, moved, time.Now()); !errors.Is(err, task.ErrPRBindingMismatch) || boundHead(t, f, id) != other {
+	// the re-admission (the plan reviewer on #903): the lead's re-bind
+	// applied brings the head back, as the train's own, through the
+	// terminal rebind_readmitted entry; the next run lands the PR
+	if _, err := s.BindPR(id, fixtureRepo, 1, old, time.Now()); err != nil { // the binding back where the proof reads it
+		t.Fatal(err)
+	}
+	applied, err := Rebind(context.Background(), RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: StoreBinder{Store: s}, PR: 1, From: old, To: moved, Lead: "lead"})
+	if err != nil || boundHead(t, f, id) != moved || !f.train.Audit.trainHeads(fixtureRepo, 1)[moved] {
+		t.Fatalf("the re-bind did not re-admit the head: %v (trainHeads %v)", err, f.train.Audit.trainHeads(fixtureRepo, 1))
+	}
+	entries, _ = f.train.Audit.Read()
+	if !slices.ContainsFunc(entries, func(e Entry) bool {
+		return e.Kind == "rebind_readmitted" && e.Run == applied.Run && e.PR == 1 && e.Task == id && e.Head == old && e.NewHead == moved
+	}) {
+		t.Fatalf("no readmission entry under the verb's run: %v", kinds(entries, 1))
+	}
+	f.realRun(&req)
+	if res, err := f.train.Run(context.Background(), req); err != nil || res.PRs[0].Status != "merged" {
+		t.Fatalf("the re-admitted head did not land: %v %+v", err, res.PRs)
+	}
+	if _, err := s.BindPRFrom(id, fixtureRepo, 1, old, moved, time.Now()); !errors.Is(err, task.ErrPRBindingMismatch) || boundHead(t, f, id) != moved {
 		t.Fatalf("BindPRFrom with the wrong head: %v (bound %s)", err, boundHead(t, f, id))
 	}
-	if tk, _ := s.BindPRFrom(id, fixtureRepo, 1, other, moved, time.Now()); tk.PRHead != moved {
+	if tk, _ := s.BindPRFrom(id, fixtureRepo, 1, moved, other, time.Now()); tk.PRHead != other {
 		t.Fatalf("BindPRFrom with the right head: %+v", tk)
 	}
 }
@@ -866,6 +886,8 @@ func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
 		"gh api graphql: exit status 1: gh: Validation Failed (HTTP 422)":                                                                           true,
 		"gh api graphql: exit status 1: gh: Forbidden (HTTP 403)":                                                                                   true,
 		"gh api graphql: exit status 1: GraphQL: expected head abc, the head is def":                                                                true,
+		"gh api graphql: exit status 1: GraphQL: Forbidden (updatePullRequestBranch)":                                                               true,
+		"gh api graphql: exit status 1: gh: Not Found (HTTP 404)":                                                                                   true,
 		"gh api graphql: exit status 1: gh: Bad Gateway (HTTP 502)":                                                                                 false,
 		"gh api graphql: exit status 1: gh: Internal Server Error (HTTP 500)":                                                                       false,
 		"gh api graphql: exit status 1: GraphQL: Something went wrong while executing your query. Please include `ABCD` when reporting this issue.": false,
@@ -908,6 +930,20 @@ func TestSupersededHeadStaysOutWhateverTheOrder(t *testing.T) {
 	got := a.trainHeads(fixtureRepo, 1)
 	if got[h] || !got[other] {
 		t.Fatalf("trainHeads %v", got)
+	}
+	// the latest terminal entry decides: the verb's re-admission brings H
+	// back, a later superseded entry takes it out again
+	if err := a.Append(Entry{Kind: "rebind_readmitted", Repository: fixtureRepo, PR: 1, Head: "x", NewHead: h}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.trainHeads(fixtureRepo, 1); !got[h] {
+		t.Fatalf("the re-admitted head is out: %v", got)
+	}
+	if err := a.Append(Entry{Kind: "rebind_superseded", Repository: fixtureRepo, PR: 1, Head: "x", NewHead: h}); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.trainHeads(fixtureRepo, 1); got[h] {
+		t.Fatalf("the superseded-again head is in: %v", got)
 	}
 }
 

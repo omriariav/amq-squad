@@ -156,6 +156,15 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 		}
 		return RebindResult{}, &RebindRefusal{Code: "binding_failed", Detail: fmt.Sprintf("task %s to %s: %v", tk.ID, short(in.To), err)}
 	}
+	// The re-admission (the plan reviewer on #903): a head a superseded
+	// re-bind had taken out of trainHeads comes back only through this
+	// verb's applied binding, recorded as the terminal rebind_readmitted
+	// entry under this run; trainHeads reads the latest terminal entry of
+	// a head. The binding is written, so a failed append is reported in
+	// the result's words, not as a refusal.
+	if err := write(Entry{Kind: "rebind_readmitted", PR: in.PR, Task: tk.ID, Head: in.From, NewHead: in.To, Detail: "the lead's re-bind bound this head; it is the train's own again"}); err != nil {
+		res.Push += " (the readmission entry was not written: " + err.Error() + ")"
+	}
 	return res, nil
 }
 

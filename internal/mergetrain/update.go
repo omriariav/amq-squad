@@ -117,14 +117,29 @@ func definiteRefusal(err error) bool {
 	return false
 }
 
-// graphQLRefusals are the GraphQL error texts that are explicit refusals of
-// updatePullRequestBranch (lower-cased substrings).
+// graphQLRefusals is the closed table of updatePullRequestBranch refusals
+// (lower-cased substrings of the GraphQL error text gh prints as
+// `GraphQL: <message> (updatePullRequestBranch)`; the plan reviewer on
+// #903: definite means a refusal we can name). Each entry cites where the
+// wording is documented or was read.
 var graphQLRefusals = []string{
-	"head branch was modified", // expectedHeadOid is no longer the head
-	"not mergeable",            // a conflict
+	// GitHub's message when expectedHeadOid is no longer the branch head
+	// (REST "Update a pull request branch", 422 with this message; the
+	// same text through the GraphQL mutation):
+	// https://docs.github.com/en/rest/pulls/pulls#update-a-pull-request-branch
+	"head branch was modified",
+	// The branch cannot be rebased onto its base (a conflict); GraphQL
+	// mutation updatePullRequestBranch, the "not mergeable" error:
+	// https://docs.github.com/en/graphql/reference/mutations#updatepullrequestbranch
+	"not mergeable",
+	// A token without write access to the head repository (REST 403
+	// Forbidden; GraphQL "Resource not accessible by integration" for an
+	// app token, same docs pages as above):
 	"forbidden",
 	"not accessible",
-	"expected head", // the fake's expectedHeadOid mismatch
+	// The fake gh of this package's tests (fakegh_test.go), the pinned
+	// head mismatch in its words.
+	"expected head",
 }
 
 // RunBound is an upper bound on one real run's wall time for n PRs (the

@@ -59,6 +59,9 @@ result is recovered at the next run from the journaled request.
 Exit codes: 0 everything planned or landed, 1 a refusal, a stop or an error.
 `
 
+// mergeTrainRunBound is the run's wall-time bound (a test seam).
+var mergeTrainRunBound = mergetrain.RunBound
+
 func runMergeTrain(args []string) error {
 	if len(args) > 0 && args[0] == "rebind" {
 		return runMergeTrainRebind(args[1:], os.Stdout)
@@ -140,7 +143,8 @@ func runMergeTrain(args []string) error {
 	// the run is bounded (Codex's re-pass on #903): a gh that stalls ends
 	// the run instead of hanging it; the train's own update wait and CI
 	// wait sit inside this bound
-	ctx, cancel := context.WithTimeout(context.Background(), mergetrain.RunBound(len(req.PRs)))
+	bound := mergeTrainRunBound(len(req.PRs))
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
 	defer cancel()
 	if !*dry {
 		attachMergeGates(ctx, t, sel)
@@ -154,6 +158,10 @@ func runMergeTrain(args []string) error {
 		printMergeTrain(os.Stdout, res)
 	}
 	switch {
+	case runErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
+		// the run ended at its bound (Codex's re-pass on #903): the words
+		// above the rule, the code and the error below
+		return fmt.Errorf("merge-train: the run timed out after %s, a call to GitHub did not return; nothing more was merged, and the next run starts from the journal\n\n%s\nrefused (run_timeout): %v", bound, gatestore.Rule, runErr)
 	case runErr != nil:
 		return FormatMergeTrainError(runErr)
 	case len(res.Refused()) > 0 && !*dry:

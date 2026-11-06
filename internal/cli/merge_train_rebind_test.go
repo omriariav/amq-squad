@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/mergetrain"
 	"github.com/omriariav/amq-squad/v3/internal/panechain"
@@ -218,5 +219,39 @@ func TestMergeTrainRebindNamesAnUnwrittenDecisionLine(t *testing.T) {
 	var coded *codedExitError
 	if !errors.As(err, &coded) || !strings.Contains(coded.msg, "refused ("+mergetrain.RefusedRebindUnproved+"): ") || !strings.Contains(coded.msg, "the decision line was not written: ") {
 		t.Fatalf("the refusal does not name the unwritten decision line: %v", err)
+	}
+}
+
+// Codex's re-pass on #903 (3): the command runs the train under its bound,
+// so a gh that never returns ends the run at the bound, with the words
+// above the rule and the code below. A gh stand-in that sleeps, the bound
+// at 300 ms, a dry run under a temp root with the default grants.
+func TestMergeTrainRunEndsAtItsBoundInWords(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	dir := t.TempDir()
+	gh := filepath.Join(dir, "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	reqPath := filepath.Join(dir, "req.json")
+	if err := os.WriteFile(reqPath, []byte(`{"schema":1,"repository":"owner/name","base":"main","prs":[{"number":1,"task":"t-1","declared_files":["a.go"]}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prev := mergeTrainRunBound
+	mergeTrainRunBound = func(int) time.Duration { return 300 * time.Millisecond }
+	t.Cleanup(func() { mergeTrainRunBound = prev })
+	start := time.Now()
+	_, _, err := captureOutput(t, func() error {
+		return runMergeTrain([]string{"--request", reqPath, "--dry-run", "--root", filepath.Join(dir, "root"), "--grants", filepath.Join(dir, "no-grants.yaml"), "--gh", gh})
+	})
+	if elapsed := time.Since(start); err == nil || elapsed > 5*time.Second {
+		t.Fatalf("the run did not end at its bound: %v after %s", err, elapsed)
+	}
+	plain, record := splitWidenRule(t, err.Error())
+	if plain != "merge-train: the run timed out after 300ms, a call to GitHub did not return; nothing more was merged, and the next run starts from the journal" || widenLineCode(plain) != "" {
+		t.Fatalf("the plain line: %q", plain)
+	}
+	if !strings.HasPrefix(record, "refused (run_timeout): read branch protection: ") {
+		t.Fatalf("the record: %q", record)
 	}
 }

@@ -166,15 +166,16 @@ func (a Audit) Read() ([]Entry, error) {
 
 // trainHeads are the heads the train's own rebases produced for a PR: a
 // force push that lands on one of them is the train's, not a seat's. A
-// head whose rebase entry is followed by a terminal rebind_superseded entry
-// (the lead's re-bind whose conditional binding write refused, rebind.go)
-// is dropped again: its proof held on content but nothing was bound to it,
-// so a push of exactly that head is not the train's (the plan reviewer on
-// #903).
+// head is taken out again by a terminal rebind_superseded entry (the lead's
+// re-bind whose conditional binding write refused, rebind.go) and brought
+// back only by a terminal rebind_readmitted entry (the lead's re-bind
+// applied): the latest terminal entry of a head decides, and a rebase
+// entry never does once a terminal entry names the head, whatever the
+// order of the rebase entries (the plan reviewer on #903).
 func (a Audit) trainHeads(repository string, pr int) map[string]bool {
 	entries, _ := a.Read()
 	out := map[string]bool{}
-	superseded := map[string]bool{}
+	terminal := map[string]string{} // head -> the latest terminal kind
 	for _, e := range entries {
 		if e.Repository != repository || e.PR != pr || e.NewHead == "" {
 			continue
@@ -182,15 +183,14 @@ func (a Audit) trainHeads(repository string, pr int) map[string]bool {
 		switch e.Kind {
 		case "rebase":
 			out[e.NewHead] = true
-		case "rebind_superseded":
-			superseded[e.NewHead] = true
+		case "rebind_superseded", "rebind_readmitted":
+			terminal[e.NewHead] = e.Kind
 		}
 	}
-	// the exclusion is terminal whatever the order (Codex's re-pass on
-	// #903: overlapping proof attempts can journal a rebase of the head
-	// after its superseded entry)
-	for h := range superseded {
-		delete(out, h)
+	for h, kind := range terminal {
+		if kind == "rebind_superseded" {
+			delete(out, h)
+		}
 	}
 	return out
 }
