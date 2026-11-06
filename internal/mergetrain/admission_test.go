@@ -193,3 +193,89 @@ func TestRebindWordsTheReadmissionAfterASupersededAttempt(t *testing.T) {
 		}
 	})
 }
+
+// supersedeDuring journals rebind_superseded(head) for PR 1 the first time
+// the hook's call is made, after the caller's journal snapshot: inside the
+// recovery's proof (FirstParent) or the replay's PR read.
+type supersedeDuring struct {
+	Forge
+	f          *fixture
+	old, head  string
+	onParent   bool
+	onPR, done bool
+}
+
+func (s *supersedeDuring) supersede() {
+	if s.done {
+		return
+	}
+	s.done = true
+	if err := s.f.train.Audit.Append(Entry{Run: "mt-rebind-meanwhile", Kind: "rebind_superseded", Repository: fixtureRepo, Base: "main", PR: 1, Head: s.old, NewHead: s.head, Detail: "a lead re-bind of this head refused meanwhile"}); err != nil {
+		s.f.t.Fatal(err)
+	}
+}
+
+func (s *supersedeDuring) FirstParent(ctx context.Context, repository, sha string) (string, error) {
+	if s.onParent && sha == s.head {
+		s.supersede()
+	}
+	return s.Forge.FirstParent(ctx, repository, sha)
+}
+
+func (s *supersedeDuring) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
+	if s.onPR && number == 1 {
+		s.supersede()
+	}
+	return s.Forge.PR(ctx, repository, number)
+}
+
+// Codex's fourth pass on #903 (1): the admission is checked on a fresh read
+// of the journal under the audit lock right before the binding write, not
+// on the snapshot a reconcile read before its network reads and its proof
+// (an earlier PR's CI wait can take twenty minutes). A rebind_superseded
+// entry appended during the recovery's proof, or during the replay's PR
+// read, leaves the head unbound: the binding stays, a reconcile entry
+// names the lead's verb, and the check refuses the head. Reverted (only the
+// earlier snapshot checked), the head is bound.
+func TestSupersededDuringTheRecoveryIsNotBound(t *testing.T) {
+	t.Run("during the recovery's proof", func(t *testing.T) {
+		f, id, old, req := strictBound(t)
+		if err := f.train.Audit.Append(Entry{Run: "mt-earlier", Kind: "update_requested", Repository: fixtureRepo, Base: "main", PR: 1, Task: id, Head: old, BaseSHA: f.head("main")}); err != nil {
+			t.Fatal(err)
+		}
+		_, moved := moveBranch(f, "pr1", nil, true)
+		hook := &supersedeDuring{Forge: f.gh, f: f, old: old, head: moved, onParent: true}
+		f.train.Forge = hook
+		res, err := f.train.Run(context.Background(), req)
+		if err != nil || !hook.done || boundHead(t, f, id) != old || res.PRs[0].Status != "refused" {
+			t.Fatalf("the head superseded during the proof was bound: %v %+v (bound %s, hooked %v)", err, res.PRs, boundHead(t, f, id), hook.done)
+		}
+		entries, _ := f.train.Audit.Read()
+		if !slices.ContainsFunc(entries, func(e Entry) bool {
+			return e.Kind == "reconcile" && e.Run == res.Run && e.NewHead == moved && strings.Contains(e.Detail, "before the binding write; the train does not bind it, only merge-train rebind re-admits it")
+		}) {
+			t.Fatalf("no reconcile entry names the verb: %v", kinds(entries, 1))
+		}
+	})
+	t.Run("during the replay's PR read", func(t *testing.T) {
+		f, id, old, req := strictBound(t)
+		_, moved := moveBranch(f, "pr1", nil, true)
+		// a run that journaled its proof-backed rebind and stopped before
+		// the binding write
+		if err := f.train.Audit.Append(Entry{Run: "mt-earlier", Kind: "rebind", Repository: fixtureRepo, Base: "main", PR: 1, Task: id, Head: old, NewHead: moved, Detail: "patch-id: abc\nfirst parent: " + f.head("main")}); err != nil {
+			t.Fatal(err)
+		}
+		hook := &supersedeDuring{Forge: f.gh, f: f, old: old, head: moved, onPR: true}
+		f.train.Forge = hook
+		res, err := f.train.Run(context.Background(), req)
+		if err != nil || !hook.done || boundHead(t, f, id) != old || res.PRs[0].Status != "refused" {
+			t.Fatalf("the head superseded during the replay's read was bound: %v %+v (bound %s)", err, res.PRs, boundHead(t, f, id))
+		}
+		entries, _ := f.train.Audit.Read()
+		if !slices.ContainsFunc(entries, func(e Entry) bool {
+			return e.Kind == "reconcile" && e.Run == res.Run && e.NewHead == moved && strings.Contains(e.Detail, "before the binding write")
+		}) {
+			t.Fatalf("no reconcile entry names the verb: %v", kinds(entries, 1))
+		}
+	})
+}

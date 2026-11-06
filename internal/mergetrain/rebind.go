@@ -136,16 +136,18 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 	if err := write(Entry{Kind: "rebind", PR: in.PR, Task: tk.ID, Head: in.From, NewHead: in.To, Detail: "patch-id: " + proof.OldID + "\nfirst parent: " + proof.Parent + "\n" + detail}); err != nil {
 		return RebindResult{}, &RebindRefusal{Code: RefusedRebindFailed, Detail: "audit log: " + err.Error()}
 	}
-	// The one admission check before the write (the plan reviewer on
-	// #903): this verb is the re-admission, so a superseded head is bound
-	// here and recorded as re-admitted after the superseded attempt.
-	admitted := headAdmitted(entries, repository, in.PR, in.To)
-	// The write holds only while the binding is still at From, checked under
-	// the store's lock (Codex on #903): a train run that advanced the binding
-	// since the snapshot above keeps its head and its merge fact. The two
-	// entries above stay journaled; reconcileRebinds applies a rebind entry
-	// only to a task still bound at its Head, so they bind nothing later.
-	if err := in.Binder.BindPRFrom(tk.ID, repository, in.PR, in.From, in.To); err != nil {
+	// The write goes through the one admission (bindAdmitted, under the
+	// audit lock, on a fresh read of the journal): this verb is the
+	// re-admission, so a superseded head is bound here, and admitted says
+	// whether it had been superseded, for the readmission's words. The
+	// write holds only while the binding is still at From, checked under
+	// the store's lock (Codex on #903): a train run that advanced the
+	// binding since the snapshot above keeps its head and its merge fact.
+	// The two entries above stay journaled; reconcileRebinds applies a
+	// rebind entry only to a task still bound at its Head, so they bind
+	// nothing later.
+	admitted, err := bindAdmitted(in.Audit, in.Binder, nil, bindWrite{Task: tk.ID, Repository: repository, PR: in.PR, From: in.From, To: in.To, Conditional: true, Readmit: true})
+	if err != nil {
 		if errors.Is(err, task.ErrPRBindingMismatch) {
 			// The terminal entry (the plan reviewer on #903): the rebase
 			// entry above would otherwise keep the named head in trainHeads,

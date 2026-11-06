@@ -122,7 +122,61 @@ func boundTask(store task.Store, repository string, pr int) (task.Task, string, 
 // the run stops before the merge, and the next run sees pr_head_moved.
 var ErrBindingFailed = errors.New("binding_failed")
 
-// Binder writes a task's PR binding.
+// ErrHeadSuperseded: bindAdmitted found the head superseded by a lead
+// re-bind decision in the journal read under the audit lock, and wrote no
+// binding.
+var ErrHeadSuperseded = errors.New("head superseded by a lead re-bind decision")
+
+// bindWrite is one binding write: the task's binding of PR moves from the
+// bound head From to To. Conditional makes it hold only while the task is
+// still bound at From (BindPRFrom, the lead's verb); Readmit is that verb,
+// the one re-admission of a superseded head.
+type bindWrite struct {
+	Task, Repository string
+	PR               int
+	From, To         string
+	Conditional      bool
+	Readmit          bool
+}
+
+// bindAdmitted is the only writer of a task's PR binding (Codex's fourth
+// pass on #903): every binding write of the train and of the lead's verb
+// goes through it, and a source guard fails on any other reference to
+// BindPR or BindPRFrom. Under the audit log's lock it re-reads the journal
+// and calls headAdmitted on that fresh read immediately before the write,
+// so a rebind_superseded entry appended at any time before (during a
+// proof, a CI wait or another PR's work) is seen, and none can be appended
+// between the check and the write. A Readmit write binds a superseded head
+// and reports it was not admitted (admitted false). Otherwise a superseded
+// head is refused: no binding is written, record (when set) gets a
+// reconcile entry naming the lead's merge-train rebind verb once the lock
+// is released, and the error is ErrHeadSuperseded.
+func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (admitted bool, err error) {
+	err = a.locked(func() error {
+		journal, err := a.Read()
+		if err != nil {
+			return err
+		}
+		admitted = headAdmitted(journal, w.Repository, w.PR, w.To)
+		if !admitted && !w.Readmit {
+			return ErrHeadSuperseded
+		}
+		if w.Conditional {
+			return b.BindPRFrom(w.Task, w.Repository, w.PR, w.From, w.To)
+		}
+		return b.BindPR(w.Task, w.Repository, w.PR, w.To)
+	})
+	if errors.Is(err, ErrHeadSuperseded) && record != nil {
+		if rerr := record(Entry{Kind: "reconcile", PR: w.PR, Task: w.Task, Head: w.From, NewHead: w.To,
+			Detail: fmt.Sprintf("the head %s was superseded by a lead re-bind decision before the binding write; the train does not bind it, only merge-train rebind re-admits it\nbinding not recovered", short(w.To))}); rerr != nil {
+			return admitted, errors.Join(err, rerr)
+		}
+	}
+	return admitted, err
+}
+
+// Binder writes a task's PR binding. Its BindPR and BindPRFrom are called
+// only by bindAdmitted.
 type Binder interface {
 	BindPR(taskID, repository string, pr int, head string) error
 	// BindPRFrom binds only while the task is still bound to from, under

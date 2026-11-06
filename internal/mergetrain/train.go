@@ -707,7 +707,12 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 			if err := entry(Entry{Kind: "rebind", PR: p.Number, Task: it.Task, Head: it.BoundHead, NewHead: pushed, Detail: "patch-id: " + oldPatch + "\nfirst parent: " + parent}); err != nil {
 				return err
 			}
-			if err := t.Binder.BindPR(it.Task, req.Repository, p.Number, pushed); err != nil {
+			// the write through the one admission under the audit lock: a
+			// head superseded since the check above is refused there
+			if _, err := bindAdmitted(t.Audit, t.Binder, entry, bindWrite{Task: it.Task, Repository: req.Repository, PR: p.Number, From: it.BoundHead, To: pushed}); err != nil {
+				if errors.Is(err, ErrHeadSuperseded) {
+					return t.refuseUpdate(res, p, entry, RulePRHeadMoved, fmt.Sprintf("the head read back after the update, %s, was superseded by a lead re-bind decision before the binding write; the train does not bind it, only merge-train rebind re-admits it; nothing is bound", short(pushed)))
+				}
 				return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(pushed), err)
 			}
 		}
@@ -842,7 +847,10 @@ func (t *Train) reconcileRebinds(ctx context.Context, req *Request, entry func(E
 			}
 			continue
 		}
-		if err := t.Binder.BindPR(it.Task, req.Repository, it.Number, pending.NewHead); err != nil {
+		if _, err := bindAdmitted(t.Audit, t.Binder, entry, bindWrite{Task: it.Task, Repository: req.Repository, PR: it.Number, From: it.BoundHead, To: pending.NewHead}); err != nil {
+			if errors.Is(err, ErrHeadSuperseded) {
+				continue // superseded since the snapshot: the reconcile entry is written, the binding stays
+			}
 			return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(pending.NewHead), err)
 		}
 		it.BoundHead = pending.NewHead

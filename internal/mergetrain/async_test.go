@@ -3,6 +3,7 @@ package mergetrain
 import (
 	"context"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -1117,22 +1118,23 @@ func TestTrainNeverReadmitsASupersededHead(t *testing.T) {
 	}
 }
 
-// The guard from the source: among the package's non-test files only
+// The guards from the source. Among the package's non-test files only
 // rebind.go (the lead's verb) writes a rebind_readmitted entry; a train path
-// that starts writing one fails here by file. And every binding write (a
-// call of BindPR or BindPRFrom) in a non-test file sits in a function that
-// calls headAdmitted before it (the one admission check, the plan
-// reviewer's rulings on Codex's third pass on #903); a binding write
-// without it fails here by file and function. StoreBinder's own methods
-// are the Binder (the store's write behind it) and are not callers.
+// that starts writing one fails here by file. And bindAdmitted is the only
+// writer of a binding (Codex's fourth pass on #903): any reference to
+// BindPR or BindPRFrom in a non-test file (a call, a method value, a
+// closure's call) outside bindAdmitted and StoreBinder's own forwarding
+// BindPR and BindPRFrom fails here by file and line. The check is a plain
+// reference check: it never asks whether an admission check came first,
+// which an unexecuted closure could fake.
 func TestOnlyTheRebindVerbWritesReadmitted(t *testing.T) {
-	t.Run("every binding write is admitted first", func(t *testing.T) {
+	t.Run("only bindAdmitted references the binding write", func(t *testing.T) {
 		files, err := filepath.Glob("*.go")
 		if err != nil {
 			t.Fatal(err)
 		}
 		fset := token.NewFileSet()
-		sites := 0
+		exempt := 0
 		for _, name := range files {
 			if strings.HasSuffix(name, "_test.go") {
 				continue
@@ -1141,40 +1143,31 @@ func TestOnlyTheRebindVerbWritesReadmitted(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, d := range file.Decls {
-				fn, ok := d.(*ast.FuncDecl)
-				if !ok || fn.Body == nil || receiverIs(fn, "StoreBinder") {
-					continue
-				}
-				admitted := token.NoPos
-				var binds []*ast.SelectorExpr
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					call, ok := n.(*ast.CallExpr)
-					if !ok {
-						return true
-					}
-					switch fun := call.Fun.(type) {
-					case *ast.Ident:
-						if fun.Name == "headAdmitted" && (admitted == token.NoPos || call.Pos() < admitted) {
-							admitted = call.Pos()
-						}
-					case *ast.SelectorExpr:
-						if fun.Sel.Name == "BindPR" || fun.Sel.Name == "BindPRFrom" {
-							binds = append(binds, fun)
-						}
-					}
-					return true
-				})
-				for _, b := range binds {
-					sites++
-					if admitted == token.NoPos || admitted > b.Pos() {
-						t.Errorf("%s: %s calls %s (line %d) without first calling headAdmitted", name, fn.Name.Name, b.Sel.Name, fset.Position(b.Pos()).Line)
-					}
-				}
+			bad, ok := bindingReferences(fset, file)
+			exempt += ok
+			for _, b := range bad {
+				t.Error(b)
 			}
 		}
-		if sites < 4 { // land, reconcileRebinds, reconcileUpdates, Rebind
-			t.Fatalf("the guard found %d binding writes, want at least 4", sites)
+		if exempt < 2 { // bindAdmitted's BindPR and BindPRFrom
+			t.Fatalf("the guard found %d references inside bindAdmitted and the forwarding methods, want at least 2", exempt)
+		}
+	})
+	t.Run("the guard sees a method value, a closure and another StoreBinder method", func(t *testing.T) {
+		for name, src := range map[string]string{
+			"methodvalue.go": "package mergetrain\n\nfunc (t *Train) f() error {\n\tbind := t.Binder.BindPR\n\treturn bind(\"t\", \"r\", 1, \"h\")\n}\n",
+			"closure.go":     "package mergetrain\n\nfunc (t *Train) g(entries []Entry) error {\n\t_ = func() bool { return headAdmitted(entries, \"r\", 1, \"h\") }\n\treturn t.Binder.BindPR(\"t\", \"r\", 1, \"h\")\n}\n",
+			"storebinder.go": "package mergetrain\n\nfunc (b StoreBinder) Sneak() error {\n\treturn b.BindPRFrom(\"t\", \"r\", 1, \"f\", \"h\")\n}\n",
+		} {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, name, src, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bad, _ := bindingReferences(fset, file)
+			if len(bad) != 1 || !strings.HasPrefix(bad[0], name+":") {
+				t.Errorf("%s: the guard reported %v, want one reference by file and line", name, bad)
+			}
 		}
 	})
 	files, err := filepath.Glob("*.go")
@@ -1197,6 +1190,52 @@ func TestOnlyTheRebindVerbWritesReadmitted(t *testing.T) {
 	if !strings.Contains(string(raw), `Kind: "rebind_readmitted"`) {
 		t.Fatal("rebind.go no longer writes the re-admission")
 	}
+}
+
+// bindingReferences lists every reference to BindPR or BindPRFrom in a
+// file outside bindAdmitted and StoreBinder's own forwarding BindPR and
+// BindPRFrom, as "<file>:<line>: <function> references <name>"; exempt
+// counts the references inside those. A declaration of the name (an
+// interface method, a method's own name) is not a reference.
+func bindingReferences(fset *token.FileSet, file *ast.File) (bad []string, exempt int) {
+	isBind := func(name string) bool { return name == "BindPR" || name == "BindPRFrom" }
+	decl := map[*ast.Ident]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.FuncDecl:
+			decl[n.Name] = true
+		case *ast.InterfaceType:
+			for _, f := range n.Methods.List {
+				for _, id := range f.Names {
+					decl[id] = true
+				}
+			}
+		}
+		return true
+	})
+	for _, d := range file.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		owner := "the file's declarations"
+		allowed := false
+		if ok {
+			owner = fn.Name.Name
+			allowed = (fn.Recv == nil && fn.Name.Name == "bindAdmitted") || (receiverIs(fn, "StoreBinder") && isBind(fn.Name.Name))
+		}
+		ast.Inspect(d, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok || !isBind(id.Name) || decl[id] {
+				return true
+			}
+			if allowed {
+				exempt++
+				return true
+			}
+			pos := fset.Position(id.Pos())
+			bad = append(bad, fmt.Sprintf("%s:%d: %s references %s; only bindAdmitted writes a binding", pos.Filename, pos.Line, owner, id.Name))
+			return true
+		})
+	}
+	return bad, exempt
 }
 
 // receiverIs reports a method declared on the named type (or its pointer).

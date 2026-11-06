@@ -139,6 +139,18 @@ func (a Audit) Append(e Entry) error {
 	})
 }
 
+// locked runs fn under the audit log's append lock (the lock Append
+// takes), so no entry is appended while fn runs. fn must not Append.
+func (a Audit) locked(fn func() error) error {
+	if a.Path == "" {
+		return errors.New("merge train: no audit log path")
+	}
+	if err := os.MkdirAll(filepath.Dir(a.Path), 0o700); err != nil {
+		return err
+	}
+	return flock.WithLock(a.Path+".lock", fn)
+}
+
 // Read returns every well-formed entry; a torn line is skipped.
 func (a Audit) Read() ([]Entry, error) {
 	f, err := os.Open(a.Path)

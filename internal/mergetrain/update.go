@@ -407,7 +407,13 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 		if err := entry(Entry{Kind: "rebind", PR: it.Number, Task: it.Task, Head: it.BoundHead, NewHead: cur.HeadSHA, Detail: "patch-id: " + proof.OldID + "\nfirst parent: " + proof.Parent + "\n" + detail}); err != nil {
 			return err
 		}
-		if err := t.Binder.BindPR(it.Task, req.Repository, it.Number, cur.HeadSHA); err != nil {
+		// the write through the one admission under the audit lock: the
+		// snapshot above is from before this PR's reads and proof, and an
+		// earlier PR's CI wait can take minutes (Codex's fourth pass)
+		if _, err := bindAdmitted(t.Audit, t.Binder, entry, bindWrite{Task: it.Task, Repository: req.Repository, PR: it.Number, From: it.BoundHead, To: cur.HeadSHA}); err != nil {
+			if errors.Is(err, ErrHeadSuperseded) {
+				continue // the reconcile entry is written; the binding stays and the check decides
+			}
 			return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(cur.HeadSHA), err)
 		}
 		it.BoundHead = cur.HeadSHA
