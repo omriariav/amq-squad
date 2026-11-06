@@ -94,16 +94,18 @@ func (t *Train) sleepOrDone(ctx context.Context, d time.Duration) bool {
 // definiteRefusal classifies a failed updatePullRequestBranch (the plan
 // reviewer on #903, Codex's passes: definite only on a refusal we can
 // name). Definite: a 4xx (gh prints an HTTP error as `gh: <message> (HTTP
-// <code>)`), or a GraphQL error whose message, with only gh's GraphQL
-// wrapper removed (graphQLMessage), equals an entry of graphQLRefusals,
-// case aside. The GraphQL rule reads gh's stderr as gh printed it
-// (GHError.Stderr), never this package's wrapper around it; an error that
-// does not come from gh has no gh line to read. Any other shape (a
-// fragment of a table message inside other text, a prefix or a suffix
-// outside gh's wrapper, several errors on one line, a 5xx, a transport
-// error, a context deadline, a killed gh) is ambiguous: that is brittle in
-// the safe direction (GitHub may have completed the update, so the request
-// stays live and the head is read back), never in the definite one.
+// <code>)`), or a GraphQL error whose message, with one of gh's two
+// documented wrappers removed whole (refusalMessage), equals an entry of
+// graphQLRefusals, case aside. The GraphQL rule reads gh's stderr as gh
+// printed it (GHError.Stderr), never this package's wrapper around it; an
+// error that does not come from gh has no gh line to read. Any other shape
+// (a fragment of a table message inside other text, anything extra before
+// or after a wrapper, several errors, a `gh: HTTP <code>` line, a 5xx, a
+// transport error, a context deadline, a killed gh) is ambiguous: brittle
+// in the safe direction (GitHub may have completed the update, so the
+// request stays live and the head is read back), never in the definite
+// one. The wrappers are gh's own, version by version: a gh that changes
+// them falls to ambiguous, the safe side.
 func definiteRefusal(err error) bool {
 	if strings.Contains(strings.ToLower(err.Error()), "(http 4") {
 		return true
@@ -112,7 +114,7 @@ func definiteRefusal(err error) bool {
 	if !errors.As(err, &ge) {
 		return false
 	}
-	msg, ok := graphQLMessage(ge.Stderr)
+	msg, ok := refusalMessage(ge.Stderr)
 	if !ok {
 		return false
 	}
@@ -124,29 +126,43 @@ func definiteRefusal(err error) bool {
 	return false
 }
 
-// graphQLMessage strips gh's GraphQL wrapper from the last line gh printed
-// on stderr (gh prints the error last; the lines before it, such as the
-// fake gh's sentinel line, do not decide) and nothing else. The wrapper is
-// go-gh's GraphQLError.Error (github.com/cli/go-gh/v2, pkg/api/errors.go),
-// which gh's own commands print: "GraphQL: " then each error as
-// `<message> (<path>)`, the path its elements joined by "." (for this
-// mutation, `updatePullRequestBranch`), several errors joined by ", ". So
-// the line must begin with "GraphQL: ", and one trailing " (<path>)" is
-// removed when it has that shape. ok is false when the line does not
-// begin with the prefix. (`gh api graphql`, which GH.Rebase runs, prints a
-// GraphQL error as `gh: <message>` with neither the prefix nor the path,
-// read on gh 2.100.0: that form has no GraphQL wrapper here and stays
-// ambiguous.)
-func graphQLMessage(stderr string) (string, bool) {
+// refusalMessage strips one of gh's two documented error wrappers, each
+// only as a whole, from the last line gh printed on stderr (gh prints the
+// error last; the lines before it, such as the fake gh's sentinel line, do
+// not decide). Read on gh 2.100.0 (go-gh v2.16.0, its go.mod), each form
+// measured with one read-only query of a PR that does not exist:
+//
+//   - `gh: <message>`, the line `gh api graphql` prints (GH.Rebase's path):
+//     cli/cli v2.100.0 pkg/cmd/api/api.go, parseErrorResponse joins the
+//     body's errors[].message with "\n" (line 722) and processResponse
+//     prints `fmt.Fprintf(opts.IO.ErrOut, "gh: %s\n", serverError)` (line
+//     557). Measured: `gh api graphql -f query=...pullRequest(number:999999)...`
+//     printed `gh: Could not resolve to a PullRequest with the number of 999999.`
+//   - `GraphQL: <message> (<path>)`, the form gh's other commands print:
+//     cli/go-gh v2.16.0 pkg/api/errors.go, GraphQLError.Error (lines
+//     59-68) writes `GraphQL: ` and each error as `<message> (<path>)`,
+//     the path's elements joined by "." (pathString, line 82), several
+//     errors joined by ", ". Measured: `gh pr view 999999 -R
+//     omriariav/amq-squad --json id` printed `GraphQL: Could not resolve to
+//     a PullRequest with the number of 999999. (repository.pullRequest)`.
+//
+// ok is false when the line is neither form whole (a GraphQL line with no
+// path is not the second form).
+func refusalMessage(stderr string) (string, bool) {
 	lines := strings.Split(strings.TrimSpace(stderr), "\n")
-	msg, ok := strings.CutPrefix(strings.TrimRight(lines[len(lines)-1], "\r"), "GraphQL: ")
+	last := strings.TrimRight(lines[len(lines)-1], "\r")
+	if msg, ok := strings.CutPrefix(last, "gh: "); ok {
+		return msg, true
+	}
+	msg, ok := strings.CutPrefix(last, "GraphQL: ")
 	if !ok {
 		return "", false
 	}
-	if open := strings.LastIndex(msg, " ("); open >= 0 && strings.HasSuffix(msg, ")") && graphQLPathRe.MatchString(msg[open+2:len(msg)-1]) {
-		msg = msg[:open]
+	open := strings.LastIndex(msg, " (")
+	if open < 0 || !strings.HasSuffix(msg, ")") || !graphQLPathRe.MatchString(msg[open+2:len(msg)-1]) {
+		return "", false
 	}
-	return msg, true
+	return msg[:open], true
 }
 
 // graphQLPathRe is go-gh's error path: its elements (field names and list
@@ -157,9 +173,10 @@ var graphQLPathRe = regexp.MustCompile(`^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)*$`)
 // each entry is GitHub's exact message, with its source. A refusal whose
 // exact wording is not evidenced is not in the table (and so ambiguous: the
 // request stays live, bounded by its window). The fake gh of this package's
-// tests prints the first message for its pinned-head mismatch, as gh's
-// last line, after a sentinel line of its own; the sentinel stays out of
-// this table, and the fake is classed by the same rule as gh.
+// tests prints the first message for its pinned-head mismatch in the
+// `gh: <message>` form `gh api graphql` prints, as its last line, after a
+// sentinel line of its own; the sentinel stays out of this table, and the
+// fake is classed by the same rule as gh.
 var graphQLRefusals = []string{
 	// GitHub's message when expectedHeadOid is no longer the branch head:
 	// the REST "Update a pull request branch" endpoint documents the 422

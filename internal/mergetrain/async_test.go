@@ -651,7 +651,8 @@ func (s *slowForge) PR(ctx context.Context, repository string, number int) (PRIn
 }
 
 // Codex on #903 (4), the plan reviewer's split: a request GitHub definitely
-// refused (here a GraphQL error naming the refusal) is followed by an
+// refused (here the fake gh's refusal of a stale head pin, in gh api
+// graphql's real `gh: <message>` form) is followed by an
 // update_failed entry and counts for nothing: a seat's own push after it,
 // even with the same patch on the base tip, is not recovered, and the next
 // run refuses it as a force push that is not the train's. (A seat's push
@@ -659,15 +660,16 @@ func (s *slowForge) PR(ctx context.Context, repository string, number int) (PRIn
 // subtest: refused on the patch-id, nothing bound.)
 func TestFailedMutationLeavesNoLiveRequest(t *testing.T) {
 	f, id, old, req := strictBound(t)
-	f.train.Forge = &failRebaseForge{Forge: f.gh}
+	f.train.Forge = staleRebaseForge{Forge: f.gh}
 	first, err := f.train.Run(context.Background(), req)
-	if err == nil || !strings.Contains(first.Stopped, "rebase: gh api graphql: exit status 1: GraphQL: Head branch was modified") {
+	if err == nil || !strings.Contains(first.Stopped, "rebase: gh api graphql -F: exit status 1: fake: expected head") ||
+		!strings.HasSuffix(first.Stopped, "gh: Head branch was modified. Review and try the update again.") {
 		t.Fatalf("the failed mutation did not stop the run: %v %q", err, first.Stopped)
 	}
 	entries, _ := f.train.Audit.Read()
 	ri := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "update_requested" && e.PR == 1 && e.Head == old })
 	fi := slices.IndexFunc(entries, func(e Entry) bool {
-		return e.Kind == "update_failed" && e.PR == 1 && e.Head == old && strings.Contains(e.Detail, "Head branch was modified")
+		return e.Kind == "update_failed" && e.PR == 1 && e.Head == old && strings.HasSuffix(e.Detail, "gh: Head branch was modified. Review and try the update again.")
 	})
 	if ri < 0 || fi < ri {
 		t.Fatalf("no update_failed after the request: %v", kinds(entries, 1))
@@ -690,10 +692,15 @@ func TestFailedMutationLeavesNoLiveRequest(t *testing.T) {
 	}
 }
 
-type failRebaseForge struct{ Forge }
+// staleRebaseForge asks the fake gh to update the branch from a stale head
+// pin (the head moved between the train's read and its mutation), through
+// GH.Rebase and GH.run: the fake refuses in gh api graphql's real form,
+// `gh: Head branch was modified. Review and try the update again.`, so the
+// definite class runs the production path.
+type staleRebaseForge struct{ Forge }
 
-func (failRebaseForge) Rebase(context.Context, string, int, string) (string, error) {
-	return "", ghFailure(errors.New("exit status 1"), "GraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch)")
+func (s staleRebaseForge) Rebase(ctx context.Context, repository string, number int, _ string) (string, error) {
+	return s.Forge.Rebase(ctx, repository, number, strings.Repeat("0", 40))
 }
 
 // Codex on #903 (6): the force push's time is placed after the journaled
@@ -889,24 +896,40 @@ func ghFailure(err error, stderr string) error {
 
 // The classes of a failed mutation as gh reports them (the plan reviewer on
 // #903 and its rulings on Codex's third pass): a 4xx, or a GraphQL error
-// whose message with only gh's wrapper removed ("GraphQL: " and one
-// trailing " (<path>)", on gh's last stderr line) is a table message, case
-// aside, is definite. A table message's fragment inside unfamiliar text,
-// a prefix or a suffix outside gh's wrapper, a 5xx, a transport error, a
-// context deadline, a killed gh, an error not from gh and gh api's own
-// `gh: <message>` form are ambiguous, never definite. The fake gh is
-// classed by the same rule through its own exact output.
+// whose message with one of gh's two wrappers removed whole (`gh:
+// <message>`, which gh api graphql prints, or `GraphQL: <message>
+// (<path>)`, which gh's other commands print), on gh's last stderr line, is
+// a table message, case aside, is definite. A table message's fragment
+// inside unfamiliar text, anything extra before or after a wrapper,
+// several errors, a `gh: HTTP <code>` line, a 5xx, a transport error, a
+// context deadline, a killed gh and an error not from gh are ambiguous,
+// never definite. The fake gh is classed by the same rule through its own
+// exact output.
 func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
 	const modified = "Head branch was modified. Review and try the update again."
 	exit1 := errors.New("exit status 1")
 	for stderr, want := range map[string]bool{
-		// the closed table, in gh's wrapper
+		// the closed table, in gh api graphql's wrapper (GH.Rebase's path)
+		"gh: " + modified: true,
+		"gh: head branch was modified. review and try the update again.": true, // the message itself, case aside
+		"gh: Resource not accessible by integration":                     true,
+		"fake: expected head abc, the head is def\ngh: " + modified:      true, // the fake's output: its sentinel line, then gh's last line
+		// the closed table, in gh's GraphQL wrapper (gh's other commands)
 		"GraphQL: " + modified + " (updatePullRequestBranch)":                                           true,
-		"GraphQL: " + modified:                                                                          true, // no path
-		"GraphQL: head branch was modified. review and try the update again.":                           true, // the message itself, case aside
+		"GraphQL: head branch was modified. review and try the update again. (updatePullRequestBranch)": true,
 		"GraphQL: Resource not accessible by integration (updatePullRequestBranch)":                     true,
 		"GraphQL: Resource not accessible by integration (repository.pullRequest)":                      true, // a dotted path is gh's wrapper too
-		"fake: expected head abc, the head is def\nGraphQL: " + modified + " (updatePullRequestBranch)": true, // the fake's output: its sentinel line, then gh's last line
+		// anything extra around the gh: wrapper
+		"gh: " + modified + " (updatePullRequestBranch)":                                false, // a path is not gh api's form
+		"gh: " + modified + " Retry later.":                                             false,
+		"gh: gh: " + modified:                                                           false,
+		"warning: gh: " + modified:                                                      false,
+		"gh: " + modified + "\nSomething went wrong":                                    false, // gh api joins several errors by a newline
+		"gh: " + modified + "\ngh: Your token has not been granted the required scopes": false, // a line after gh's
+		"gh: HTTP 502":         false, // the line gh api prints for a body with no message
+		"gh: HTTP 422":         false, // no (HTTP 4xx) form, no table message
+		"gh:" + modified:       false, // the wrapper is exactly "gh: "
+		"GraphQL: " + modified: false, // a GraphQL line with no path is not the second form whole
 		// the 4xx rule
 		"gh: Validation Failed (HTTP 422)": true,
 		"gh: Forbidden (HTTP 403)":         true,
@@ -925,12 +948,14 @@ func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
 		"GraphQL: Something went wrong, resource not accessible by integration (updatePullRequestBranch)": false,
 		"GraphQL: Resource not accessible by integration token (updatePullRequestBranch)":                 false,
 		"GraphQL: Something is not mergeable by this rule (updatePullRequestBranch)":                      false,
-		"GraphQL: Head branch was modified":                                                               false, // a prefix of the message is not the message
-		"GraphQL: Resource not accessible":                                                                false,
+		"GraphQL: Head branch was modified (updatePullRequestBranch)":                                     false, // a prefix of the message is not the message
+		"GraphQL: Resource not accessible (updatePullRequestBranch)":                                      false,
+		"gh: Head branch was modified":                                                                    false,
+		"gh: Resource not accessible":                                                                     false,
+		"gh: Something went wrong, resource not accessible by integration":                                false,
 		// a prefix outside gh's wrapper
 		"warning: GraphQL: " + modified + " (updatePullRequestBranch)": false,
 		"graphql: " + modified + " (updatePullRequestBranch)":          false, // gh's prefix is exactly "GraphQL: "
-		"gh: " + modified: false, // gh api graphql's own form (read on gh 2.100.0): no GraphQL wrapper
 		// a suffix outside gh's wrapper
 		"GraphQL: " + modified + " (updatePullRequestBranch) [fake: expected head abc, the head is def]":      false,
 		"GraphQL: " + modified + " (updatePullRequestBranch) (updatePullRequestBranch)":                       false, // one trailing path is gh's
@@ -958,8 +983,9 @@ func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
 	if !definiteRefusal(errors.New("gh api graphql: exit status 1: gh: Validation Failed (HTTP 422)")) {
 		t.Error("a 4xx not from gh is not definite")
 	}
-	// the fake gh, through GH.run, by its own exact output: its pinned-head
-	// mismatch is classed definite by the same rule, with no table entry
+	// the fake gh, through GH.run, by its own exact output (gh api
+	// graphql's `gh: <message>` form): its pinned-head mismatch is classed
+	// definite by the same rule, with no table entry
 	f := newFixture(t)
 	_, err := f.gh.Rebase(context.Background(), fixtureRepo, 1, strings.Repeat("0", 40))
 	var ge *GHError

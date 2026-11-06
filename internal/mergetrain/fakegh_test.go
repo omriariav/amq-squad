@@ -276,8 +276,9 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		p := pr(n)
 		before := rev(p.Head)
 		if before != expect {
-			// the fake's sentinel line, then GitHub's exact message in gh's GraphQL wrapper as the last line
-			return fail("fake: expected head %s, the head is %s\nGraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch)", expect, before)
+			// the fake's sentinel line, then GitHub's exact message as `gh api
+			// graphql` prints it (gh: <message>), the last line
+			return fail("fake: expected head %s, the head is %s\ngh: Head branch was modified. Review and try the update again.", expect, before)
 		}
 		if s.AuditPath != "" {
 			s.AuditAtMutation = nil
