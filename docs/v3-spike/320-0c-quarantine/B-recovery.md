@@ -19,11 +19,16 @@ seatlaunch stop classified); then `23f315e3` and `01088a5c`, Codex's
 re-pass on `c9826c31` (only not-found skips a task of a released hold, a
 failing read or reset keeps the hold and is logged once then counted, the
 timeout row's child pid); then `c27ad8fc`, the verified recovery's
-"behind the slot" refusal made nil-safe; then this note. The helper move of `8017ffea` is between two
-declared packages (`internal/schedproc/slots.go` to `internal/seatcommit/
-baseshadow.go`), so the declared set is unchanged; the screen fix of the
-second phase (below, "Gates") will widen it to `pi/extensions/lib/screen.ts`
-and its test.
+"behind the slot" refusal made nil-safe; then `b250b951`, the note; then
+`9de43a6c` and `8eeeaf24`, Codex's re-pass on `b250b951` (the section of
+that name below), then this note. The helper move of `8017ffea` is between
+two declared packages (`internal/schedproc/slots.go` to
+`internal/seatcommit/baseshadow.go`), so it left the declared set
+unchanged. `9de43a6c` widens it by two files, `internal/task/reset_if.go`
+and `internal/task/reset_if_test.go` (the conditional reset Codex's P2-3
+asks for; the lead's word on that pass allows the `internal/task` files
+it needs, named here); the screen fix of the second phase (below,
+"Gates") will widen it to `pi/extensions/lib/screen.ts` and its test.
 
 ## Why
 
@@ -410,6 +415,69 @@ risk" below), and the gates on `c27ad8fc` passed it on a quiet tree.
   changed reason logging again, the parser on both forms, the
   compatibility row and the note's statements.
 
+## Codex's re-pass on b250b951 (`9de43a6c`, `8eeeaf24`)
+
+Codex re-read `b250b951` (its sandbox could not run `go build`, so the
+gates below are the run evidence) and found three P2 and one P3.
+
+- **P2-1, an old recovery releases a new hold.** `covers` took any record
+  at or past the hold's seq, and that seq is read from the quarantined
+  head, which is never verified. The ledger records a recovery at seq 3;
+  the head's seq is changed to 1, the prepare's alarm holds the seat at
+  seq 1; the head is put back, the ledger verifies again, and the seq-3
+  record (3 >= 1) released the new hold with no new decision. Now the
+  hold carries a baseline: the record the refused body already had, which
+  the quarantine decodes from the refused bytes it copies
+  (`QuarantinedError.Prior`, `priorRecovery`), the prepare's alarm passes
+  on (`LedgerTamperedError.Baseline`, schedproc's `prepareError`) and the
+  hold keeps in the state file (`LedgerTamper.Baseline`, restored with the
+  hold). `covers` refuses a record equal to the baseline (its seq, slot,
+  link and time: `RecoveryMark`, which `RecoveryReader` now answers in
+  place of the seq and slot) before the slot and seq checks. The
+  baseline is decoded without verification on purpose: the refused body
+  is the only copy of what the ledger held at the alarm (the live one is
+  the refused one), and a baseline can only stop a release, never cause
+  one. A slot match was already safe (the alarm creates the slot, so a
+  record naming it was decided after the alarm); the seq path is the one
+  the baseline closes. Not chosen: "decided after the alarm's time", which
+  needs no baseline but leaves a hold unreleasable for good when the wall
+  clock steps back between the alarm and the decision (a retried decision
+  answers `AlreadyRecovered` and writes nothing new). The residual: a
+  refused body that does not decode gives no baseline, and the seq path
+  is then as before; such a body has no readable record to replay either.
+- **P2-2, temp names defeat the suppression.** `logOnce` compared the
+  whole error text, so a persistent disk-full during `CleanSeat` that
+  names a fresh `amq-squad-shadow-<random>` (or an atomic write's temp)
+  each tick logged a new first failure every tick. The suppression key is
+  now the decision's kind, task and seat plus the reason's identity
+  (`reasonIdentity`): the text with every path masked to `<path>` and
+  every run of digits to `#`; the logged record keeps the full text.
+  #909's shape (a code plus the stage, the detail logged) is the model;
+  a prepare failure has no code of its own (any error of the ledger read
+  or the clean), and a constant code would make a failure that says
+  something else silent, which the changed-reason rows of #904 (B4's end,
+  the P2 per task) require to log again. The residual: two failures that
+  differ only in a path or a number are one failure, counted.
+- **P2-3, the recovery could clear an unrelated block.** The release read
+  the task (blocked `ledger_tampered`) and then called the unconditional
+  `Reset` under a second lock acquisition, so a decision in between (the
+  lead's reset, then a new block of another reason) was cleared. The reset
+  is now `task.Store.ResetIfBlocked(id, ledger_tampered)`: the state and
+  the reason are checked inside the one store mutation that resets, and
+  anything else is `task.ErrBlockChanged` with nothing moved, which the
+  release counts as "reset by the lead already" (the task skipped, no
+  `task_reset` line, the hold released once no task is kept).
+- **P3, a retried verified recovery reported the wrong link.** The
+  `AlreadyRecovered` answer rebuilt the new link as the record's seq plus
+  one and dropped `Verified`: a slot at seq 4 decided on a live chain at
+  link 7 wrote link 8, and a retry said 5, not verified. The record now
+  keeps `Link`, the seq of the link that sealed it (the quarantined seq
+  plus one for a chain continuation, the live link plus one for a
+  verified decision), and the retry reports it and the record's
+  `Verified`; a record written before the field falls back to seq plus
+  one, which is right for the chain continuation, the only mode before
+  `ccec9400`.
+
 ## The quarantine layout read
 
 A slot is `<root>/extensions/amq-squad/quarantine/commits.<handle>.seq<N>[.k]/`
@@ -453,6 +521,11 @@ CLI.
 | read error | A hold whose seat's ledger records the recovery, the store's read failing (a seam) for 30 ticks: one `ledger_release_failed`, one `ledger_release_suppressed`, no release, the hold kept and the task blocked; the error cleared, the next tick releases (`ledger_hold_released`, `task_reset`, `dispatched`); a hold naming a task the store no longer has is released with no failure line. | `internal/scheduler` `TestAStoreReadErrorKeepsTheHoldAndLogsOnce` |
 | reset fails | The reset fails once (a seam): `ledger_release_failed`, no release, the hold kept and the task blocked; the next tick's retry resets, releases and dispatches. | `internal/scheduler` `TestAFailedResetKeepsTheHoldForTheRetry` |
 | child dead | The timeout row's stand-in writes its pid; after the bound's refusal the pid is dead (signal 0, polled up to 5 s), beside the refusal's text, the elapsed time and the lock taken by the next recovery. | `internal/seatcommit` `TestStalledOriginEndsTheRecoveryWithinTheBound` (unix: `processAlive` in `recover_unix_test.go`) |
+| P2-1 baseline | A hold raised at seq 1 whose alarm carries the ledger's record (seq 3, link 4) as its baseline; the reader answers that same record (the head put back): 20 ticks release nothing; the state file keeps the baseline; a restarted scheduler restored from it releases nothing over 5 ticks and the task stays blocked; a new record (the lead's decision after the alarm) releases the hold and resets the task. | `internal/scheduler` `TestTheRecoveryPresentAtTheAlarmDoesNotReleaseIt` |
+| P2-1 the alarm's baseline | Real files: the lead's verified decision recorded (link 2); the head's seq changed to 1; `CleanSeats.PrepareSeat` refuses with `LedgerTamperedError` at seq 1 whose `Baseline` is the ledger's record; the head put back, `LedgerRecovery` answers a mark equal to the baseline. | `internal/schedproc` `TestThePrepareAlarmCarriesTheLedgersRecordAsTheBaseline` |
+| P2-2 temp names | A prepare failure naming a fresh `amq-squad-shadow-<n>` and byte count each tick for 30 ticks: one `seat_prepare_failed` (with the full text) and one `seat_prepare_suppressed`; a failure that says something else (`permission denied`) is logged again. | `internal/scheduler` `TestAFailureNamingAFreshTempFileIsLoggedOnce` |
+| P2-3 the conditional reset | Between the release's read and its reset the task is reset and blocked again (`lead_hold`): the new block stays with its reason, no `task_reset`, no dispatch, no failure line, the hold released. The store: `ResetIfBlocked` refuses another reason, a pending task (`ErrBlockChanged`) and an unknown id (`ErrNotFound`), and resets its own reason with the block's fields cleared. | `internal/scheduler` `TestARecoveryNeverClearsABlockRaisedAfterItsRead`; `internal/task` `TestResetIfBlockedResetsOnlyItsReason` |
+| P3 the retry's link | The transient alarm at seq 4, a second commit step (live link 7), the verified decision writes link 8; its retry is `AlreadyRecovered`, `Verified`, link 8; the record's `Link` is 8; then the head's seq changed to 1: the quarantine's `Prior` is that record (seq, slot, link, time), and the head put back, `RecoveryOf` answers it. | `internal/seatcommit` `TestAVerifiedRecoveryRetriedReportsItsLink` |
 | the verb | `scheduler recover` refuses missing or malformed flags and `--me` before any send; with no launch record it names the missing scheduler; a record with no socket is `scheduler_starting` (exit 15); a send carries the seat, seq, slot, carry and reason as given and prints the reply (the slot, the chain's seqs, each carried entry); the verb writes no ledger, quarantine or seed; a refusal is exit 15 with the code. | `internal/cli` `TestSchedulerRecoverSendsTheDecisionOverTheSocket` |
 
 Rule 18: every row runs under a `t.TempDir` root (the seatcommit fixture's
@@ -1155,6 +1228,194 @@ restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/s
 The reverted run leaves the stand-in alive, as the row says: its `sleep
 60` (reparented to pid 1) was killed by hand after the run.
 
+## Revert runs, Codex's re-pass on b250b951 (`8eeeaf24`)
+
+Each on `8eeeaf24`, one at a time, by the same script as above (the
+expression asserted to occur once, the row run, the file restored from
+its copy and the row run again). A temp root in a failing line is
+written `<tmp>`, and a decision list is cut after its first entry.
+
+### P2-1 the baseline check
+
+```
+go test -count=1 -run ^TestTheRecoveryPresentAtTheAlarmDoesNotReleaseIt$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:302`
+```
+	if tm.Baseline != nil && tm.Baseline.same(rec) {
+```
+to:
+```
+	if false && tm.Baseline != nil && tm.Baseline.same(rec) {
+```
+First failing line (exit 1):
+```
+tamper_test.go:567: the record present at the alarm released the hold: [{Kind:task_reset TaskID:t1 Seat:seat-a Pool: Reason:the commits ledger of seat seat-a was recovered by the lead; the task returns to pending Stage: ReasonCode:} ...]
+```
+`--- FAIL: TestTheRecoveryPresentAtTheAlarmDoesNotReleaseIt (0.09s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.655s`.
+
+### P2-1 the alarm's baseline
+
+```
+go test -count=1 -run ^TestThePrepareAlarmCarriesTheLedgersRecordAsTheBaseline$ ./internal/schedproc/
+```
+Reverted `internal/schedproc/prepare.go:77`
+```
+			e.Baseline = &m
+```
+to:
+```
+			_ = m
+```
+First failing line (exit 1):
+```
+recover_test.go:442: the alarm: the commit ledger of seat seat-t1: commit ledger seat-t1: ledger_tampered: the head of commits.seat-t1 does not decode or its tag fails; the refused document is quarantined at <tmp>/extensions/amq-squad/quarantine/commits.seat-t1.seq1.2 ...
+```
+`--- FAIL: TestThePrepareAlarmCarriesTheLedgersRecordAsTheBaseline (0.59s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.158s`.
+
+### P2-1 the quarantine's prior record
+
+```
+go test -count=1 -run ^TestAVerifiedRecoveryRetriedReportsItsLink$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/quarantine.go:112`
+```
+return &QuarantinedError{Handle: handle, Seq: seq, Slot: filepath.Join(dir, slot), Err: refusal, Prior: priorRecovery(raw.body)}
+```
+to:
+```
+return &QuarantinedError{Handle: handle, Seq: seq, Slot: filepath.Join(dir, slot), Err: refusal, Prior: nil}
+```
+First failing line (exit 1):
+```
+recover_test.go:673: the quarantine's prior record: seq 1 <nil>, want {Seq:4 Slot:<tmp>/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq4 ...}
+```
+`--- FAIL: TestAVerifiedRecoveryRetriedReportsItsLink (1.20s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.973s`.
+
+### P2-2 the masked identity
+
+```
+go test -count=1 -run ^TestAFailureNamingAFreshTempFileIsLoggedOnce$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:120`
+```
+		t.UpdatedAt.UTC().Format(time.RFC3339Nano), reasonIdentity(err.Error()), log)
+```
+to:
+```
+		t.UpdatedAt.UTC().Format(time.RFC3339Nano), err.Error(), log)
+```
+First failing line (exit 1):
+```
+tamper_test.go:615: over 30 ticks of one failure with a fresh temp name: [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason: Stage: ReasonCode:} ...]
+```
+(the list holds a `seat_prepare_failed` for every tick)
+`--- FAIL: TestAFailureNamingAFreshTempFileIsLoggedOnce (0.03s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.682s`.
+
+### P2-3 the conditional reset, the release
+
+```
+go test -count=1 -run ^TestARecoveryNeverClearsABlockRaisedAfterItsRead$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:205`
+```
+		return st.ResetIfBlocked(id, ReasonLedgerTampered, now)
+```
+to:
+```
+		return st.Reset(id, nil, now)
+```
+First failing line (exit 1):
+```
+tamper_test.go:659: the release touched the new block: [{Kind:task_reset TaskID:t1 Seat:seat-a Pool: Reason:the commits ledger of seat seat-a was recovered by the lead; the task returns to pending Stage: ReasonCode:} ...]
+```
+`--- FAIL: TestARecoveryNeverClearsABlockRaisedAfterItsRead (0.17s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	1.502s`.
+
+### P2-3 the conditional reset, the store
+
+```
+go test -count=1 -run ^TestResetIfBlockedResetsOnlyItsReason$ ./internal/task/
+```
+Reverted `internal/task/reset_if.go:20`
+```
+		if t.State != StateBlocked || t.BlockReason != reason {
+```
+to:
+```
+		if t.State != StateBlocked {
+```
+First failing line (exit 1):
+```
+reset_if_test.go:21: another block's reset: <nil>
+```
+`--- FAIL: TestResetIfBlockedResetsOnlyItsReason (0.06s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/task	1.038s`.
+
+### P3 the retry's link
+
+```
+go test -count=1 -run ^TestAVerifiedRecoveryRetriedReportsItsLink$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/recover.go:195`
+```
+		newSeq := live.Recovered.Link
+```
+to:
+```
+		newSeq := 0
+```
+First failing line (exit 1):
+```
+recover_test.go:655: the retry: <nil> {Handle:s1 AlreadyRecovered:true Verified:true Slot:<tmp>/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq4 OldSeq:4 NewSeq:5 ...}, want link 8 verified
+```
+`--- FAIL: TestAVerifiedRecoveryRetriedReportsItsLink (1.23s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	2.770s`.
+
+### P3 the retry's mode
+
+```
+go test -count=1 -run ^TestAVerifiedRecoveryRetriedReportsItsLink$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/recover.go:199`
+```
+AlreadyRecovered: true, Verified: live.Recovered.Verified, Slot: slotPath,
+```
+to:
+```
+AlreadyRecovered: true, Slot: slotPath,
+```
+First failing line (exit 1):
+```
+recover_test.go:655: the retry: <nil> {Handle:s1 AlreadyRecovered:true Verified:false Slot:<tmp>/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq4 OldSeq:4 NewSeq:8 ...}, want link 8 verified
+```
+`--- FAIL: TestAVerifiedRecoveryRetriedReportsItsLink (1.29s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.832s`.
+
+### P3 the link written
+
+```
+go test -count=1 -run ^TestAVerifiedRecoveryRetriedReportsItsLink$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/recover.go:326`
+```
+l.Recovered = &LedgerRecovery{..., Verified: true, Link: prev.Seq + 1}
+```
+to:
+```
+l.Recovered = &LedgerRecovery{..., Verified: true}
+```
+First failing line (exit 1):
+```
+recover_test.go:655: the retry: <nil> {Handle:s1 AlreadyRecovered:true Verified:true Slot:<tmp>/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq4 OldSeq:4 NewSeq:5 ...}, want link 8 verified
+```
+`--- FAIL: TestAVerifiedRecoveryRetriedReportsItsLink (1.18s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	1.630s`.
+
 ## Gates
 
 The PR lands in two phases (the plan reviewer's changed ruling on the
@@ -1169,7 +1430,33 @@ on you" only when both are empty; its row (a tamper block with no gates
 shows under "waiting on you", never the "nothing" line) and revert run go
 in this note, and the gates run again on that head.
 
-Phase one, on `c27ad8fc` (the batch on `c9826c31`: `ccec9400`,
+Phase one, on `8eeeaf24` (Codex's re-pass on `b250b951`: `9de43a6c`,
+`8eeeaf24`; this note is the only change after it), each from the
+worktree root, one at a time:
+
+- `go build ./... && go vet ./... && go test -count=1 ./...` (the whole
+  module): the first run exit 1, on one row outside this PR's files:
+  `internal/buzz` `TestOwnerScriptDryRun` (`--- FAIL: TestOwnerScriptDryRun
+  (300.80s)`, `enroll_test.go:447: hung: no signal for "the attach verifies
+  the thread answer" (the run's 5m0s budget ran out)`), the owner-script
+  dry run against its own local relay on 127.0.0.1, with the host's load
+  average at 10.8 from other sessions; every other package `ok` (55). Run
+  once more, exit 0: 56 packages `ok`, `internal/buzz` 80.97s, no `FAIL`.
+  It did not fail because files changed (nothing was edited during the
+  run; the row hung on a wall-clock budget), so it is a load flake and is
+  on the 3.2.x list by name ("Residual risk").
+- The pi gate: `cd pi && npm test`: exit 0, `ℹ tests 118`, `ℹ pass 117`,
+  `ℹ fail 0`, `ℹ skipped 1`; `cd pi && node scripts/lint.mjs`: exit 0.
+- `PATH=<job tmp>/pyvenv/bin:$PATH NPM_FLAGS=--offline make ci`: exit 0,
+  70 `ok` (26 of them from the cache of the whole-module run above), no
+  `FAIL`, the same four pi counts.
+- The format gate, Go 1.26's gofmt first on PATH, `make fmt-check`: exit
+  0, nothing named.
+- `GOOS=windows go build ./internal/seatcommit/`: exit 0;
+  `go run ./scripts/redact-evidence -check docs/v3-spike/320-0c-quarantine/`:
+  exit 0 (on this note).
+
+Before that, phase one on `c27ad8fc` (the batch on `c9826c31`: `ccec9400`,
 `23f315e3`, `01088a5c`, `c27ad8fc`; this note is the only change after
 it), each from the worktree root, one at a time on a quiet tree:
 
@@ -1290,3 +1577,9 @@ exit 0; the windows build exit 0.
   AMQ's tmux detection misses its deadline under load); it stopped one
   `make ci` on `88df5bad` and passed every run since. It is outside this
   PR's files.
+- For the 3.2.x list, by name: `internal/buzz` `TestOwnerScriptDryRun`,
+  a 5 min wall-clock budget over the owner-script dry run on a local relay
+  (`enroll_test.go:447: hung: no signal for "the attach verifies the thread
+  answer"`); it stopped the first whole-module run on `8eeeaf24` under a
+  load average of 10.8 and passed the run after it. Outside this PR's
+  files.
