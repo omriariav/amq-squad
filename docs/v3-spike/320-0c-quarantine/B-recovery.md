@@ -33,7 +33,9 @@ ruling on Codex's delta pass on `c267382d`, the section "The alarm id"),
 and `5d2a576a`, its note; then `c83e6ef3`, the row for a decision whose
 hold is released before its record is sealed, `254f2c2c` and
 `9cf04743`, the notes; then `40254653`, Codex's pass on `254f2c2c` (the
-section "Codex on 254f2c2c"); then this note. The helper move of `8017ffea` is between
+section "Codex on 254f2c2c"), and `16c62fb4`, its note; then `37379e5b`,
+the reviewer's rulings on that pass (the section "The reviewer on Codex's
+pass on 254f2c2c"); then this note. The helper move of `8017ffea` is between
 two declared packages (`internal/schedproc/slots.go` to
 `internal/seatcommit/baseshadow.go`), so it left the declared set
 unchanged. `9de43a6c` widens it by two files, `internal/task/reset_if.go`
@@ -774,7 +776,7 @@ forging a decision, and found two P2 and a P3:
   again") or the ledger is not a document at all. This changes the
   reviewer's condition 3 ("refused unless the ledger verifies NOW"): an
   unverified ledger is recovered from its fresh copy, a verified one is
-  sealed as before; put to the reviewer with the rest of this pass.
+  sealed as before; accepted by the reviewer as proposed.
 - **P2-2, a delayed write over a newer recovery.** A's decision passes the
   socket's check (`HeldAlarm(A)`) and waits; A's hold is released, B is
   raised and B's decision sealed; A resumes and its seal replaced B's
@@ -798,7 +800,8 @@ forging a decision, and found two P2 and a P3:
   read by a test alone, against the reviewer's rule. The words the lead
   reads are the reply's detail, which the CLI prints after the code, and
   both details are written to be acted on (which alarm holds the seat;
-  what the copy needs fixed). Put to the reviewer.
+  what the copy needs fixed). Put to the reviewer, who ruled them in:
+  `37379e5b` adds them ("The reviewer on Codex's pass on 254f2c2c").
 
 The rows (each with its revert run below):
 `TestTheAlarmVerbRecoversALedgerWhoseCopyFailed` (real files: the copy
@@ -811,6 +814,63 @@ sealed, A resumed and refused, B's record kept and B released; run with
 ledger (`TestTheAlarmVerbReleasesAHoldWithNoSlot`,
 `TestADecisionByAlarmAnswersAHoldNoSlotCan`): that ledger is now copied
 and recovered, which the copy-failure row covers.
+
+## The reviewer on Codex's pass on 254f2c2c (`37379e5b`)
+
+- **P2-1, accepted as built in `40254653`.** The decision by alarm on a
+  ledger that does not verify makes the lead's copy through the same code
+  a refusing read uses (`quarantine`, which `ReadLedgerAs` calls), then
+  recovers from that slot in the same apply; the record names the slot and
+  the alarm; it is refused only when the copy fails, in words. The row is
+  Codex's sequence (`TestTheAlarmVerbRecoversALedgerWhoseCopyFailed`).
+- **P2-2, fixed at the root: one record per alarm.** The single
+  `Recovered` field let an older alarm's late decision replace a newer
+  one's. The ledger now keeps `AlarmRecoveries` (`alarm_recoveries`), one
+  record per alarm id: `recordAlarm` appends, never replaces another
+  alarm's record nor `Recovered`, and answers a repeat of the same alarm
+  from its record. `covers` asks whether any sealed record names this
+  hold's alarm (`RecoveryMark.Alarms`, read with the chain's own record in
+  one read by `seatcommit.RecoveriesOf`), or whether the chain's own
+  record names this hold's exact slot and no alarm (`SlotAlarm` empty). A
+  chain continuation starts a new body, which carries only its own
+  decision's record (the earlier body is the refused one, so its records
+  are not trusted; one hold per seat means none is pending then). A's late
+  record therefore cannot take B's away, whatever the interleaving. The
+  under-lock `HeldAlarm` guard of `40254653` stays on top, so an obsolete
+  decision is refused at write time (`recover_alarm_not_held`) instead of
+  sealing a record nothing reads.
+- **The lock order** (in the code above `covers`): the ledger lock (the
+  seat's `flock`, `withLedgerLock`), then the scheduler's mutex `s.mu`.
+  The guard reads `HeldAlarm` under `s.mu` while the decision holds the
+  ledger lock. The tick never takes them the other way round: every
+  `s.mu` section in the scheduler is a copy of one field (`Post`'s
+  append, the tick's drain of `pending`, the relaunch ask, `lastRelaunchAt`,
+  `publishHolds`, `HeldAlarm`), none calls out, and the tick calls the
+  preparer and the reader (which may take the ledger lock) with `s.mu`
+  free. The tick changes the holds (`s.tampered`) without the ledger lock;
+  a hold that changes between a guard and its seal costs nothing, since
+  the record sealed names its own alarm only and every other alarm's
+  record stays.
+- **P3, accepted.** The command shows `--reason "REASON"` (`40254653`);
+  `RECOVER_REFUSAL_WORDS` gives `recover_alarm_not_held` and
+  `recover_alarm_unverified` their words, checked against the codes Go
+  writes (`pi/test/recovery.test.ts` reads both sources). No screen key
+  sends the decision yet (the lead runs the verb, which prints the code
+  and its detail); a key that does reads this table.
+- **What the sealed ledger holds** changes again (the compatibility item
+  in "Residual risk"): `alarm_recoveries`, and `recovered.alarm`.
+
+Rows (each with its revert run below):
+`TestAnOlderAlarmsRecordLandingAfterBsLeavesBReleased` (real files: B's
+decision by alarm sealed, then an older alarm A's record landing after
+it from a writer with no guard; both records kept; B released, and it
+stays released); the barrier row
+`TestADelayedAlarmDecisionNeverSealsOverANewerRecovery` ends with B
+released and A refused, as before; three rows read the alarm's record
+from `AlarmRecoveries` now (`TestTheAlarmVerbReleasesAHoldWithNoSlot`,
+`TestADelayedAlarmDecisionNeverSealsOverANewerRecovery`,
+`TestADecisionByAlarmAnswersAHoldNoSlotCan`, which also checks that Y's
+chain record stays beside the alarm's); the refusal words.
 
 ## The quarantine layout read
 
@@ -865,6 +925,8 @@ CLI.
 | lower-seq slot | A hold on slot seq150; the ledger records the recovery of a lower-seq slot (seq1): 10 ticks release nothing; the decision by the hold's alarm releases it, and the release line names the alarm. | `internal/scheduler` `TestALowerSeqSlotLeavesTheHoldToItsAlarm` |
 | late decision | A newer hold (alarm B); the ledger records a decision by an earlier alarm A (landing late): 20 ticks release nothing; B's own decision releases it. | `internal/scheduler` `TestALateDecisionForAnEarlierAlarmDoesNotReleaseANewerHold` |
 | copy failed | Real files: the quarantine's mode 0755 refuses the prepare's copy (a hold with no slot, `seq unknown`); the decision by alarm is `recover_alarm_unverified` naming the copy's failure, the ledger unchanged; the mode repaired, the decision by alarm copies the live bytes and recovers from the copy (link 2, the record naming the slot and the alarm), the decision line naming the copy; the next ticks release, reset and dispatch. | `internal/schedproc` `TestTheAlarmVerbRecoversALedgerWhoseCopyFailed` |
+| older record after B's | Real files: B holds the seat and B's decision by alarm is sealed; an older alarm A's record lands after it (no guard); the ledger keeps both (`RecoveriesOf` answers `[B A]`); the next ticks release B and five more release nothing, B not held again. | `internal/schedproc` `TestAnOlderAlarmsRecordLandingAfterBsLeavesBReleased` |
+| the refusal words | `RECOVER_REFUSAL_WORDS` has words for `recover_alarm_not_held` and `recover_alarm_unverified`, the codes read from `internal/schedproc/recover.go` and `internal/seatcommit/recover.go`, the words carrying no code. | `pi/test/recovery.test.ts` (the fourth test) |
 | delayed write | Real writers with a barrier: A's decision by alarm held after the socket's check; A released by its slot; B held and B's decision sealed; A resumed: `recover_alarm_not_held`, nothing written, the record still names B; the next ticks release B. | `internal/schedproc` `TestADelayedAlarmDecisionNeverSealsOverANewerRecovery` |
 | released before the seal | The decision by alarm for A passes the socket's check (`HeldAlarm` is A); before its record is sealed the lead cancels A's task, the ledger records A's slot and the next prepare is refused again: one tick releases A and raises B (a new id), the next task blocked; the record then sealed names A: 20 ticks release nothing, B stands; B's own decision releases it. | `internal/scheduler` `TestADecisionForAReleasedAlarmDoesNotReleaseTheNextHold` |
 | the decision by alarm | Real files through the apply step: a hold with no slot (alarm `3fa9c1d2`), its task blocked with its detail; on the tampered ledger the decision is `recover_alarm_unverified` and the ledger is unchanged; a wrong id is `recover_alarm_not_held` naming the held alarm; the document put back, 5 ticks release nothing; the decision is OK, `Verified`, link 2, the record names the alarm and no slot; the next ticks release, reset and dispatch; the decision line says "released alarm 3fa9c1d2 of seat ..."; the same id once the hold is gone is `recover_alarm_not_held`. | `internal/schedproc` `TestTheAlarmVerbReleasesAHoldWithNoSlot` |
@@ -2311,6 +2373,39 @@ not ok 3 - the alarm: the stop line and the block name the hold's alarm and the 
 ```
 restored and re-run (exit 0): `ok 1`, `ok 2`, `ok 3`, `# pass 3`.
 
+### The reviewer on Codex's pass on 254f2c2c (`37379e5b`)
+
+Each on `37379e5b`, by the same script.
+
+```
+go test -count=1 -run ^TestAnOlderAlarmsRecordLandingAfterBsLeavesBReleased$ ./internal/schedproc/
+```
+Reverted `internal/seatcommit/recover.go:427` (back to the single field:
+the alarm's record replaces the list):
+```
+	l.AlarmRecoveries = append(append([]LedgerRecovery(nil), live.AlarmRecoveries...), LedgerRecovery{...})
+```
+to:
+```
+	l.AlarmRecoveries = append([]LedgerRecovery(nil), LedgerRecovery{...})
+```
+First failing line (exit 1):
+```
+recover_test.go:617: B was not released after A's record landed: [{Kind:seat_requested TaskID:t1 ...} ...]
+```
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	0.642s`.
+
+Run again on `37379e5b`, each exit 1 on its row, restored exit 0: the
+guard only outside the lock (`internal/schedproc/recover.go:156`,
+`recover_test.go:579: A after B's recovery: {OK:true ...}`; with the
+records per alarm A's late seal no longer strands B, but the row refuses
+it at write time), no copy on an unverified ledger
+(`internal/seatcommit/recover.go:395`, `recover_test.go:498: the decision
+while the copy fails: {OK:false Code:recover_alarm_unverified Detail:...
+cannot be read as a document ...}`), and the `recover_alarm_unverified`
+entry dropped from `RECOVER_REFUSAL_WORDS` (`pi/extensions/lib/words.ts:721`,
+`not ok 4 - ... error: 'recover_alarm_unverified has no words'`).
+
 ## Gates
 
 The PR lands in two phases (the plan reviewer's changed ruling on the
@@ -2325,8 +2420,27 @@ on you" only when both are empty; its row (a tamper block with no gates
 shows under "waiting on you", never the "nothing" line) and revert run go
 in this note, and the gates run again on that head.
 
-Phase one, on `40254653` (Codex on `254f2c2c`; this note is the only
-change after it), each from the worktree root; the whole-module test,
+Phase one, on `37379e5b` (the reviewer's rulings on Codex's pass on
+`254f2c2c`; this note is the only change after it), each from the
+worktree root; the whole-module test, `npm test` and `make ci` under the
+gate lock, one after another, each printing `37379e5b` inside the lock:
+
+- `gate-lock.sh 904-gates -- sh -c 'go build ./... && go vet ./... && go
+  test -count=1 ./...'`: exit 0, 56 packages `ok`, no `FAIL`.
+- `gate-lock.sh 904-pi -- sh -c 'cd pi && npm test'`: exit 0, `ℹ tests
+  120`, `ℹ pass 119`, `ℹ fail 0`, `ℹ skipped 1` (one test more: the
+  refusal words); `cd pi && node scripts/lint.mjs`: exit 0.
+- `gate-lock.sh 904-ci -- sh -c 'PATH=<job tmp>/pyvenv/bin:$PATH
+  NPM_FLAGS=--offline make ci'`: exit 0, 70 `ok` (34 from the cache), no
+  `FAIL`.
+- `make fmt-check` with Go 1.26's gofmt first on PATH: exit 0;
+  `GOOS=windows go build ./internal/seatcommit/`: exit 0; the redact
+  check and the skill checks on this note: exit 0.
+
+Every gate passed on its first run, none repeated.
+
+Before that, phase one on `40254653` (Codex on `254f2c2c`; the note
+`16c62fb4` the only change after it), each from the worktree root; the whole-module test,
 `npm test` and `make ci` under the gate lock, one after another, each
 printing `40254653` inside the lock:
 
@@ -2605,7 +2719,12 @@ exit 0; the windows build exit 0.
   either. This is the rc.2 rule (0e, before the release that carries
   0c-B): a ledger a newer amq-squad wrote is that distinct refusal, not a
   tamper; until then a downgrade reads a recovered seat as tampered, with
-  its evidence kept (0c-A) and this recovery the way back.
+  its evidence kept (0c-A) and this recovery the way back. The decision by
+  alarm adds to what the sealed ledger holds (`recovered.alarm`, and
+  `alarm_recoveries`, one record per alarm; `28051cd6`, `37379e5b`): an
+  older reader drops those fields too and refuses the ledger the same
+  way. #904 is rc.2, after 0e, so a newer ledger is 0e's distinct
+  refusal by then.
 - The evidence refs of discards the quarantined body recorded are not
   carried (the discard records are untrusted); the refs stay in the seat
   repository under `refs/amq-squad/evidence/<seat>/...` and the counter
