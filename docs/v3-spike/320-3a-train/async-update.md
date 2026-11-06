@@ -12,7 +12,11 @@ by the lead after the third gate run below, for the four words entries the
 pi words rows require). `internal/scheduler/` was in the declared set and needed no change:
 `scheduler.Decision` already carries the fields the decision line uses.
 `internal/task/` gained `Store.BindPRFrom` (Codex's second pass on #903,
-below); `BindPR` itself is unchanged.
+below); `BindPR` itself is unchanged. The pi words table carries every
+audit entry kind this PR adds (`update_requested`, `update_failed`,
+`update_ambiguous`, `rebind_superseded`), the rule
+`branch_update_unconfirmed` and the two decision kinds, since its row 7
+reads them from the Go sources.
 
 ## What happened (the evidence)
 
@@ -845,6 +849,15 @@ build ./... && go vet ./...` exit 0; `go test -count=1
 ./internal/mergetrain/ ./internal/cli/ ./internal/schedproc/
 ./internal/task/` all four `ok`, exit 0; `go run ./scripts/redact-evidence
 -check docs/v3-spike/320-3a-train/` on this note: exit 0.
+
+On `3217d22d` (the pi words entries for `update_failed`,
+`update_ambiguous` and `rebind_superseded`, the entry kinds the #903 batch
+added; CI on `5dedb4b7` had stopped at pi-test's row 7, `train entry kind
+update_failed has no words`): `cd pi && npm test` `ℹ tests 116`, `ℹ pass
+115`, `ℹ fail 0`, `ℹ skipped 1`, exit 0; `node --test test/words.test.ts`
+exit 0; `go build ./... && go vet ./...` exit 0; `go run
+./scripts/redact-evidence -check docs/v3-spike/320-3a-train/` on this
+note: exit 0.
 
 ## Residual risk
 
