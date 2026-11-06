@@ -1100,9 +1100,9 @@ type updateOnlyBlocking struct {
 }
 
 func (u *updateOnlyBlocking) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
-	u.mutated = true
-	u.mutatedAt = time.Now()
-	return u.Forge.Rebase(ctx, repository, number, expect)
+	out, err := u.Forge.Rebase(ctx, repository, number, expect) // the fake's git work, under the suite's load, is before the clock starts
+	u.mutated, u.mutatedAt = true, time.Now()
+	return out, err
 }
 
 func (u *updateOnlyBlocking) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
@@ -1187,9 +1187,9 @@ type readBackVia struct {
 }
 
 func (r *readBackVia) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
-	r.mutated = true
-	r.mutatedAt = time.Now()
-	return r.Forge.Rebase(ctx, repository, number, expect)
+	out, err := r.Forge.Rebase(ctx, repository, number, expect) // the fake's git work, under the suite's load, is before the clock starts
+	r.mutated, r.mutatedAt = true, time.Now()
+	return out, err
 }
 
 func (r *readBackVia) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
