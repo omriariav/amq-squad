@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // The one admission check (the plan reviewer's rulings on Codex's third
@@ -511,5 +513,70 @@ func TestSupersedeCannotLandBetweenReadmissionAndBind(t *testing.T) {
 	res, err := f.train.Run(context.Background(), req)
 	if err != nil || res.PRs[0].Status != "refused" || !slices.ContainsFunc(res.PRs[0].Refusals, func(r Refusal) bool { return r.Rule == RuleForcePush }) {
 		t.Fatalf("the superseded head was taken for the train's own: %v %+v", err, res.PRs)
+	}
+}
+
+// committedBindFrom writes the binding durably and then fails as the store
+// does past its commit point (the after-image not applied).
+type committedBindFrom struct{ StoreBinder }
+
+func (b committedBindFrom) BindPRFrom(taskID, repository string, pr int, from, head string) error {
+	if err := b.StoreBinder.BindPRFrom(taskID, repository, pr, from, head); err != nil {
+		return err
+	}
+	return &task.CommittedError{ID: "txn-test", Cause: errors.New("apply the after-image: disk full")}
+}
+
+// Codex's fifth pass on #903 (P2-1): a CommittedError crossed the store's
+// commit point, so the binding is durable: it counts as written, the
+// readmission stands and there is no undo; the verb reports the binding
+// with the store's replay pending. H is admitted and bound. Reverted (the
+// undo on every error), H is superseded under a durable binding.
+func TestCommittedBindIsNotUndone(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	_, moved := moveBranch(f, "pr1", nil, true)
+	s := f.tasks()
+	res, err := Rebind(context.Background(), RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: committedBindFrom{StoreBinder{Store: s}}, PR: 1, From: old, To: moved, Lead: "lead"})
+	if err != nil || !strings.Contains(res.Push, "the binding is written; the task store's replay is pending") {
+		t.Fatalf("the committed write: %v %+v", err, res)
+	}
+	entries, _ := f.train.Audit.Read()
+	if !headAdmitted(entries, fixtureRepo, 1, moved) || boundHead(t, f, id) != moved ||
+		slices.ContainsFunc(entries, func(e Entry) bool { return e.Kind == "rebind_superseded" && e.Run == res.Run }) {
+		t.Fatalf("the committed write was undone: admitted %v, bound %s, %v", headAdmitted(entries, fixtureRepo, 1, moved), boundHead(t, f, id), kinds(entries, 1))
+	}
+	f.realRun(&req)
+	if run, err := f.train.Run(context.Background(), req); err != nil || run.PRs[0].Status != "merged" {
+		t.Fatalf("the committed head did not land: %v %+v", err, run.PRs)
+	}
+}
+
+// trainBindsFirst binds the task at the verb's target right before the
+// verb's conditional write: a concurrent train's recovery that proved and
+// bound the same head first.
+type trainBindsFirst struct{ StoreBinder }
+
+func (b trainBindsFirst) BindPRFrom(taskID, repository string, pr int, from, head string) error {
+	if _, err := b.Store.BindPR(taskID, repository, pr, head, time.Now()); err != nil {
+		return err
+	}
+	return b.StoreBinder.BindPRFrom(taskID, repository, pr, from, head)
+}
+
+// Codex's fifth pass on #903 (P2-2), the same-target race: the train binds
+// H first, then the verb's BindPRFrom(old, H) finds the task already bound
+// at H, the store's read-only success, so the verb ends in success with H
+// admitted and bound (no undo of a correct binding). Reverted (the strict
+// mismatch), the verb supersedes a correctly bound H.
+func TestTrainBindingTheSameHeadFirstIsTheVerbsSuccess(t *testing.T) {
+	f, id, old, _ := strictBound(t)
+	_, moved := moveBranch(f, "pr1", nil, true)
+	s := f.tasks()
+	if _, err := Rebind(context.Background(), RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: trainBindsFirst{StoreBinder{Store: s}}, PR: 1, From: old, To: moved, Lead: "lead"}); err != nil {
+		t.Fatalf("the verb after the train bound the same head: %v", err)
+	}
+	entries, _ := f.train.Audit.Read()
+	if !headAdmitted(entries, fixtureRepo, 1, moved) || boundHead(t, f, id) != moved {
+		t.Fatalf("the correctly bound head: admitted %v, bound %s, %v", headAdmitted(entries, fixtureRepo, 1, moved), boundHead(t, f, id), kinds(entries, 1))
 	}
 }

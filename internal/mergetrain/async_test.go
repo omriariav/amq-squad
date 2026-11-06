@@ -580,8 +580,17 @@ func TestRebindRefusesWhenTheBindingMovedMeanwhile(t *testing.T) {
 	if res, err := f.train.Run(context.Background(), req); err != nil || res.PRs[0].Status != "merged" {
 		t.Fatalf("the re-admitted head did not land: %v %+v", err, res.PRs)
 	}
-	if _, err := s.BindPRFrom(id, fixtureRepo, 1, old, moved, time.Now()); !errors.Is(err, task.ErrPRBindingMismatch) || boundHead(t, f, id) != moved {
+	if _, err := s.BindPRFrom(id, fixtureRepo, 1, old, other, time.Now()); !errors.Is(err, task.ErrPRBindingMismatch) || boundHead(t, f, id) != moved {
 		t.Fatalf("BindPRFrom with the wrong head: %v (bound %s)", err, boundHead(t, f, id))
+	}
+	// the target already applied (Codex's fifth pass on #903): a read-only
+	// success, the merge fact the run above recorded untouched
+	before, _ := s.Get(id)
+	if tk, err := s.BindPRFrom(id, fixtureRepo, 1, old, moved, time.Now()); err != nil || tk.PRHead != moved {
+		t.Fatalf("BindPRFrom to the head already bound: %v %+v", err, tk)
+	}
+	if after, _ := s.Get(id); after.PRMergeHead != before.PRMergeHead || after.PRMergeCommit != before.PRMergeCommit || before.PRMergeCommit == "" || !after.UpdatedAt.Equal(before.UpdatedAt) {
+		t.Fatalf("the read-only success wrote: before %+v, after %+v", before, after)
 	}
 	if tk, _ := s.BindPRFrom(id, fixtureRepo, 1, moved, other, time.Now()); tk.PRHead != other {
 		t.Fatalf("BindPRFrom with the right head: %+v", tk)

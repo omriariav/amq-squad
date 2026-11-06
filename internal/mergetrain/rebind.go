@@ -147,9 +147,12 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 	// From, checked under the store's lock (Codex on #903): a train run
 	// that advanced the binding since the snapshot above keeps its head and
 	// its merge fact. A write that fails there (the binding moved, or a
-	// store error) is undone in the same section by a terminal
-	// rebind_superseded entry with the reason rebind_failed, so the journal
-	// shows the head not admitted. A crash between the readmission and the
+	// store error before its commit point) is undone in the same section by
+	// a terminal rebind_superseded entry with the reason rebind_failed, so
+	// the journal shows the head not admitted; a write past the commit
+	// point (task.CommittedError) is durable and counts as written. A
+	// binding already at the target (a train's recovery bound the same head
+	// first) is the store's read-only success. A crash between the readmission and the
 	// write leaves the head admitted and unbound: the lead asked for it,
 	// nothing binds it but bindAdmitted, and the verb run again binds it.
 	// The rebase and rebind entries above stay journaled either way;
@@ -166,8 +169,13 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 		return Entry{Kind: "rebind_superseded", Run: res.Run, Repository: repository, Base: cur.BaseRef, PR: in.PR, Task: tk.ID, Head: in.From, NewHead: in.To, Detail: "rebind_failed: " + bindFailure(err)}
 	}
 	_, err = bindAdmitted(in.Audit, in.Binder, nil, bindWrite{Task: tk.ID, Repository: repository, PR: in.PR, From: in.From, To: in.To, Conditional: true, Readmit: true, Readmitted: readmitted, Undo: undo})
+	var committed *task.CommittedError
 	switch {
 	case err == nil:
+	case errors.As(err, &committed):
+		// the binding crossed the store's commit point and is durable; the
+		// store replays its after-image at its next locked access
+		res.Push += " (the binding is written; the task store's replay is pending: " + err.Error() + ")"
 	case errors.Is(err, errReadmittedNotWritten):
 		return RebindResult{}, &RebindRefusal{Code: RefusedRebindFailed, Detail: err.Error() + "; nothing is bound"}
 	case errors.Is(err, task.ErrPRBindingMismatch):

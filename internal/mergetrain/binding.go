@@ -146,10 +146,15 @@ type bindWrite struct {
 	Undo             func(err error) Entry
 }
 
-// bindAdmitted is the only writer of a task's PR binding (Codex's fourth
-// pass on #903): every binding write of the train and of the lead's verb
-// goes through it, and a source guard fails on any other reference to
-// BindPR or BindPRFrom. It is one critical section under the journal lock
+// bindAdmitted is the only binding writer in the train and the lead's verb
+// (Codex's fourth pass on #903): every binding write of this package goes
+// through it, and a source guard fails on any other reference to BindPR or
+// BindPRFrom in the package. The harness writes bindings outside it, and
+// outside this claim (Codex's fifth pass): the commit step's
+// task.Store.BindPR (internal/cli/seat_commit.go:221, the BindPR hook of
+// internal/seatcommit/commit.go:1415) and task.Store.CompleteBound
+// (internal/task/scope.go:140, from internal/cli/seat_commit.go:123 and
+// internal/scheduler/scheduler.go:740). It is one critical section under the journal lock
 // (Audit.AuditLockPath, `<audit.jsonl>.lock`, the exclusive flock every
 // Append takes, so every writer of rebind_superseded and rebind_readmitted
 // takes it too): the fresh read of the journal, headAdmitted on that read,
@@ -166,6 +171,9 @@ type bindWrite struct {
 // the lead's merge-train rebind verb once the lock is released, and the
 // error is ErrHeadSuperseded. A readmission that could not be appended
 // writes no binding and returns an error wrapping errReadmittedNotWritten.
+// A write that crossed the store's commit point and failed after it
+// (*task.CommittedError) is returned as it is, with no undo: the binding
+// is durable.
 func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (admitted bool, err error) {
 	err = a.locked(func() error {
 		journal, err := a.Read()
@@ -186,7 +194,13 @@ func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (adm
 		} else {
 			err = b.BindPR(w.Task, w.Repository, w.PR, w.To)
 		}
-		if err != nil && w.Undo != nil {
+		// a CommittedError crossed the store's commit point: the binding is
+		// durable and the store replays its after-image at the next locked
+		// access, so it counts as written (Codex's fifth pass on #903): the
+		// readmission stands and there is no undo. The undo runs only on an
+		// error from before the commit point.
+		var committed *task.CommittedError
+		if err != nil && w.Undo != nil && !errors.As(err, &committed) {
 			if uerr := a.appendLocked(w.Undo(err)); uerr != nil {
 				return errors.Join(err, fmt.Errorf("the undo entry was not written: %w", uerr))
 			}
