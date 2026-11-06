@@ -726,6 +726,29 @@ func (s Store) Cancel(id, actor, reason string, now time.Time) (Task, error) {
 	})
 }
 
+// MarkAttemptCleaned durably records that one cancelled attempt was archived
+// and its seat worktree cleaned. It is idempotent so a scheduler that cleaned
+// successfully but restarted around the store write may safely retry.
+func (s Store) MarkAttemptCleaned(id string, attempt int, now time.Time) (Task, error) {
+	return s.mutate(id, now, func(t *Task, _ *tasks) error {
+		for i := range t.Attempts {
+			a := &t.Attempts[i]
+			if a.N != attempt {
+				continue
+			}
+			if a.Outcome != OutcomeCancelled {
+				return fmt.Errorf("task %s attempt %d ended %s, not cancelled", id, attempt, a.Outcome)
+			}
+			if a.CleanedAt == nil {
+				at := now.UTC()
+				a.CleanedAt = &at
+			}
+			return nil
+		}
+		return fmt.Errorf("task %s has no attempt %d", id, attempt)
+	})
+}
+
 // SetWait records why a pending task waits; it writes only on a change.
 func (s Store) SetWait(id, reason string, now time.Time) (bool, error) {
 	changed := false

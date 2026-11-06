@@ -225,6 +225,17 @@ type Scheduler struct {
 	// budgetWarned remembers the absolute end already warned for an attempt.
 	// An extension changes the end and permits one new warning.
 	budgetWarned map[string]time.Time
+	// prepareFailed and cleanDeferred suppress identical per-tick decisions.
+	// A changed reason is a new actionable state and is logged once.
+	prepareFailed map[string]string
+	cleanDeferred map[string]string
+	// exitRefused is the last refusal logged per cancelled attempt whose
+	// check holds the seat (exits.go, Codex's D on #898): once per reason.
+	exitRefused map[string]string
+	// held is each seat's lease (task#attempt) at the end of the previous
+	// tick (rememberHeld): a cancellation of one of these is a turn that is
+	// live on the seat, which is closed before its clean (3.2.0-2b-1).
+	held map[string]string
 }
 
 // WaitNoRosterSeat is the wait of a pending task whose route names a pool
@@ -857,9 +868,17 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			}
 			if s.Preparer != nil {
 				if err := s.Preparer.PrepareSeat(handle); err != nil {
-					log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
+					if s.prepareFailed == nil {
+						s.prepareFailed = map[string]string{}
+					}
+					key := handle + "#" + t.ID
+					if s.prepareFailed[key] != err.Error() {
+						log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
+						s.prepareFailed[key] = err.Error()
+					}
 					continue
 				}
+				delete(s.prepareFailed, handle+"#"+t.ID)
 			}
 			got, err := s.Store.Grant(t.ID, handle, r.Pool, cfg.LeaseDuration, now)
 			var unverified *task.VerifierUnconfiguredError
@@ -1029,6 +1048,9 @@ func (s *Scheduler) wait(t task.Task, reason string, now time.Time) error {
 }
 
 func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log func(Decision)) {
+	// The tick's last step on every path: the leases as they stand are what
+	// the next tick's cancel scan compares a cancellation against.
+	s.rememberHeld(list)
 	var handles []string
 	for h := range s.seats {
 		handles = append(handles, h)
