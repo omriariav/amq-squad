@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -98,6 +99,25 @@ func (r *liveRig) reported(title string) (task.Task, string) {
 	return tk, ""
 }
 
+// stepEnded waits, bounded, for the committer's step of a task to end: the
+// job's done channel closes once the step returned, which is what the
+// tick's sweep checks (CancelCommit, without waiting). A job already reaped
+// has ended. A step that never ends fails the row.
+func (r *liveRig) stepEnded(taskID string) {
+	r.t.Helper()
+	r.c.mu.Lock()
+	j := r.c.jobs[taskID]
+	r.c.mu.Unlock()
+	if j == nil {
+		return
+	}
+	select {
+	case <-j.done:
+	case <-time.After(10 * time.Second):
+		r.t.Fatalf("the committer's step of %s did not end within 10s", taskID)
+	}
+}
+
 func (r *liveRig) exitsRaw() string {
 	raw, _ := os.ReadFile(filepath.Join(r.root, "exits.json"))
 	return string(raw)
@@ -155,10 +175,21 @@ func TestTickNeverWaitsOnARunningStepsSeat(t *testing.T) {
 // P2-1: a task cancelled while its step runs: the step is cancelled, its
 // result discarded, its entry dropped, and the seat leases again within two
 // ticks.
+//
+// The tick after the cancel issues the step's cancel and checks the job
+// without waiting; the entry drops at the first tick that finds the step
+// ended. The row waits for that end (the step's return, then the
+// committer's job) before the next task exists: were the task added while
+// the step still ran, that tick would launch a fresh seat for it (the fake
+// launcher launches whenever no seat is idle), and the row's seat question
+// would turn on the load, not the sweep.
 func TestCancelDuringARunningStepFreesTheSeat(t *testing.T) {
 	var cancelled atomic.Bool
+	var returned sync.Once
+	stepReturned := make(chan struct{}) // closed as the step returns
 	c := &Committer{Inline: 20 * time.Millisecond,
 		Step: func(ctx context.Context, _ string, _ task.Task) seatcommit.Result {
+			defer returned.Do(func() { close(stepReturned) })
 			select {
 			case <-ctx.Done():
 				cancelled.Store(true)
@@ -176,6 +207,15 @@ func TestCancelDuringARunningStepFreesTheSeat(t *testing.T) {
 	if _, err := r.store.Cancel(a.ID, "lead", "no longer needed", r.now); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := r.tick(func() {}); err != nil { // the sweep cancels the step
+		t.Fatal(err)
+	}
+	select {
+	case <-stepReturned:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the step did not return within 10s of its cancel")
+	}
+	r.stepEnded(a.ID)
 	next, err := r.store.Add(task.AddInput{Title: "next", Class: "summarize", Pool: &sonnet}, r.now)
 	if err != nil {
 		t.Fatal(err)
