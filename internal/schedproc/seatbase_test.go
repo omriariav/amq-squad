@@ -173,11 +173,41 @@ func TestSeatBaseConflictingLocalChangeRefuses(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wt, "a.txt"), []byte("seat's leftover\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Plan(scheduler.SeatRequest{ID: "r2", Pool: seatBasePool}); err == nil || !strings.Contains(err.Error(), ReasonSeatWorktreeDirty) {
+	if _, err := s.Plan(scheduler.SeatRequest{ID: "r2", Pool: seatBasePool}); err == nil || !strings.Contains(err.Error(), ReasonSeatWorktreeDirty) || strings.Contains(err.Error(), "git read-tree") {
 		t.Fatalf("a conflicting local change: %v", err)
 	}
 	if raw, _ := os.ReadFile(filepath.Join(wt, "a.txt")); string(raw) != "seat's leftover\n" {
 		t.Fatalf("the local change was lost: %q", raw)
+	}
+}
+
+func TestSeatBaseReadTreeFailureKeepsGitDiagnostic(t *testing.T) {
+	q, remote, other := seatBaseFixture(t)
+	s := &Slots{Squad: q, Target: seatcommit.Target{PushURL: remote, BaseBranch: "main"}}
+	first, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := first.Seats[0].Worktree
+	s.ReleaseRequest("r1")
+	commitFile(t, other, "move.txt", "upstream\n", "move the base")
+	gitRun(t, other, "push", "-q", "origin", "main")
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not on PATH")
+	}
+	fake := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\ncase \" $* \" in *\" read-tree \"*) echo synthetic-read-tree-failure >&2; exit 91;; esac\nexec '" + real + "' \"$@\"\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s.Git = fake
+	_, err = s.Plan(scheduler.SeatRequest{ID: "r2", Pool: seatBasePool})
+	if err == nil || !strings.Contains(err.Error(), "git read-tree") || !strings.Contains(err.Error(), "synthetic-read-tree-failure") || strings.Contains(err.Error(), ReasonSeatWorktreeDirty) {
+		t.Fatalf("read-tree failure = %v", err)
+	}
+	if got := gitRun(t, wt, "status", "--porcelain"); got != "" {
+		t.Fatalf("failed read-tree dirtied the worktree: %s", got)
 	}
 }
 
@@ -640,5 +670,39 @@ func TestSeatBaseForeignGitdirRefuses(t *testing.T) {
 	}
 	if _, err := s.Plan(scheduler.SeatRequest{ID: "ok", Pool: seatBasePool}); err != nil {
 		t.Fatalf("its own .git again: %v", err)
+	}
+}
+
+// 3.2.0-2b-1 item 2 (Codex's E on #898, R3): a local change the base move
+// would not touch, and an untracked file, launched before this PR (the
+// read-tree saw no conflict, or ran not at all on an unmoved base); the
+// plan's own check refuses both with its code and the seat named, before
+// any read-tree, and leaves the files as they are. Reverted (the tracked
+// and untracked listings of cleanWorktree), both plans succeed.
+func TestSeatBaseRefusesANonConflictingDirtyOrUntrackedFile(t *testing.T) {
+	for _, tc := range []struct{ name, file, body string }{
+		{"a tracked file changed off the base move", "a.txt", "seat's edit\n"},
+		{"an untracked file", "scratch.txt", "seat's scratch\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q, remote, _ := seatBaseFixture(t)
+			s := &Slots{Squad: q, Target: seatcommit.Target{PushURL: remote, BaseBranch: "main"}}
+			first, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: seatBasePool})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wt := first.Seats[0].Worktree
+			s.ReleaseRequest("r1")
+			if err := os.WriteFile(filepath.Join(wt, tc.file), []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err = s.Plan(scheduler.SeatRequest{ID: "r2", Pool: seatBasePool})
+			if err == nil || !strings.Contains(err.Error(), ReasonSeatWorktreeDirty+": seat c1:") || strings.Contains(err.Error(), "git ") {
+				t.Fatalf("the dirty worktree launched, or was refused in git's words: %v", err)
+			}
+			if raw, _ := os.ReadFile(filepath.Join(wt, tc.file)); string(raw) != tc.body {
+				t.Fatalf("the local file was lost: %q", raw)
+			}
+		})
 	}
 }

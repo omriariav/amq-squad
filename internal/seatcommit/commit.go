@@ -541,6 +541,11 @@ func ArchiveAttemptReason(root, handle, gitBin string, env []string, taskID stri
 		if err != nil {
 			return err
 		}
+		// The first writer of a task and attempt keeps the record (fix 1b's
+		// row in internal/cli, "on demand keeps the first archived
+		// attempt"): the typed widen's dry run reads the snapshot of the
+		// stop. A tree the worktree holds later under the same attempt is
+		// the clean's to record (cleanSeat compares trees, Codex's B).
 		for _, d := range l.Discarded {
 			if d.TaskID == taskID && d.Attempt == attempt {
 				return nil
@@ -582,6 +587,16 @@ func ArchiveAttemptReason(root, handle, gitBin string, env []string, taskID stri
 	})
 	return archived, err
 }
+
+// RefusalSeatHeadDetachedUnmerged refuses a clean of a worktree whose HEAD
+// (a task branch, a foreign branch or a detached HEAD) holds a commit the
+// resting commit does not and the ledger did not record: the harness never
+// discards a local commit (slots.go's code, the same words). The clean
+// says so once and leaves the worktree as it is; the lead decides. Named
+// Refusal*, not Reason*: it is the clean's refusal, never a commit
+// refusal (routing's table reads this package's Reason* constants), and
+// the words scan reads both prefixes.
+const RefusalSeatHeadDetachedUnmerged = "seat_head_detached_unmerged"
 
 // beforeArchiveAttemptWrite is a test seam held inside ArchiveAttempt's
 // ledger critical section, after its snapshot and before its ledger write.
@@ -641,7 +656,7 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 			return false, aerr
 		}
 		if ahead != "" && !recorded {
-			return false, fmt.Errorf("seat_head_detached_unmerged: seat %s: the worktree's branch %s holds an unrecorded commit %s; the harness never discards a local commit", handle, strings.TrimPrefix(rp.HeadRef, "refs/heads/"), ahead)
+			return false, fmt.Errorf("%s: seat %s: the worktree's branch %s holds an unrecorded commit %s; the harness never discards a local commit", RefusalSeatHeadDetachedUnmerged, handle, firstNonEmpty(strings.TrimPrefix(rp.HeadRef, "refs/heads/"), "(detached HEAD)"), ahead)
 		}
 	}
 	head, _ := repo.line("rev-parse", "--verify", "-q", "refs/heads/"+rec.Branch)
@@ -654,9 +669,14 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 	if discarded {
 		raw, _ := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
 		taskID, attempt, last := lastAttempt(list, handle)
+		// Nothing is removed that the ledger does not hold (Codex's B on
+		// #898): the attempt's earlier discard counts only when its tree
+		// is the tree about to be removed; a worktree edited since (a
+		// repair, a second clean) gets a second discard under the same
+		// task and attempt, at its own time.
 		already := false
 		for _, d := range l.Discarded {
-			already = already || d.TaskID == taskID && d.Attempt == attempt
+			already = already || (d.TaskID == taskID && d.Attempt == attempt && d.Tree == tree)
 		}
 		if !already {
 			expireEvidence(repo, &l, now)

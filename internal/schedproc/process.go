@@ -285,6 +285,12 @@ type stoppedSeatCleaner interface {
 	CleanStopped(handle string) (bool, error)
 }
 
+// manualCleanDecision is the lead's `seat clean` (3.2.0-2b-1 items 3 and
+// 9), applied after the decision socket proved the sender: refused in
+// words while the seat holds a lease or its process runs (the liveness
+// check's proof; an unreadable one refuses too), else the preparer's
+// CleanStopped archives the seat's latest ended attempt and cleans. The
+// reply's code sits below the rule in the CLI's words.
 func manualCleanDecision(store task.Store, live scheduler.SeatLiveness, preparer scheduler.SeatPreparer) func(string, CleanRequest) DecideReply {
 	return func(_ string, req CleanRequest) DecideReply {
 		handle, err := task.SeatHandle(req.Seat)
@@ -295,8 +301,8 @@ func manualCleanDecision(store task.Store, live scheduler.SeatLiveness, preparer
 		if err != nil {
 			return DecideReply{Code: "seat_clean_failed", Detail: err.Error()}
 		}
-		if task.HeldBy(handle, list) != nil {
-			return DecideReply{Code: "seat_running", Detail: fmt.Sprintf("seat %s is still running; stop it first", handle)}
+		if held := task.HeldBy(handle, list); held != nil {
+			return DecideReply{Code: "seat_running", Detail: fmt.Sprintf("seat %s is still running (it holds %s); stop it first", handle, held.ID)}
 		}
 		if live == nil {
 			return DecideReply{Code: "seat_liveness_unknown", Detail: fmt.Sprintf("seat %s's process identity cannot be checked; refused", handle)}

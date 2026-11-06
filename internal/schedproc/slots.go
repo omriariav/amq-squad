@@ -235,9 +235,16 @@ const ReasonSeatHeadUnreadable = "seat_head_unreadable"
 // discards a local commit.
 const ReasonSeatHeadDetachedUnmerged = "seat_head_detached_unmerged"
 
-// ReasonSeatWorktreeDirty refuses a roster plan before read-tree can expose
-// git's lower-level text.
+// ReasonSeatWorktreeDirty refuses a roster plan of a seat whose worktree
+// has local changes, tracked or untracked (3.2.0-2b-1 item 2): the plan's
+// own check, after an index refresh, with the seat named; never read-tree's
+// text, which appears below the rule only when read-tree fails anyway.
 const ReasonSeatWorktreeDirty = "seat_worktree_dirty"
+
+// ReasonSeatWorktreeCheckFailed refuses a roster plan whose cleanliness
+// check could not run (git's diff-index or ls-files failed, or the refresh
+// failed on a tree the two then called clean).
+const ReasonSeatWorktreeCheckFailed = "seat_worktree_check_failed"
 
 // ReasonSeatBranchUnpushed refuses a seat's launch when its local resting
 // branch holds commits the base tip does not: the harness never discards a
@@ -387,6 +394,17 @@ func (g baseGit) moveWorktree(gd, common string, seat seatlaunch.Seat, head, tip
 	return err
 }
 
+// cleanWorktree is the roster plan's own dirty-worktree check (3.2.0-2b-1
+// item 2, the instances of 2026-11-05: a stale index refused three plans
+// with "Entry 'MIGRATION.md' not uptodate"): the index is refreshed first
+// through the hardened git (stat data only, never content), then the
+// tracked diff against HEAD and the untracked, non-ignored files are read.
+// A tree clean after the refresh proceeds; it reports whether the refresh
+// changed the index (the caller logs that once). A tree still dirty refuses
+// with ReasonSeatWorktreeDirty and the seat named, before any read-tree.
+// update-index's nonzero exit is read only after the two listings: it
+// exits nonzero for a file that needs an update, which the listings then
+// name as dirty; a failed refresh on a clean tree is the check failing.
 func (g baseGit) cleanWorktree(gd string, seat seatlaunch.Seat) (bool, error) {
 	index := filepath.Join(gd, "index")
 	before, _ := os.ReadFile(index)
@@ -395,13 +413,13 @@ func (g baseGit) cleanWorktree(gd string, seat seatlaunch.Seat) (bool, error) {
 	tracked, trackedErr := g.run(seat.Worktree, env, "diff-index", "--name-only", "HEAD", "--")
 	untracked, untrackedErr := g.run(seat.Worktree, env, "ls-files", "--others", "--exclude-standard")
 	if trackedErr != nil || untrackedErr != nil {
-		return false, fmt.Errorf("seat_worktree_check_failed: seat %s: the worktree cleanliness check failed", seat.Handle)
+		return false, fmt.Errorf("%s: seat %s: the worktree cleanliness check failed", ReasonSeatWorktreeCheckFailed, seat.Handle)
 	}
 	if tracked != "" || untracked != "" {
 		return false, fmt.Errorf("%s: seat %s: the worktree has local changes; archive or remove them before launch", ReasonSeatWorktreeDirty, seat.Handle)
 	}
 	if refreshErr != nil {
-		return false, fmt.Errorf("seat_worktree_check_failed: seat %s: the index refresh failed", seat.Handle)
+		return false, fmt.Errorf("%s: seat %s: the index refresh failed", ReasonSeatWorktreeCheckFailed, seat.Handle)
 	}
 	after, _ := os.ReadFile(index)
 	return !bytes.Equal(before, after), nil

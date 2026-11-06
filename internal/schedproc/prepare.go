@@ -84,16 +84,8 @@ func (c *CleanSeats) CleanStopped(handle string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	var latestTask string
-	var latest task.Attempt
-	for _, t := range list {
-		for _, a := range t.Attempts {
-			if a.Holder == handle && (latestTask == "" || a.EndedAt.After(latest.EndedAt)) {
-				latestTask, latest = t.ID, a
-			}
-		}
-	}
-	if latestTask != "" {
+	latestTask, latest, found := latestEndedAttempt(list, handle)
+	if found {
 		if _, err := seatcommit.ArchiveAttemptReason(c.Root, handle, c.Git, nil, latestTask, latest.N, latest.Outcome, now()); err != nil {
 			return false, err
 		}
@@ -103,6 +95,36 @@ func (c *CleanSeats) CleanStopped(handle string) (bool, error) {
 		logLine(c.log, now(), scheduler.Decision{Kind: "cleaner_marker_taken_over", Seat: handle, Reason: markerDecision})
 	}
 	return discarded, err
+}
+
+// latestEndedAttempt is the seat's most recently ended attempt, the one a
+// lead's `seat clean` archives under (3.2.0-2b-1 item 3; the rule, stated
+// for Codex's G on #898): the greatest EndedAt wins; two attempts that
+// ended at the same instant are ordered by the later grant, then by the
+// higher attempt number under one task, then by task id. An attempt that
+// never ended is not in Attempts (task.endAttempt appends at the end), so
+// EndedAt is never zero here; a zero one would sort before every ended
+// attempt and be chosen only when it is the seat's only attempt.
+func latestEndedAttempt(list []task.Task, handle string) (string, task.Attempt, bool) {
+	var latestTask string
+	var latest task.Attempt
+	found := false
+	for _, t := range list {
+		for _, a := range t.Attempts {
+			if a.Holder != handle {
+				continue
+			}
+			switch {
+			case !found,
+				a.EndedAt.After(latest.EndedAt),
+				a.EndedAt.Equal(latest.EndedAt) && a.GrantedAt.After(latest.GrantedAt),
+				a.EndedAt.Equal(latest.EndedAt) && a.GrantedAt.Equal(latest.GrantedAt) && t.ID == latestTask && a.N > latest.N,
+				a.EndedAt.Equal(latest.EndedAt) && a.GrantedAt.Equal(latest.GrantedAt) && t.ID != latestTask && t.ID > latestTask:
+				latestTask, latest, found = t.ID, a, true
+			}
+		}
+	}
+	return latestTask, latest, found
 }
 
 // ArchiveAttempt records a typed block's stopped tree immediately, before a
