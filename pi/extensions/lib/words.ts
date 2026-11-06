@@ -632,6 +632,13 @@ export const TRAIN_KIND_WORDS: Record<string, string> = {
 	// 3.2.0-3a: journaled before updatePullRequestBranch (mergetrain
 	// train.go land)
 	update_requested: "asked GitHub to bring a PR up to date",
+	// 3.2.0-3a (the plan reviewer's split on #903): the update GitHub
+	// refused outright, and the one that failed on this side without a
+	// refusal (the request stays live for the recovery)
+	update_failed: "asked GitHub to bring a PR up to date and was refused",
+	update_ambiguous: "asked GitHub to bring a PR up to date and got no answer",
+	// 3.2.0-3a: the lead's re-bind proved but not bound, the binding had moved
+	rebind_superseded: "proved a re-bind whose binding had moved on; bound nothing",
 	batch: "planned a batch",
 	plan: "finished a dry run",
 	protection: "read the branch protection",
