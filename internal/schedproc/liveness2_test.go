@@ -173,8 +173,8 @@ func TestTickNeverWaitsOnARunningStepsSeat(t *testing.T) {
 }
 
 // P2-1: a task cancelled while its step runs: the step is cancelled, its
-// result discarded, its entry dropped, and the seat leases again within two
-// ticks.
+// result discarded, its entry dropped, and the seat leases again at the
+// first tick after the step's end.
 //
 // The tick after the cancel issues the step's cancel and checks the job
 // without waiting; the entry drops at the first tick that finds the step
@@ -182,7 +182,8 @@ func TestTickNeverWaitsOnARunningStepsSeat(t *testing.T) {
 // committer's job) before the next task exists: were the task added while
 // the step still ran, that tick would launch a fresh seat for it (the fake
 // launcher launches whenever no seat is idle), and the row's seat question
-// would turn on the load, not the sweep.
+// would turn on the load, not the sweep. With the step ended, one tick
+// drops the entry and leases the seat.
 func TestCancelDuringARunningStepFreesTheSeat(t *testing.T) {
 	var cancelled atomic.Bool
 	var returned sync.Once
@@ -220,14 +221,12 @@ func TestCancelDuringARunningStepFreesTheSeat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := r.tick(func() {}); err != nil { // the sweep drops the entry; the seat leases
+		t.Fatal(err)
+	}
 	leased := ""
-	for i := 0; i < 2 && leased == ""; i++ {
-		if _, err := r.tick(func() {}); err != nil {
-			t.Fatal(err)
-		}
-		if got, _ := r.store.Get(next.ID); got.Lease != nil {
-			leased = got.Lease.Holder
-		}
+	if got, _ := r.store.Get(next.ID); got.Lease != nil {
+		leased = got.Lease.Holder
 	}
 	if leased != seatA || !cancelled.Load() {
 		t.Fatalf("after the cancel: the next task leased to %q (want %s), the step cancelled %v", leased, seatA, cancelled.Load())
