@@ -47,10 +47,26 @@ func (g *GH) run(ctx context.Context, args ...string) ([]byte, error) {
 		out, stderr, err = g.exec(ctx, args)
 	}
 	if err != nil {
-		return out, fmt.Errorf("gh %s: %w: %s", strings.Join(args[:min(len(args), 3)], " "), err, strings.TrimSpace(stderr))
+		return out, &GHError{Command: strings.Join(args[:min(len(args), 3)], " "), Err: err, Stderr: stderr}
 	}
 	return out, nil
 }
+
+// GHError is a gh command that failed: the command, the exec (or the
+// context's) error and gh's stderr exactly as gh printed it. Its text is
+// the one GH.run has always returned; Stderr lets definiteRefusal read
+// gh's own last line without this wrapper around it.
+type GHError struct {
+	Command string
+	Err     error
+	Stderr  string
+}
+
+func (e *GHError) Error() string {
+	return fmt.Sprintf("gh %s: %v: %s", e.Command, e.Err, strings.TrimSpace(e.Stderr))
+}
+
+func (e *GHError) Unwrap() error { return e.Err }
 
 func (g *GH) exec(ctx context.Context, args []string) ([]byte, string, error) {
 	bin := g.Bin

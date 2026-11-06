@@ -693,7 +693,7 @@ func TestFailedMutationLeavesNoLiveRequest(t *testing.T) {
 type failRebaseForge struct{ Forge }
 
 func (failRebaseForge) Rebase(context.Context, string, int, string) (string, error) {
-	return "", errors.New("gh api graphql: exit status 1: GraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch)")
+	return "", ghFailure(errors.New("exit status 1"), "GraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch)")
 }
 
 // Codex on #903 (6): the force push's time is placed after the journaled
@@ -724,7 +724,7 @@ func TestPushedAfterTakesTheSameSecondAsAfter(t *testing.T) {
 type ambiguousForge struct {
 	Forge
 	perform bool
-	text    string // the error; empty: a transport error
+	stderr  string // gh's stderr; empty: a transport error
 }
 
 func (a *ambiguousForge) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
@@ -733,8 +733,8 @@ func (a *ambiguousForge) Rebase(ctx context.Context, repository string, number i
 			return "", err
 		}
 	}
-	if a.text != "" {
-		return "", errors.New(a.text)
+	if a.stderr != "" {
+		return "", ghFailure(errors.New("exit status 1"), a.stderr)
 	}
 	return "", errors.New(`Post "https://api.github.com/graphql": context deadline exceeded`)
 }
@@ -817,7 +817,7 @@ func TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow(t *testing.T) {
 		// Codex's re-pass on #903 (1): definite only on an explicit refusal
 		f, id, old, req := strictBound(t)
 		f.edit(func(s *fakeState) { s.AsyncUpdate = []string{"1"} })
-		f.train.Forge = &ambiguousForge{Forge: f.gh, perform: true, text: "gh api graphql: exit status 1: GraphQL: Internal server error (updatePullRequestBranch)"}
+		f.train.Forge = &ambiguousForge{Forge: f.gh, perform: true, stderr: "GraphQL: Internal server error (updatePullRequestBranch)"}
 		res, err := f.train.Run(context.Background(), req)
 		if err != nil || res.PRs[0].Status != "merged" || boundHead(t, f, id) != res.PRs[0].Head {
 			t.Fatalf("the unknown wording retired the request: %v %+v", err, res.PRs)
@@ -879,38 +879,92 @@ func TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow(t *testing.T) {
 	})
 }
 
+// ghFailure is a failed gh call as GH.run returns it (its wrapper around
+// gh's stderr): err is the exec error, stderr exactly what gh printed.
+func ghFailure(err error, stderr string) error {
+	g := &GH{runner: func(context.Context, []string) ([]byte, string, error) { return nil, stderr, err }}
+	_, out := g.run(context.Background(), "api", "graphql")
+	return out
+}
+
 // The classes of a failed mutation as gh reports them (the plan reviewer on
-// #903): a 4xx or a GraphQL refusal is definite; a 5xx, a transport error,
-// a context deadline or a GraphQL "something went wrong" is ambiguous.
+// #903 and its rulings on Codex's third pass): a 4xx, or a GraphQL error
+// whose message with only gh's wrapper removed ("GraphQL: " and one
+// trailing " (<path>)", on gh's last stderr line) is a table message, case
+// aside, is definite. A table message's fragment inside unfamiliar text,
+// a prefix or a suffix outside gh's wrapper, a 5xx, a transport error, a
+// context deadline, a killed gh, an error not from gh and gh api's own
+// `gh: <message>` form are ambiguous, never definite. The fake gh is
+// classed by the same rule through its own exact output.
 func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
-	for text, want := range map[string]bool{
-		"gh api graphql: exit status 1: GraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch)":                                            true,
-		"gh api graphql: exit status 1: GraphQL: Pull request is not mergeable (updatePullRequestBranch)":                                                                         false, // no evidenced exact wording: ambiguous
-		"gh api graphql: exit status 1: GraphQL: Resource not accessible by integration (updatePullRequestBranch)":                                                                true,
-		"gh api graphql: exit status 1: gh: Validation Failed (HTTP 422)":                                                                                                         true,
-		"gh api graphql: exit status 1: gh: Forbidden (HTTP 403)":                                                                                                                 true,
-		"gh api graphql: exit status 1: GraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch) [fake: expected head abc, the head is def]": true,
-		"gh api graphql: exit status 1: GraphQL: Forbidden (updatePullRequestBranch)":                                                                                             false, // no evidenced exact wording; the HTTP 403 form is the 4xx rule
-		"gh api graphql: exit status 1: gh: Not Found (HTTP 404)":                                                                                                                 true,
-		"gh api graphql: exit status 1: gh: Bad Gateway (HTTP 502)":                                                                                                               false,
-		"gh api graphql: exit status 1: gh: Internal Server Error (HTTP 500)":                                                                                                     false,
-		"gh api graphql: exit status 1: GraphQL: Something went wrong while executing your query. Please include `ABCD` when reporting this issue.":                               false,
-		"gh api graphql: exit status 1: GraphQL: Internal server error (updatePullRequestBranch)":                                                                                 false,
-		"gh api graphql: exit status 1: GraphQL: a wording this code has never seen (updatePullRequestBranch)":                                                                    false,
-		"gh api graphql: exit status 1: GraphQL: Internal server error while checking expected head (updatePullRequestBranch)":                                                    false, // a fragment inside another sentence
-		"gh api graphql: exit status 1: GraphQL: Internal server error: Head branch was modified. Review and try the update again. (updatePullRequestBranch)":                     false, // the message inside another sentence
-		"gh api graphql: exit status 1: GraphQL: Something went wrong, resource not accessible by integration (updatePullRequestBranch)":                                          false,
-		"gh api graphql: exit status 1: GraphQL: Something is not mergeable by this rule (updatePullRequestBranch)":                                                               false,
-		"gh api graphql: exit status 1: GraphQL: head branch was modified. review and try the update again.":                                                                      true,  // the message itself, case aside
-		"gh api graphql: exit status 1: GraphQL: Head branch was modified":                                                                                                        false, // a prefix of the message is not the message
-		"gh api graphql: exit status 1: GraphQL: The request timed out (updatePullRequestBranch)":                                                                                 false,
-		`gh api graphql: exit status 1: Post "https://api.github.com/graphql": context deadline exceeded`:                                                                         false,
-		"gh api graphql: exit status 1: error connecting to api.github.com: read: connection reset by peer":                                                                       false,
-		"gh api graphql: signal: killed: ": false,
+	const modified = "Head branch was modified. Review and try the update again."
+	exit1 := errors.New("exit status 1")
+	for stderr, want := range map[string]bool{
+		// the closed table, in gh's wrapper
+		"GraphQL: " + modified + " (updatePullRequestBranch)":                                           true,
+		"GraphQL: " + modified:                                                                          true, // no path
+		"GraphQL: head branch was modified. review and try the update again.":                           true, // the message itself, case aside
+		"GraphQL: Resource not accessible by integration (updatePullRequestBranch)":                     true,
+		"GraphQL: Resource not accessible by integration (repository.pullRequest)":                      true, // a dotted path is gh's wrapper too
+		"fake: expected head abc, the head is def\nGraphQL: " + modified + " (updatePullRequestBranch)": true, // the fake's output: its sentinel line, then gh's last line
+		// the 4xx rule
+		"gh: Validation Failed (HTTP 422)": true,
+		"gh: Forbidden (HTTP 403)":         true,
+		"gh: Not Found (HTTP 404)":         true,
+		// no evidenced exact wording: ambiguous
+		"GraphQL: Pull request is not mergeable (updatePullRequestBranch)":                                           false,
+		"GraphQL: Forbidden (updatePullRequestBranch)":                                                               false, // the HTTP 403 form is the 4xx rule
+		"GraphQL: Internal server error (updatePullRequestBranch)":                                                   false,
+		"GraphQL: a wording this code has never seen (updatePullRequestBranch)":                                      false,
+		"GraphQL: The request timed out (updatePullRequestBranch)":                                                   false,
+		"GraphQL: Something went wrong while executing your query. Please include `ABCD` when reporting this issue.": false,
+		// a table message's fragment inside unfamiliar text
+		"GraphQL: Internal server error while checking expected head (updatePullRequestBranch)":           false,
+		"GraphQL: Internal server error: " + modified + " (updatePullRequestBranch)":                      false,
+		"GraphQL: " + modified + " Retry later. (updatePullRequestBranch)":                                false,
+		"GraphQL: Something went wrong, resource not accessible by integration (updatePullRequestBranch)": false,
+		"GraphQL: Resource not accessible by integration token (updatePullRequestBranch)":                 false,
+		"GraphQL: Something is not mergeable by this rule (updatePullRequestBranch)":                      false,
+		"GraphQL: Head branch was modified":                                                               false, // a prefix of the message is not the message
+		"GraphQL: Resource not accessible":                                                                false,
+		// a prefix outside gh's wrapper
+		"warning: GraphQL: " + modified + " (updatePullRequestBranch)": false,
+		"graphql: " + modified + " (updatePullRequestBranch)":          false, // gh's prefix is exactly "GraphQL: "
+		"gh: " + modified: false, // gh api graphql's own form (read on gh 2.100.0): no GraphQL wrapper
+		// a suffix outside gh's wrapper
+		"GraphQL: " + modified + " (updatePullRequestBranch) [fake: expected head abc, the head is def]":      false,
+		"GraphQL: " + modified + " (updatePullRequestBranch) (updatePullRequestBranch)":                       false, // one trailing path is gh's
+		"GraphQL: " + modified + " (updatePullRequestBranch)\nretrying":                                       false, // a line after gh's
+		"GraphQL: " + modified + " (updatePullRequestBranch), Something went wrong (updatePullRequestBranch)": false, // two errors on one line
+		// HTTP 5xx and transport errors
+		"gh: Bad Gateway (HTTP 502)":                                         false,
+		"gh: Internal Server Error (HTTP 500)":                               false,
+		`Post "https://api.github.com/graphql": context deadline exceeded`:   false,
+		"error connecting to api.github.com: read: connection reset by peer": false,
 	} {
-		if got := definiteRefusal(errors.New(text)); got != want {
-			t.Errorf("definiteRefusal(%q) = %v, want %v", text, got, want)
+		err := ghFailure(exit1, stderr)
+		if got := definiteRefusal(err); got != want {
+			t.Errorf("definiteRefusal(%q) = %v, want %v", err.Error(), got, want)
 		}
+	}
+	if definiteRefusal(ghFailure(errors.New("signal: killed"), "")) {
+		t.Error("a killed gh is definite")
+	}
+	// an error not from gh has no gh line: the GraphQL rule never reads
+	// this package's wrapper (the 4xx rule reads the text)
+	if definiteRefusal(errors.New("gh api graphql: exit status 1: GraphQL: " + modified + " (updatePullRequestBranch)")) {
+		t.Error("an error not from gh was read as gh's GraphQL line")
+	}
+	if !definiteRefusal(errors.New("gh api graphql: exit status 1: gh: Validation Failed (HTTP 422)")) {
+		t.Error("a 4xx not from gh is not definite")
+	}
+	// the fake gh, through GH.run, by its own exact output: its pinned-head
+	// mismatch is classed definite by the same rule, with no table entry
+	f := newFixture(t)
+	_, err := f.gh.Rebase(context.Background(), fixtureRepo, 1, strings.Repeat("0", 40))
+	var ge *GHError
+	if !errors.As(err, &ge) || !strings.HasPrefix(ge.Stderr, "fake: expected head") || !definiteRefusal(err) {
+		t.Errorf("the fake's refusal is not classed definite by gh's rule: %v", err)
 	}
 	if end := requestWindowEnd("2026-11-05T19:23:20.853766Z", 120*time.Second); end != "2026-11-05T19:25:36.853766Z" {
 		t.Errorf("the window's end: %s", end)
