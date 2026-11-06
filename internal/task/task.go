@@ -177,6 +177,9 @@ func Terminal(state string) bool { return state == StateCompleted || state == St
 // Store is one squad's task store.
 type Store struct {
 	Dir string
+	// claimServingBeforeCheck is a test seam inside ClaimServing's locked
+	// update. It proves a pool change after selection is checked before grant.
+	claimServingBeforeCheck func(*Task)
 	// Verifiers says whether a task's class is in the verifier gate and with
 	// which command: the owner grant, with the task's squad.yaml adding
 	// classes, never the seat's tree (phase 5 re-pass, ruling on ruling 1).
