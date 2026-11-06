@@ -66,9 +66,15 @@ type RecoverOptions struct {
 	Reason string
 	Now    time.Time
 	// Alarm, when set, is a decision by alarm (recordAlarm): the scheduler's
-	// alarm id of the hold the lead releases, on a ledger that verifies now;
-	// it names no slot and no seq, and carries nothing.
+	// alarm id of the hold the lead releases; it names no slot and no seq,
+	// and carries nothing.
 	Alarm string
+	// Guard, when set, runs inside the ledger lock immediately before the
+	// seal; an error refuses the recovery with nothing written (the
+	// scheduler's check that the request's alarm still holds the seat,
+	// Codex on 254f2c2c: a check before the lock can be passed by a request
+	// that then waits while its hold is released and another is recovered).
+	Guard func() error
 }
 
 // CarryEntry names one quarantined commit entry to carry.
@@ -299,7 +305,7 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 		return out, err
 	}
 	now := o.Now.UTC()
-	recovery := &LedgerRecovery{Seq: oldSeq, Slot: slot.path, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, By: o.Lead, Reason: o.Reason, At: now, Link: oldSeq + 1}
+	recovery := &LedgerRecovery{Seq: oldSeq, Slot: slot.path, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, By: o.Lead, Reason: o.Reason, At: now, Link: oldSeq + 1, Alarm: o.Alarm}
 	for _, c := range carried {
 		recovery.Carried = append(recovery.Carried, c.Task+":"+c.Commit)
 	}
@@ -307,6 +313,9 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 		Target: o.Target, EvidenceSeq: evidenceSeqOf(repo, o.Handle), Recovered: recovery}
 	if l.Commits == nil {
 		l.Commits = []LedgerCommit{}
+	}
+	if err := guard(o); err != nil {
+		return out, err
 	}
 	link, err := sealWrite(o.Root, o.Handle, &sealchain.Link{Seq: oldSeq, Tag: prev}, l, now)
 	if err != nil {
@@ -350,6 +359,9 @@ func recordVerified(o RecoverOptions, live Ledger, slotPath string) (RecoverResu
 	l := live
 	l.Seal = nil
 	l.Recovered = &LedgerRecovery{Seq: oldSeq, Slot: slot.path, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, By: o.Lead, Reason: o.Reason, At: now, Verified: true, Link: prev.Seq + 1}
+	if err := guard(o); err != nil {
+		return out, err
+	}
 	link, err := sealWrite(o.Root, o.Handle, prev, l, now)
 	if err != nil {
 		return out, err
@@ -359,19 +371,40 @@ func recordVerified(o RecoverOptions, live Ledger, slotPath string) (RecoverResu
 
 // recordAlarm is a decision by alarm (the plan reviewer's ruling on
 // Codex's delta pass on c267382d): the lead releases the hold of one
-// scheduler alarm, named by its id, on a ledger that verifies now. It
-// names no slot and no seq, so it releases a hold whose refusal
-// quarantined nothing, and a hold whose slot the chain has moved past (a
-// later slot at a lower seq recovered first). The ledger must verify now,
-// or the decision is refused (recover_alarm_unverified: the ledger is
-// recovered from its quarantine slot instead); nothing is carried; the
-// next link seals the same body with the record naming the alarm. The
-// same alarm decided again is answered from the ledger (AlreadyRecovered).
+// scheduler alarm, named by its id. It names no slot and no seq, so it
+// releases a hold whose refusal quarantined nothing, and a hold whose slot
+// the chain has moved past (a later slot at a lower seq recovered first).
+// On a ledger that verifies, the next link seals the same body with the
+// record naming the alarm; the same alarm decided again is answered from
+// the ledger (AlreadyRecovered). On a ledger that does not verify (Codex
+// on 254f2c2c: a refusal whose copy failed leaves a hold with no slot and
+// no read that makes one), the decision first makes the lead's quarantine
+// copy of the live bytes, the copy a refusing read makes, and then
+// recovers from that slot in the same step, the record naming the slot and
+// the alarm; it is refused recover_alarm_unverified only when the ledger
+// cannot be read as a document or the copy fails, in words. Nothing is
+// carried either way.
 func recordAlarm(o RecoverOptions) (RecoverResult, error) {
 	var out RecoverResult
-	live, _, rerr := readLedger(o.Root, o.Handle)
+	live, raw, rerr := readLedger(o.Root, o.Handle)
+	if errors.Is(rerr, sealchain.ErrTampered) {
+		qerr := quarantine(o.Root, o.Handle, "scheduler recover --alarm", rerr, raw)
+		var q *QuarantinedError
+		if !errors.As(qerr, &q) {
+			return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s does not verify, and the copy of it into the quarantine the decision by alarm recovers from could not be made: %v; fix what the copy names, then send the decision again", o.Handle, qerr)
+		}
+		k, err := slotIndex(o.Handle, q.Seq, q.Slot)
+		if err != nil {
+			return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s was copied to %s, whose name the recovery cannot read: %v", o.Handle, q.Slot, err)
+		}
+		from := o
+		from.Seq, from.Slot = q.Seq, k
+		res, err := recoverLedger(from)
+		res.Alarm = o.Alarm
+		return res, err
+	}
 	if rerr != nil {
-		return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s does not verify now (%v); a decision by alarm needs a ledger that verifies: recover it from its quarantine slot", o.Handle, rerr)
+		return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s cannot be read as a document (%v); the decision by alarm needs one to verify or to quarantine", o.Handle, rerr)
 	}
 	if live.Seal == nil {
 		return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s has no seal", o.Handle)
@@ -384,11 +417,37 @@ func recordAlarm(o RecoverOptions) (RecoverResult, error) {
 	l := live
 	l.Seal = nil
 	l.Recovered = &LedgerRecovery{Alarm: o.Alarm, By: o.Lead, Reason: o.Reason, At: now, Verified: true, Link: prev.Seq + 1}
+	if err := guard(o); err != nil {
+		return out, err
+	}
 	link, err := sealWrite(o.Root, o.Handle, prev, l, now)
 	if err != nil {
 		return out, err
 	}
 	return RecoverResult{Handle: o.Handle, Verified: true, Alarm: o.Alarm, OldSeq: prev.Seq, NewSeq: link.Seq, Prev: prev.Tag, Base: live.Base}, nil
+}
+
+// guard runs the options' Guard, inside the ledger lock, immediately
+// before a seal.
+func guard(o RecoverOptions) error {
+	if o.Guard == nil {
+		return nil
+	}
+	return o.Guard()
+}
+
+// slotIndex is k of a slot path commits.<handle>.seq<N>[.k] (1 for the
+// first, which has no suffix).
+func slotIndex(handle, seq, slot string) (int, error) {
+	base := quarantineBase(handle, seq)
+	name := filepath.Base(slot)
+	if name == base {
+		return 1, nil
+	}
+	if !strings.HasPrefix(name, base+".") {
+		return 0, fmt.Errorf("%s is not a slot of %s", name, base)
+	}
+	return strconv.Atoi(strings.TrimPrefix(name, base+"."))
 }
 
 // sealWrite seals l as the link after prev with the session key, writes

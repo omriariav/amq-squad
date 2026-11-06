@@ -63,7 +63,15 @@ type RecoverRequest struct {
 	Carry  []string `json:"carry,omitempty"`
 	Alarm  string   `json:"alarm,omitempty"`
 	Reason string   `json:"reason,omitempty"`
+	// guard is the apply step's check, run inside the ledger lock right
+	// before the seal (seatcommit.RecoverOptions.Guard); never sent.
+	guard func() error
 }
+
+// recoverAfterHeldCheck is a test seam between the socket's held-alarm
+// check and the apply step (Codex on 254f2c2c: a request that passed the
+// check can wait there while its hold is released and another recovered).
+var recoverAfterHeldCheck = func() {}
 
 var (
 	recoverSeatRe  = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
@@ -114,7 +122,7 @@ func (r Recovery) Apply(lead string, req RecoverRequest) (seatcommit.RecoverResu
 		now = r.Now()
 	}
 	return seatcommit.RecoverLedger(seatcommit.RecoverOptions{Root: r.Root, Handle: req.Seat, Seq: req.Seq, Slot: req.Slot, Carry: carry,
-		Target: r.Target, Git: r.Git, Lead: lead, Reason: req.Reason, Now: now, Alarm: req.Alarm})
+		Target: r.Target, Git: r.Git, Lead: lead, Reason: req.Reason, Now: now, Alarm: req.Alarm, Guard: req.guard})
 }
 
 // recoverDecision is the decision socket's apply step for a proved
@@ -138,6 +146,17 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 			}
 			if held != req.Alarm {
 				return DecideReply{Code: RefusedRecoverAlarmNotHeld, Detail: fmt.Sprintf("seat %s is held by alarm %s, not %s; the decision names the alarm its stop line shows", req.Seat, held, req.Alarm)}
+			}
+			recoverAfterHeldCheck()
+			// the same check again, inside the ledger lock, right before the
+			// seal: a request that waited here never seals over a newer
+			// hold's recovery (Codex on 254f2c2c)
+			seat, alarm := req.Seat, req.Alarm
+			req.guard = func() error {
+				if held, ok := s.HeldAlarm(seat); !ok || held != alarm {
+					return &seatcommit.RecoverRefusal{Code: RefusedRecoverAlarmNotHeld, Detail: fmt.Sprintf("seat %s is no longer held by alarm %s (its hold was released, or another alarm holds the seat); nothing was written", seat, alarm)}
+				}
+				return nil
 			}
 		} else if !recoverSeatRe.MatchString(req.Seat) || !recoverSeqRe.MatchString(req.Seq) || req.Slot < 0 {
 			return DecideReply{Code: RefusedRecoverMalformed, Detail: "a recovery names a seat handle, the quarantined head seq (or unknown) and a slot number"}
@@ -173,8 +192,14 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 			if res.AlreadyRecovered {
 				verb = "had released (the decision sent again; the sealed ledger records it)"
 			}
-			reason = fmt.Sprintf("the lead %s %s alarm %s of seat %s by decision: its commits ledger verified when the decision came; the record naming the alarm is sealed into link %d, nothing restarted, nothing carried; reason: %s",
-				lead, verb, req.Alarm, req.Seat, res.NewSeq, firstNonEmptyString(req.Reason, "none given"))
+			how := "its commits ledger verified when the decision came; the record naming the alarm is sealed into link %d, nothing restarted, nothing carried"
+			args := []any{res.NewSeq}
+			if res.Slot != "" {
+				how = "its commits ledger did not verify: the decision copied it to quarantine %s and recovered from it, the chain continuing at seq %d, nothing carried"
+				args = []any{res.Slot, res.NewSeq}
+			}
+			reason = fmt.Sprintf("the lead %s %s alarm %s of seat %s by decision: "+how+"; reason: %s",
+				append(append([]any{lead, verb, req.Alarm, req.Seat}, args...), firstNonEmptyString(req.Reason, "none given"))...)
 		}
 		at := now().UTC()
 		if err := AppendDecision(root, at, scheduler.Decision{Kind: DecisionLedgerRecovered, Seat: req.Seat, Reason: reason}); err != nil {
@@ -187,6 +212,9 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 		}
 		if req.Alarm != "" {
 			detail = fmt.Sprintf("seat %s: alarm %s released by decision, sealed at link %d; the scheduler releases the seat at its next tick", req.Seat, req.Alarm, res.NewSeq)
+			if res.Slot != "" && !res.AlreadyRecovered {
+				detail = fmt.Sprintf("seat %s: alarm %s released by decision: the ledger did not verify, so it was copied to %s and recovered from it at link %d; the scheduler releases the seat at its next tick", req.Seat, req.Alarm, res.Slot, res.NewSeq)
+			}
 			if res.AlreadyRecovered {
 				detail = fmt.Sprintf("seat %s: alarm %s was already released by decision (link %d); the decision is recorded now", req.Seat, req.Alarm, res.NewSeq)
 			}

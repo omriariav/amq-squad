@@ -9,7 +9,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -402,15 +404,14 @@ func TestARestoredDocumentIsReleasedByTheLeadsDecision(t *testing.T) {
 // Codex's delta pass on c267382d (1), the plan reviewer's ruling, on real
 // files through the decision socket's apply step: a seat held by an alarm
 // that quarantined nothing (restored from a state file, its task blocked
-// with the alarm's detail). While the document is still tampered, the
-// decision by alarm is refused recover_alarm_unverified and nothing is
-// written; a wrong alarm id is refused recover_alarm_not_held. The
-// document put back verifies, ticks alone release nothing (no slot names
+// with the alarm's detail). A wrong alarm id is refused
+// recover_alarm_not_held, nothing written. The document put back verifies, ticks alone release nothing (no slot names
 // the hold), and the decision naming the hold's alarm is OK: the record
 // names the alarm, the decision line says so, and the next ticks release
 // the seat. The same id sent once the hold is gone is refused
-// recover_alarm_not_held. Reverted: the held-alarm check (the wrong id is
-// accepted), the verify-now check (the tampered ledger is resealed).
+// recover_alarm_not_held. Reverted (the held-alarm check), the wrong id is
+// accepted. (A decision by alarm on a ledger that does not verify copies it
+// and recovers from the copy: TestTheAlarmVerbRecoversALedgerWhoseCopyFailed.)
 func TestTheAlarmVerbReleasesAHoldWithNoSlot(t *testing.T) {
 	r := newTamperedSeatRig(t)
 	const alarm = "3fa9c1d2"
@@ -421,12 +422,6 @@ func TestTheAlarmVerbReleasesAHoldWithNoSlot(t *testing.T) {
 	r.s.RestoreLedgerTampers(scheduler.State{LedgerTampered: []scheduler.LedgerTamper{{Handle: r.handle, Seq: "1", Detail: detail, At: r.now, Tasks: []string{r.tk.ID}, Alarm: alarm}}})
 	decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
 	p := filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")
-	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: alarm, Reason: "too early"}); reply.OK || reply.Code != seatcommit.RecoverAlarmUnverified {
-		t.Fatalf("a decision by alarm on a tampered ledger: %+v", reply)
-	}
-	if got, err := os.ReadFile(p); err != nil || !bytes.Equal(got, r.tampered) {
-		t.Fatalf("the refused decision wrote the ledger: %v", err)
-	}
 	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: "0badcafe", Reason: "the wrong alarm"}); reply.OK || reply.Code != RefusedRecoverAlarmNotHeld || !strings.Contains(reply.Detail, alarm) {
 		t.Fatalf("a wrong alarm id: %+v", reply)
 	}
@@ -458,5 +453,137 @@ func TestTheAlarmVerbReleasesAHoldWithNoSlot(t *testing.T) {
 	}
 	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: alarm, Reason: "again"}); reply.OK || reply.Code != RefusedRecoverAlarmNotHeld {
 		t.Fatalf("the old alarm once its hold is gone: %+v", reply)
+	}
+}
+
+// alarmOf is the alarm id a tamper block's detail names.
+func alarmOf(t *testing.T, detail string) string {
+	t.Helper()
+	m := regexp.MustCompile(`; alarm ([0-9a-f]{8})\)`).FindStringSubmatch(detail)
+	if m == nil {
+		t.Fatalf("no alarm in %q", detail)
+	}
+	return m[1]
+}
+
+// Codex on 254f2c2c (P2-1), on real files through the apply step: the
+// body corrupted while the head decodes, the quarantine copy refused (the
+// quarantine directory's mode 0755), so the prepare's alarm holds the seat
+// with no slot; the decision by alarm is refused recover_alarm_unverified
+// in words while the copy still fails, nothing written; the cause repaired
+// (mode 0700) but the ledger still corrupted, the decision by alarm makes
+// the lead's quarantine copy of the live bytes and recovers from it: the
+// record names the slot and the alarm, the decision line says so, and the
+// next ticks release the seat. Reverted (no copy on an unverified ledger),
+// the repaired seat stays held.
+func TestTheAlarmVerbRecoversALedgerWhoseCopyFailed(t *testing.T) {
+	r := newTamperedSeatRig(t)
+	qdir := seatcommit.QuarantineDir(r.root)
+	if err := os.MkdirAll(qdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(qdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r.ticks(3)
+	got, _ := r.store.Get(r.tk.ID)
+	if got.State != task.StateBlocked || !strings.Contains(got.BlockDetail, "could not be quarantined (seq unknown; alarm ") {
+		t.Fatalf("not a hold with no slot: %+v", got)
+	}
+	alarm := alarmOf(t, got.BlockDetail)
+	decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
+	p := filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: alarm, Reason: "too early"}); reply.OK || reply.Code != seatcommit.RecoverAlarmUnverified || !strings.Contains(reply.Detail, "could not be made") || !strings.Contains(reply.Detail, "0755") {
+		t.Fatalf("the decision while the copy fails: %+v", reply)
+	}
+	if b, err := os.ReadFile(p); err != nil || !bytes.Equal(b, r.tampered) {
+		t.Fatalf("the refused decision wrote the ledger: %v", err)
+	}
+	if all := r.ticks(5); len(kinds(all, "ledger_hold_released")) != 0 {
+		t.Fatalf("ticks released the hold: %+v", all)
+	}
+	// the cause repaired; the ledger is still the corrupted one
+	if err := os.Chmod(qdir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: alarm, Reason: "the quarantine's mode is fixed"})
+	var res seatcommit.RecoverResult
+	if !reply.OK || json.Unmarshal(reply.Data, &res) != nil || res.Alarm != alarm || res.Slot == "" || res.NewSeq != 2 || !strings.Contains(reply.Detail, "copied to "+res.Slot) {
+		t.Fatalf("the decision once the copy can be made: %+v", reply)
+	}
+	if rec, ok := seatcommit.RecoveryOf(r.root, r.handle); !ok || rec.Alarm != alarm || rec.Slot != res.Slot {
+		t.Fatalf("the sealed record: %v %+v", ok, rec)
+	}
+	all := r.ticks(3)
+	if !has(all, "ledger_hold_released", "", r.handle) || !has(all, "task_reset", r.tk.ID, r.handle) || !has(all, "dispatched", r.tk.ID, r.handle) {
+		t.Fatalf("the decision by alarm did not release the hold: %+v", all)
+	}
+	lines, _ := ReadDecisionsTail(r.root)
+	found := false
+	for _, l := range lines {
+		found = found || (l.Kind == DecisionLedgerRecovered && strings.Contains(l.Reason, "copied it to quarantine "+res.Slot))
+	}
+	if !found {
+		t.Fatalf("no decision line naming the copy: %+v", lines)
+	}
+}
+
+// Codex on 254f2c2c (P2-2), real writers with barriers for exactly that
+// interleaving: A's decision by alarm passes the socket's check and waits
+// (the seam); A's hold is released by its slot's recovery; B holds the
+// seat and B's decision by alarm is sealed (OK); A resumes. Its check
+// inside the ledger lock, right before the seal, finds B holding the seat:
+// A is refused recover_alarm_not_held and nothing is written, the record
+// still names B, and the next ticks release B. Reverted (the check only
+// outside the lock), A's late write replaces B's record and B stays held.
+func TestADelayedAlarmDecisionNeverSealsOverANewerRecovery(t *testing.T) {
+	r := newTamperedSeatRig(t)
+	r.ticks(3)
+	a, ok := r.s.HeldAlarm(r.handle)
+	if !ok {
+		t.Fatal("no hold A")
+	}
+	decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
+	reached, resume := make(chan struct{}), make(chan struct{})
+	prev := recoverAfterHeldCheck
+	t.Cleanup(func() { recoverAfterHeldCheck = prev })
+	var once sync.Once
+	recoverAfterHeldCheck = func() {
+		first := false
+		once.Do(func() { first = true })
+		if first {
+			close(reached)
+			<-resume
+		}
+	}
+	done := make(chan DecideReply, 1)
+	go func() { done <- decide("lead", RecoverRequest{Seat: r.handle, Alarm: a, Reason: "A, investigated"}) }()
+	<-reached
+	// A's hold released by its slot
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Seq: "1", Slot: 1, Reason: "A's slot"}); !reply.OK {
+		t.Fatalf("A's slot recovery: %+v", reply)
+	}
+	if all := r.ticks(3); !has(all, "ledger_hold_released", "", r.handle) {
+		t.Fatalf("A was not released: %+v", all)
+	}
+	// B holds the seat; B's decision by alarm is sealed
+	const b = "b0000002"
+	r.s.RestoreLedgerTampers(scheduler.State{LedgerTampered: []scheduler.LedgerTamper{{Handle: r.handle, Seq: "2", Detail: "seat " + r.handle + ": the refused document could not be quarantined (seq 2; alarm " + b + "): x", At: r.now, Alarm: b}}})
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: b, Reason: "B, investigated"}); !reply.OK {
+		t.Fatalf("B's decision: %+v", reply)
+	}
+	close(resume)
+	replyA := <-done
+	if replyA.OK || replyA.Code != RefusedRecoverAlarmNotHeld {
+		t.Fatalf("A after B's recovery: %+v", replyA)
+	}
+	if rec, ok := seatcommit.RecoveryOf(r.root, r.handle); !ok || rec.Alarm != b {
+		t.Fatalf("the record after A resumed: %v %+v", ok, rec)
+	}
+	if all := r.ticks(2); !has(all, "ledger_hold_released", "", r.handle) {
+		t.Fatalf("B was not released: %+v", all)
+	}
+	if _, held := r.s.HeldAlarm(r.handle); held {
+		t.Fatal("the seat is still held")
 	}
 }

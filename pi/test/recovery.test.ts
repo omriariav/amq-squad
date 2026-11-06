@@ -83,13 +83,15 @@ test("B9: the typed block reads with the same words, the seat and the path on it
 // prepare's hold names its alarm id (tamper.go's "(seq N; alarm ID)"), and
 // the stop line and the typed block's line say it in words the lead acts
 // on: the seat's commit record failed its check (alarm ID); after
-// investigating, the lead runs scheduler recover --seat H --alarm ID. A
+// investigating, the lead runs amq-squad scheduler recover --seat H
+// --alarm ID --reason "REASON", a command that runs as shown (Codex's P3
+// on 254f2c2c: --reason is required). A
 // hold with no slot says the same. The commit step's write-time refusal
 // names no alarm and keeps its words. Reverted (no alarm read), the lines
 // do not name the decision by alarm.
 test("the alarm: the stop line and the block name the hold's alarm and the decision by alarm", () => {
 	const alarmed = `seat dev: quarantined at ${slot} (seq 150; alarm 3fa9c1d2): the commit ledger of seat dev: commit ledger dev: ledger_tampered: the tag of commits.dev link 150 fails; the refused document is quarantined at ${slot}`;
-	const words = "seat dev's commit record failed its check (alarm 3fa9c1d2); after investigating, the lead runs amq-squad scheduler recover --seat dev --alarm 3fa9c1d2";
+	const words = "seat dev's commit record failed its check (alarm 3fa9c1d2); after investigating, the lead runs amq-squad scheduler recover --seat dev --alarm 3fa9c1d2 --reason \"REASON\"";
 	assert.deepEqual(tamperAlarm(alarmed), { seat: "dev", alarm: "3fa9c1d2" });
 	assert.equal(decisionWords({ kind: "seat_prepare_failed", seat: "dev", task_id: "t7", reason_code: "ledger_tampered", reason: alarmed }), `seat dev could not be prepared for t7: ${words}`);
 	const t = { id: "t7", task_state: "blocked", block_reason: "ledger_tampered" };

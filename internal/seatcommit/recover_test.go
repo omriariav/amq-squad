@@ -698,12 +698,10 @@ func TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery(t *testing.T) {
 // document is Y's; Y's recovery continues the chain at link 2; X is then
 // refused again, its seq past the chain (no verified recovery can answer
 // it), so a hold on X is released only by the decision naming its alarm.
-// That decision is refused while the ledger does not verify
-// (recover_alarm_unverified, nothing written), and on the ledger that
-// verifies it seals the next link with the record naming the alarm (no
-// slot, no seq, Verified), the body otherwise unchanged; sent again it is
-// answered from the ledger; a carry with it is refused. Reverted (the
-// verify-now check), the tampered ledger is resealed.
+// On the ledger that verifies it seals the next link with the record
+// naming the alarm (no slot, no seq, Verified), the body otherwise
+// unchanged; sent again it is answered from the ledger; a carry with it is
+// refused.
 func TestADecisionByAlarmAnswersAHoldNoSlotCan(t *testing.T) {
 	f := newFixture(t)
 	for _, line := range []string{"// one\n", "// two\n"} {
@@ -724,12 +722,6 @@ func TestADecisionByAlarmAnswersAHoldNoSlotCan(t *testing.T) {
 	original := readFile(t, ledgerPath(f.root, f.handle))
 	tamperBase(t, f, f.base, '0')
 	x := f.quarantined()
-	if _, err := RecoverLedger(RecoverOptions{Root: f.root, Handle: f.handle, Alarm: "3fa9c1d2", Lead: "cto", Reason: "too early", Now: f.now}); recoverCode(t, err) != RecoverAlarmUnverified {
-		t.Fatalf("a decision by alarm on a tampered ledger: %v", err)
-	}
-	if !bytes.Equal(readFile(t, ledgerPath(f.root, f.handle)), readFile(t, filepath.Join(x.Slot, quarantineBodyFile))) {
-		t.Fatal("the refused decision by alarm wrote the ledger")
-	}
 	write(t, ledgerPath(f.root, f.handle), string(original))
 	hp := sealchain.HeadPath(f.root, "commits."+f.handle)
 	var hd map[string]any

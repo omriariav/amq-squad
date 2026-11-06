@@ -171,7 +171,7 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	ledger_tampered: (d) => {
 		const a = tamperAlarm(d.block_detail);
 		return a
-			? [`seat ${a.seat}'s commit record failed its check (alarm ${a.alarm})`, `after investigating, the lead runs amq-squad scheduler recover --seat ${a.seat} --alarm ${a.alarm}`]
+			? [`seat ${a.seat}'s commit record failed its check (alarm ${a.alarm})`, `after investigating, the lead runs amq-squad scheduler recover --seat ${a.seat} --alarm ${a.alarm} --reason "REASON"`]
 			: ["the seat's commit record failed its check", "the lead investigates before the seat works again"];
 	},
 	tool_pin_mismatch: () => ["a pinned tool is not the pinned version", "ask the owner to check the pin"],
