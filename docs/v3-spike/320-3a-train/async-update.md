@@ -1662,6 +1662,29 @@ root, one after another, each run once:
 - `go run ./scripts/redact-evidence -check docs/v3-spike/320-3a-train/`:
   exit 0.
 
+On `d1bc30a5` (the same Go tree as `62dcb3a2`), again under the host's
+gate lock (the plan reviewer's rule: the whole-module gate and `make ci`
+run one at a time across agents, through `gate-lock.sh`):
+
+- `gate-lock.sh 903-gates -- sh -c 'go build ./... && go vet ./... && go
+  test -count=1 ./...'`: the lock taken after 0 s, exit 0, 56 packages
+  `ok`.
+- `gate-lock.sh 903-ci -- make ci` (`NPM_FLAGS=--offline`, the PyYAML venv
+  first on PATH): the lock taken after 0 s, exit 0, 70 packages `ok`,
+  pi-test `ℹ tests 116`, `ℹ pass 115`, `ℹ fail 0`.
+- `cd pi && npm test`: twice exit 1 outside the lock, each on one row,
+  `R53: the owner's yes switches the lead's tools ...` (`amq-squad guard
+  failed closed (timed out after 5000 ms)`, a 5 s budget): the first ran
+  beside this run's own whole-module gate, the second beside another
+  agent's (`909-module`, the host's load average 11.9); no file under
+  `pi/` changed since `82bc6856`. Run under the gate lock (taken after
+  150 s): exit 0, `ℹ tests 116`, `ℹ pass 115`, `ℹ fail 0`, `ℹ skipped 1`.
+  `node scripts/lint.mjs`: exit 0.
+- `make fmt-check` with the go1.26.10 toolchain's `bin/` first on PATH
+  and `GOTOOLCHAIN=go1.26.10`: exit 0.
+- `go run ./scripts/redact-evidence -check docs/v3-spike/320-3a-train/`:
+  exit 0.
+
 ## Residual risk
 
 - The first-parent check assumes one commit per task on the seat branch,
