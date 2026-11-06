@@ -368,10 +368,20 @@ type Task struct {
 	// lock rule), [] otherwise. Empty under file_lock means no task holds
 	// the lock any more: the wait reason is stale.
 	WaitHolders []string `json:"wait_holders"`
+	// WaitsFor pairs each file-lock holder with one declaration covered by
+	// both tasks. It lets the screen state the store's lock reason in words.
+	WaitsFor []FileWait `json:"waits_for"`
 	// WaitPool is, for a pending task waiting no_roster_seat, the pool
 	// (runtime:model:effort) its route names and no roster seat serves
 	// (brief 3.1.1-2 item 1), "" otherwise.
 	WaitPool string `json:"wait_pool"`
+}
+
+// FileWait is one task holding a pending task's file lock and one
+// declaration covered by both tasks.
+type FileWait struct {
+	TaskID string `json:"task_id"`
+	Path   string `json:"path"`
 }
 
 // StaleRecord is a seat record under the root outside the running roster:

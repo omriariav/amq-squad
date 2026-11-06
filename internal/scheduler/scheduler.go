@@ -225,6 +225,9 @@ type Scheduler struct {
 	// budgetWarned remembers the absolute end already warned for an attempt.
 	// An extension changes the end and permits one new warning.
 	budgetWarned map[string]time.Time
+	// tickLog is the current Tick's decision sink. Tick is not concurrent;
+	// wait uses it to record only a successful wait-reason transition.
+	tickLog func(Decision)
 }
 
 // WaitNoRosterSeat is the wait of a pending task whose route names a pool
@@ -365,6 +368,8 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	}
 	var out []Decision
 	log := func(d Decision) { out = append(out, d) }
+	s.tickLog = log
+	defer func() { s.tickLog = nil }()
 	normalized, err := s.Store.NormalizeLeases(now)
 	if err != nil {
 		return out, err
@@ -1024,7 +1029,10 @@ func (s *Scheduler) wait(t task.Task, reason string, now time.Time) error {
 	if t.WaitReason == reason {
 		return nil
 	}
-	_, err := s.Store.SetWait(t.ID, reason, now)
+	changed, err := s.Store.SetWait(t.ID, reason, now)
+	if err == nil && changed && s.tickLog != nil {
+		s.tickLog(Decision{Kind: "wait_changed", TaskID: t.ID, Reason: reason})
+	}
 	return err
 }
 

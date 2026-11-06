@@ -220,20 +220,36 @@ type AddInput struct {
 	Budget        time.Duration
 }
 
+// FileWait is one task whose declared files overlap a newly added task.
+// Path is a deterministic declaration covered by both sets.
+type FileWait struct {
+	TaskID string `json:"task_id"`
+	Path   string `json:"path"`
+}
+
 // Add creates a pending task.
 func (s Store) Add(in AddInput, now time.Time) (Task, error) {
+	created, _, err := s.AddWithFileWaits(in, now)
+	return created, err
+}
+
+// AddWithFileWaits creates a pending task and reports the pending or active
+// tasks whose declarations overlap it. The report is taken in the same
+// locked transaction as the add, so it describes add time.
+func (s Store) AddWithFileWaits(in AddInput, now time.Time) (Task, []FileWait, error) {
 	in.Title, in.Class = strings.TrimSpace(in.Title), strings.TrimSpace(in.Class)
 	if in.Title == "" {
-		return Task{}, fmt.Errorf("task title is required")
+		return Task{}, nil, fmt.Errorf("task title is required")
 	}
 	if !ValidClass(in.Class) {
-		return Task{}, fmt.Errorf("task class %q is not in the closed list %s", in.Class, strings.Join(Classes, ", "))
+		return Task{}, nil, fmt.Errorf("task class %q is not in the closed list %s", in.Class, strings.Join(Classes, ", "))
 	}
 	files, err := CleanDeclaredFiles(in.DeclaredFiles)
 	if err != nil {
-		return Task{}, err
+		return Task{}, nil, err
 	}
 	var created Task
+	var waits []FileWait
 	err = s.update(now, func(all *tasks) error {
 		deps := dedupe(in.DependsOn)
 		for _, d := range deps {
@@ -251,11 +267,19 @@ func (s Store) Add(in AddInput, now time.Time) (Task, error) {
 			ProjectPath: strings.TrimSpace(in.ProjectPath), Pool: in.Pool, CreatedBy: strings.TrimSpace(in.CreatedBy), Budget: budget,
 			CreatedAt: now, UpdatedAt: now,
 		}
+		for _, other := range all.list {
+			if other.State != StatePending && other.State != StateInProgress && other.State != StateBlocked {
+				continue
+			}
+			if path, ok := OverlapDeclaration(created.DeclaredFiles, other.DeclaredFiles); ok {
+				waits = append(waits, FileWait{TaskID: other.ID, Path: path})
+			}
+		}
 		all.list = append(all.list, created)
 		all.touch(created.ID)
 		return nil
 	})
-	return created, err
+	return created, waits, err
 }
 
 // List returns every task in id order, under the lock (a committed journal
