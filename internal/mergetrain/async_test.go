@@ -1075,16 +1075,16 @@ func (b blockingForge) PR(ctx context.Context, repository string, number int) (P
 // bound. The CLI runs the train under RunBound.
 func TestStalledReadReturnsWithinTheBoundedWait(t *testing.T) {
 	f, id, old, req := strictBound(t)
-	f.train.Forge = &updateOnlyBlocking{Forge: f.gh}
+	forge := &updateOnlyBlocking{Forge: f.gh}
+	f.train.Forge = forge
 	f.train.UpdateWait = 300 * time.Millisecond
-	start := time.Now()
 	res, err := f.train.Run(context.Background(), req)
-	elapsed := time.Since(start)
+	elapsed := time.Since(forge.mutatedAt) // from the mutation: the plan phase runs git under the suite's load
 	if err != nil || res.PRs[0].Status != "refused" || res.PRs[0].Refusals[0].Rule != RuleUpdateUnconfirmed || boundHead(t, f, id) != old {
 		t.Fatalf("the stalled read: %v %+v", err, res.PRs)
 	}
-	if elapsed > 3*time.Second {
-		t.Fatalf("the run took %s past a 300 ms wait", elapsed)
+	if forge.mutatedAt.IsZero() || elapsed > 3*time.Second {
+		t.Fatalf("the wait took %s after the mutation, past a 300 ms wait", elapsed)
 	}
 	if b := RunBound(3); b != 3*(DefaultUpdateWait+DefaultCIWait+10*time.Minute) || RunBound(0) != RunBound(1) {
 		t.Fatalf("RunBound %s", b)
@@ -1095,11 +1095,13 @@ func TestStalledReadReturnsWithinTheBoundedWait(t *testing.T) {
 // read-back), and answers every other read from the fake.
 type updateOnlyBlocking struct {
 	Forge
-	mutated bool
+	mutated   bool
+	mutatedAt time.Time
 }
 
 func (u *updateOnlyBlocking) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
 	u.mutated = true
+	u.mutatedAt = time.Now()
 	return u.Forge.Rebase(ctx, repository, number, expect)
 }
 
@@ -1162,15 +1164,16 @@ func TestStalledGhReadIsUnmovedForThePoll(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	f.train.Forge = &readBackVia{Forge: f.gh, slow: &GH{Bin: script}}
+	forge := &readBackVia{Forge: f.gh, slow: &GH{Bin: script}}
+	f.train.Forge = forge
 	f.train.UpdateWait = 300 * time.Millisecond
-	start := time.Now()
 	res, err := f.train.Run(context.Background(), req)
+	elapsed := time.Since(forge.mutatedAt) // from the mutation: the plan phase runs git under the suite's load
 	if err != nil || res.PRs[0].Status != "refused" || res.PRs[0].Refusals[0].Rule != RuleUpdateUnconfirmed || boundHead(t, f, id) != old {
 		t.Fatalf("the killed gh read: %v %+v", err, res.PRs)
 	}
-	if elapsed := time.Since(start); elapsed > 5*time.Second {
-		t.Fatalf("the run took %s past a 300 ms wait", elapsed)
+	if forge.mutatedAt.IsZero() || elapsed > 5*time.Second {
+		t.Fatalf("the wait took %s after the mutation, past a 300 ms wait", elapsed)
 	}
 }
 
@@ -1178,12 +1181,14 @@ func TestStalledGhReadIsUnmovedForThePoll(t *testing.T) {
 // GH over its exec path), everything else from the fake.
 type readBackVia struct {
 	Forge
-	slow    Forge
-	mutated bool
+	slow      Forge
+	mutated   bool
+	mutatedAt time.Time
 }
 
 func (r *readBackVia) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
 	r.mutated = true
+	r.mutatedAt = time.Now()
 	return r.Forge.Rebase(ctx, repository, number, expect)
 }
 
