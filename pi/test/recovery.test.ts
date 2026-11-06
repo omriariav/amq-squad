@@ -9,7 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderScreen, type ScreenStatus } from "../extensions/lib/screen.ts";
-import { blockNeedsRecord, blockWords, decisionKind, decisionWords, tamperRecord } from "../extensions/lib/words.ts";
+import { blockNeedsRecord, blockWords, decisionKind, decisionWords, tamperAlarm, tamperRecord } from "../extensions/lib/words.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixture = JSON.parse(fs.readFileSync(path.join(here, "status-fixture.json"), "utf8")) as ScreenStatus;
@@ -77,4 +77,34 @@ test("B9: the typed block reads with the same words, the seat and the path on it
 	assert.ok(tasks.includes("  t7 blocked: the seat's commit record failed its check; the lead investigates before the seat works again"), tasks.join("\n"));
 	assert.ok(below(lines).includes(`  t7: seat dev, quarantined at ${slot}`), below(lines).join("\n"));
 	assert.ok(!lines.some((l) => l.includes("relaunch the roster")), lines.join("\n"));
+});
+
+// The plan reviewer's ruling on Codex's delta pass on c267382d: the
+// prepare's hold names its alarm id (tamper.go's "(seq N; alarm ID)"), and
+// the stop line and the typed block's line say it in words the lead acts
+// on: the seat's commit record failed its check (alarm ID); after
+// investigating, the lead runs scheduler recover --seat H --alarm ID. A
+// hold with no slot says the same. The commit step's write-time refusal
+// names no alarm and keeps its words. Reverted (no alarm read), the lines
+// do not name the decision by alarm.
+test("the alarm: the stop line and the block name the hold's alarm and the decision by alarm", () => {
+	const alarmed = `seat dev: quarantined at ${slot} (seq 150; alarm 3fa9c1d2): the commit ledger of seat dev: commit ledger dev: ledger_tampered: the tag of commits.dev link 150 fails; the refused document is quarantined at ${slot}`;
+	const words = "seat dev's commit record failed its check (alarm 3fa9c1d2); after investigating, the lead runs amq-squad scheduler recover --seat dev --alarm 3fa9c1d2";
+	assert.deepEqual(tamperAlarm(alarmed), { seat: "dev", alarm: "3fa9c1d2" });
+	assert.equal(decisionWords({ kind: "seat_prepare_failed", seat: "dev", task_id: "t7", reason_code: "ledger_tampered", reason: alarmed }), `seat dev could not be prepared for t7: ${words}`);
+	const t = { id: "t7", task_state: "blocked", block_reason: "ledger_tampered" };
+	assert.deepEqual(blockWords(t, { block_detail: alarmed }), { line: `t7 blocked: ${words}`, record: `t7: seat dev, quarantined at ${slot}` });
+	// a hold with no slot: the same words, the detail itself on the record line
+	const noSlot = "seat dev: the refused document could not be quarantined (seq 150; alarm 3fa9c1d2): the copy failed";
+	assert.equal(blockWords(t, { block_detail: noSlot }).line, `t7 blocked: ${words}`);
+	// the screen: the seats block's stop line and the tasks block's line
+	const d = { at: "2026-11-01T09:04:00Z", kind: "seat_prepare_failed", seat: "dev", task_id: "t7", reason_code: "ledger_tampered", reason: alarmed };
+	const row = { ...fixture.tasks[0], id: "t7", task_state: "blocked", block_reason: "ledger_tampered", block_route: "lead", title: "the task" } as ScreenStatus["tasks"][number];
+	const lines = renderScreen({ ...fixture, tasks: [row], decisions: [d] }, now, undefined, { t7: { block_detail: alarmed } });
+	assert.equal(block(lines, "seats").at(-1), `  seat dev could not be prepared for t7: ${words}`);
+	assert.ok(block(lines, "tasks").includes(`  t7 blocked: ${words}`), block(lines, "tasks").join("\n"));
+	// the write-time refusal names no alarm: the words stay
+	const write = `the commits ledger refused the write: commit ledger dev: ledger_tampered: the tag of commits.dev link 150 fails; the refused document is quarantined at ${slot}`;
+	assert.equal(tamperAlarm(write), undefined);
+	assert.equal(blockWords(t, { block_detail: write }).line, "t7 blocked: the seat's commit record failed its check; the lead investigates before the seat works again");
 });

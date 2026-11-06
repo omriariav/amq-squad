@@ -44,18 +44,24 @@ const (
 	// not; the seat is released from the ledger, the verb sent again
 	// records the line.
 	RefusedRecoverUnrecorded = "recover_unrecorded"
+	// RefusedRecoverAlarmNotHeld: a decision by alarm names an alarm that is
+	// not the one the seat is held by now (another alarm, an earlier one
+	// already released, or a seat no alarm holds).
+	RefusedRecoverAlarmNotHeld = "recover_alarm_not_held"
 )
 
 // RecoverRequest is the lead's recovery: the seat, the quarantined head
 // seq the slot is named by ("150", or "unknown"), the slot number k of
 // commits.<handle>.seq<N>[.k] (0 and 1 are the first), the entries to
-// carry as "task:commit", and why.
+// carry as "task:commit", and why. A decision by alarm names the seat and
+// the hold's alarm id instead, and no seq, slot or carried entry.
 type RecoverRequest struct {
 	Kind   string   `json:"kind"`
 	Seat   string   `json:"seat"`
-	Seq    string   `json:"seq"`
+	Seq    string   `json:"seq,omitempty"`
 	Slot   int      `json:"slot,omitempty"`
 	Carry  []string `json:"carry,omitempty"`
+	Alarm  string   `json:"alarm,omitempty"`
 	Reason string   `json:"reason,omitempty"`
 }
 
@@ -108,15 +114,32 @@ func (r Recovery) Apply(lead string, req RecoverRequest) (seatcommit.RecoverResu
 		now = r.Now()
 	}
 	return seatcommit.RecoverLedger(seatcommit.RecoverOptions{Root: r.Root, Handle: req.Seat, Seq: req.Seq, Slot: req.Slot, Carry: carry,
-		Target: r.Target, Git: r.Git, Lead: lead, Reason: req.Reason, Now: now})
+		Target: r.Target, Git: r.Git, Lead: lead, Reason: req.Reason, Now: now, Alarm: req.Alarm})
 }
 
 // recoverDecision is the decision socket's apply step for a proved
 // recovery: the request's shape, the chain write, the decision line; the
-// scheduler releases the seat at its next tick from the ledger.
+// scheduler releases the seat at its next tick from the ledger. A decision
+// by alarm is refused unless the seat is held by that alarm now
+// (Scheduler.HeldAlarm), so an earlier alarm's id never reaches the ledger
+// for a newer hold; the ledger half refuses it unless the ledger verifies.
 func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, now func() time.Time) func(lead string, req RecoverRequest) DecideReply {
 	return func(lead string, req RecoverRequest) DecideReply {
-		if !recoverSeatRe.MatchString(req.Seat) || !recoverSeqRe.MatchString(req.Seq) || req.Slot < 0 {
+		if req.Alarm != "" {
+			if !recoverSeatRe.MatchString(req.Seat) || !seatcommit.AlarmIDRe.MatchString(req.Alarm) || req.Seq != "" || req.Slot != 0 || len(req.Carry) > 0 {
+				return DecideReply{Code: RefusedRecoverMalformed, Detail: "a decision by alarm names a seat handle and an alarm id (eight hex characters), and no seq, slot or carried entry"}
+			}
+			held, ok := "", false
+			if s != nil {
+				held, ok = s.HeldAlarm(req.Seat)
+			}
+			if !ok {
+				return DecideReply{Code: RefusedRecoverAlarmNotHeld, Detail: fmt.Sprintf("seat %s is not held by a tamper alarm now; alarm %s is not the seat's", req.Seat, req.Alarm)}
+			}
+			if held != req.Alarm {
+				return DecideReply{Code: RefusedRecoverAlarmNotHeld, Detail: fmt.Sprintf("seat %s is held by alarm %s, not %s; the decision names the alarm its stop line shows", req.Seat, held, req.Alarm)}
+			}
+		} else if !recoverSeatRe.MatchString(req.Seat) || !recoverSeqRe.MatchString(req.Seq) || req.Slot < 0 {
 			return DecideReply{Code: RefusedRecoverMalformed, Detail: "a recovery names a seat handle, the quarantined head seq (or unknown) and a slot number"}
 		}
 		if _, err := ParseCarry(req.Carry); err != nil {
@@ -145,20 +168,28 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 		}
 		reason := fmt.Sprintf("the lead %s %s the commits ledger of seat %s from quarantine seq %d (%s): the chain continues at seq %d after the quarantined head's link; carried entries: %s; base %s; reason: %s",
 			lead, verb, req.Seat, res.OldSeq, res.Slot, res.NewSeq, firstOrNone(carried), res.Base, firstNonEmptyString(req.Reason, "none given"))
+		if req.Alarm != "" {
+			verb = "released"
+			if res.AlreadyRecovered {
+				verb = "had released (the decision sent again; the sealed ledger records it)"
+			}
+			reason = fmt.Sprintf("the lead %s %s alarm %s of seat %s by decision: its commits ledger verified when the decision came; the record naming the alarm is sealed into link %d, nothing restarted, nothing carried; reason: %s",
+				lead, verb, req.Alarm, req.Seat, res.NewSeq, firstNonEmptyString(req.Reason, "none given"))
+		}
 		at := now().UTC()
 		if err := AppendDecision(root, at, scheduler.Decision{Kind: DecisionLedgerRecovered, Seat: req.Seat, Reason: reason}); err != nil {
 			return DecideReply{Code: RefusedRecoverUnrecorded, Detail: "the chain is written and the scheduler releases the seat from it at its next tick, but the decision line could not be appended (send the decision again to record it): " + err.Error()}
-		}
-		// A hold with no slot is released only by this decision (the plan
-		// reviewer on af1a6124): the scheduler is told the record the ledger
-		// now answers, and releases the hold once its tick reads that record.
-		if rec, ok := seatcommit.RecoveryOf(root, req.Seat); ok && s != nil {
-			s.LeadRecovered(req.Seat, recoveryMark(rec))
 		}
 		data, _ := json.Marshal(res)
 		detail := fmt.Sprintf("seat %s recovered from quarantine seq %d: the chain continues at seq %d; %d entries carried; the scheduler releases the seat at its next tick", req.Seat, res.OldSeq, res.NewSeq, len(res.Carried))
 		if res.AlreadyRecovered {
 			detail = fmt.Sprintf("seat %s was already recovered from quarantine seq %d (the chain is at seq %d or past it); the decision is recorded now", req.Seat, res.OldSeq, res.NewSeq)
+		}
+		if req.Alarm != "" {
+			detail = fmt.Sprintf("seat %s: alarm %s released by decision, sealed at link %d; the scheduler releases the seat at its next tick", req.Seat, req.Alarm, res.NewSeq)
+			if res.AlreadyRecovered {
+				detail = fmt.Sprintf("seat %s: alarm %s was already released by decision (link %d); the decision is recorded now", req.Seat, req.Alarm, res.NewSeq)
+			}
 		}
 		return DecideReply{OK: true, Detail: detail, Data: data}
 	}

@@ -1,6 +1,8 @@
 package scheduler
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -18,13 +20,15 @@ import (
 // cause is the ledger's tamper check (LedgerTamperedError, which the
 // preparer raises from seatcommit's refusal) is a typed block on the task,
 // ledger_tampered, routed to the lead, raised once, with the seat, the
-// quarantined seq and the quarantine path in its detail; the seat is held
+// quarantined seq, the quarantine path and the hold's alarm id in its
+// detail; the seat is held
 // out of every dispatch, so no further prepare of it is attempted and no
 // further line is logged, until the lead's recovery is in the seat's
 // sealed ledger. The release is a reconciliation, not a message (Codex's
 // P2 on #904): every tick asks the preparer (RecoveryReader) what recovery
-// the seat's ledger records, and a hold whose slot or seq the record covers
-// is released, its tasks returned to pending; a decision line lost, a
+// the seat's ledger records, and a hold whose exact slot the record names,
+// or whose alarm a decision by alarm released, is released, its tasks
+// returned to pending; a decision line lost, a
 // crash before the state write or a reset that failed loses nothing, since
 // the next tick asks again. A clear of a warning never makes the seat
 // grantable: only the recovery does. Any other prepare failure keeps its
@@ -61,33 +65,39 @@ type LedgerTamper struct {
 	// Tasks are the tasks blocked ledger_tampered on this seat: the
 	// recovery returns them to pending.
 	Tasks []string `json:"tasks,omitempty"`
-	// Decided is the lead's decision the recover verb sealed for a hold
-	// with no slot (the plan reviewer on af1a6124: such a hold is never
-	// covered by a record alone); the hold is released once the ledger
-	// records this decision. Kept in the state file with the hold.
-	Decided *RecoveryMark `json:"decided,omitempty"`
+	// Alarm is the hold's durable id (newAlarmID: random, never a counter,
+	// so it is unique across restarts), kept in the state file with the
+	// hold, written into the block's detail and the stop line, and named by
+	// the lead's decision by alarm (scheduler recover --alarm) and by the
+	// release's line (the plan reviewer's ruling on Codex's delta pass on
+	// c267382d).
+	Alarm string `json:"alarm"`
 }
 
 // RecoveryMark is a recovery record as the scheduler reads it: the
-// quarantined seq and slot it continued from, the link that sealed it and
-// when the lead decided. covers matches a hold's slot against Slot; a hold
-// with no slot is released when the ledger's mark is the same decision the
-// recover verb reported (all four equal).
+// quarantined seq and slot it continued from, or the alarm a decision by
+// alarm released (no slot, no seq).
 type RecoveryMark struct {
-	Seq  int       `json:"seq"`
-	Slot string    `json:"slot"`
-	Link int       `json:"link,omitempty"`
-	At   time.Time `json:"at"`
+	Seq   int    `json:"seq"`
+	Slot  string `json:"slot"`
+	Alarm string `json:"alarm,omitempty"`
 }
 
-func (m RecoveryMark) same(o RecoveryMark) bool {
-	return m.Seq == o.Seq && m.Slot == o.Slot && m.Link == o.Link && m.At.Equal(o.At)
+// newAlarmID is a hold's alarm id: eight hex characters from the system's
+// random source (unique across restarts; a counter would not be).
+func newAlarmID() string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic("scheduler: the system's random source failed: " + err.Error())
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // RecoveryReader is a preparer that reads the recovery a seat's sealed
 // ledger records (schedproc's CleanSeats through seatcommit.RecoveryOf):
-// the quarantined seq and slot path it continued from, its link and time;
-// ok false when the ledger does not verify or records none.
+// the quarantined seq and slot path it continued from, or the alarm a
+// decision by alarm released; ok false when the ledger does not verify or
+// records none.
 type RecoveryReader interface {
 	LedgerRecovery(handle string) (RecoveryMark, bool)
 }
@@ -157,15 +167,17 @@ func (s *Scheduler) preparePassed(handle string) {
 // blockOnTamper raises the typed block: one seat_prepare_failed line with
 // the reason code, the block in the store, and the seat held.
 func (s *Scheduler) blockOnTamper(t task.Task, handle string, e *LedgerTamperedError, now time.Time, log func(Decision)) (*task.Task, error) {
-	detail := tamperDetail(handle, e)
 	if s.tampered == nil {
 		s.tampered = map[string]*LedgerTamper{}
 	}
 	tm := s.tampered[handle]
 	if tm == nil {
-		tm = &LedgerTamper{Handle: handle, Seq: e.Seq, Quarantine: e.Quarantine, Detail: detail, At: now.UTC()}
+		tm = &LedgerTamper{Handle: handle, Seq: e.Seq, Quarantine: e.Quarantine, At: now.UTC(), Alarm: newAlarmID()}
+		tm.Detail = tamperDetail(handle, e, tm.Alarm)
 		s.tampered[handle] = tm
+		s.publishHolds()
 	}
+	detail := tamperDetail(handle, e, tm.Alarm)
 	tm.Tasks = append(tm.Tasks, t.ID)
 	s.preparePassed(handle)
 	log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, ReasonCode: ReasonLedgerTampered, Reason: detail})
@@ -179,16 +191,39 @@ func (s *Scheduler) blockOnTamper(t task.Task, handle string, e *LedgerTamperedE
 
 // tamperDetail is the typed block's detail and the decision's reason: the
 // seat, the quarantine path first (the screen's record line is cut at 120
-// characters; the path is what the lead needs), the seq, then the refusal.
-func tamperDetail(handle string, e *LedgerTamperedError) string {
+// characters; the path is what the lead needs), the seq and the hold's
+// alarm id (the screen's words name the decision by alarm with it), then
+// the refusal.
+func tamperDetail(handle string, e *LedgerTamperedError, alarm string) string {
 	seq := e.Seq
 	if seq == "" {
 		seq = "unknown"
 	}
 	if e.Quarantine == "" {
-		return fmt.Sprintf("seat %s: the refused document could not be quarantined (seq %s): %v", handle, seq, e.Err)
+		return fmt.Sprintf("seat %s: the refused document could not be quarantined (seq %s; alarm %s): %v", handle, seq, alarm, e.Err)
 	}
-	return fmt.Sprintf("seat %s: quarantined at %s (seq %s): %v", handle, e.Quarantine, seq, e.Err)
+	return fmt.Sprintf("seat %s: quarantined at %s (seq %s; alarm %s): %v", handle, e.Quarantine, seq, alarm, e.Err)
+}
+
+// publishHolds copies the held seats' alarm ids where the decision
+// socket reads them (HeldAlarm), under mu: the hold map is the tick's own.
+func (s *Scheduler) publishHolds() {
+	m := make(map[string]string, len(s.tampered))
+	for h, tm := range s.tampered {
+		m[h] = tm.Alarm
+	}
+	s.mu.Lock()
+	s.heldAlarms = m
+	s.mu.Unlock()
+}
+
+// HeldAlarm is the alarm id of the hold seat handle is held by now, as
+// the last tick left it (the decision by alarm is refused for any other).
+func (s *Scheduler) HeldAlarm(handle string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.heldAlarms[handle]
+	return a, ok
 }
 
 // tamperedSeat reports whether a seat is held by a tamper alarm (never
@@ -205,8 +240,8 @@ var (
 )
 
 // applyRecoveries reconciles every held seat against its ledger's
-// recovery record, each tick: a hold whose slot the record names, or
-// whose seq the record's is at or past, is released and its tasks
+// recovery record, each tick: a hold whose exact slot the record names,
+// or whose alarm a decision by alarm released, is released and its tasks
 // returned to pending, the resets first and the hold deleted after. A
 // task the store no longer has is skipped; any other read error, or a
 // reset that fails, keeps the hold for the next tick (a task already
@@ -214,16 +249,7 @@ var (
 // then counted (ledger_release_failed, ledger_release_suppressed): a
 // persistent store error never floods the log and never loses the hold.
 func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
-	s.mu.Lock()
-	asks := s.leadRecovered
-	s.leadRecovered = nil
-	s.mu.Unlock()
-	for h, rec := range asks {
-		if tm := s.tampered[h]; tm != nil && tm.Quarantine == "" {
-			rec := rec
-			tm.Decided = &rec
-		}
-	}
+	defer s.publishHolds()
 	reader, ok := s.Preparer.(RecoveryReader)
 	if !ok || len(s.tampered) == 0 {
 		return nil
@@ -272,7 +298,11 @@ func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 		}
 		delete(s.tampered, h)
 		s.preparePassed(h)
-		log(Decision{Kind: "ledger_hold_released", Seat: h, Reason: fmt.Sprintf("the commits ledger of seat %s records the lead's recovery from quarantine seq %d (%s); the seat is grantable again", h, seq, slot)})
+		what := fmt.Sprintf("the lead's recovery from quarantine seq %d (%s)", seq, slot)
+		if rec.Alarm != "" {
+			what = "the lead's decision by alarm"
+		}
+		log(Decision{Kind: "ledger_hold_released", Seat: h, Reason: fmt.Sprintf("the commits ledger of seat %s records %s; alarm %s is released and the seat is grantable again", h, what, tm.Alarm)})
 	}
 	return nil
 }
@@ -302,52 +332,29 @@ func reasonIdentity(reason string) string {
 }
 
 // covers reports whether a recovery record answers this hold (the plan
-// reviewer's ruling on af1a6124): a record that names the hold's exact
-// slot. A seq never answers a hold: slot names are unique by construction
-// (commits.<h>.seq<N>[.k]), a seq is not, and the head's seq the hold was
-// named by was never verified (the incident was itself a lowered seq). A
-// record that predates the alarm cannot name a slot the alarm created,
-// which is why no baseline of the earlier record is kept (the reviewer's
-// ruling on f1edd375; a slot reused for a byte-identical refusal is the
-// stated same-uid residual). A hold with no slot (a refusal that
-// quarantined nothing) is answered only by the decision the lead's recover
-// verb sealed for it (Decided), never by a record alone.
+// reviewer's rulings on af1a6124 and on Codex's delta pass on c267382d): a
+// decision by alarm that names this hold's alarm, or a record that names
+// this hold's exact slot. A seq never answers a hold: slot names are
+// unique by construction (commits.<h>.seq<N>[.k]), a seq is not, and the
+// head's seq the hold was named by was never verified (the incident was
+// itself a lowered seq). A decision by alarm for any other alarm (an
+// earlier hold's, landing late) answers nothing, so it never releases a
+// newer hold. A hold with no slot is answered only by its alarm.
 func (tm *LedgerTamper) covers(rec RecoveryMark) bool {
-	if tm.Quarantine != "" {
-		return rec.Slot == tm.Quarantine
+	if rec.Alarm != "" {
+		return rec.Alarm == tm.Alarm
 	}
-	return tm.Decided != nil && tm.Decided.same(rec)
+	return tm.Quarantine != "" && rec.Slot == tm.Quarantine
 }
 
 // names reports whether a task's block is this hold's own: blocked
-// ledger_tampered with the detail the alarm wrote (tamperDetail), naming
-// the hold's slot, or, for a hold with no slot, the hold's own detail. A
-// tamper block raised for another slot, or by another writer, is not this
-// hold's and its release leaves it (the plan reviewer on af1a6124).
+// ledger_tampered with the detail the alarm wrote (tamperDetail), which
+// names the hold's alarm id. A tamper block of another alarm, or written
+// by another writer (the commit step's refusal names no alarm), is not
+// this hold's and its release leaves it (the plan reviewer on af1a6124).
 func (tm *LedgerTamper) names(t task.Task) bool {
-	if t.State != task.StateBlocked || t.BlockReason != ReasonLedgerTampered {
-		return false
-	}
-	if tm.Quarantine != "" {
-		return strings.HasPrefix(t.BlockDetail, "seat "+tm.Handle+": quarantined at "+tm.Quarantine+" (seq ")
-	}
-	return t.BlockDetail == tm.Detail
-}
-
-// LeadRecovered is the recover verb's apply step telling the scheduler the
-// decision it has just sealed into seat handle's ledger (the record as the
-// ledger answers it). The next tick puts it on the seat's hold when the
-// hold has no slot (Decided), and the hold is released once the ledger
-// records that decision; a hold with a slot is released from its slot and
-// ignores it. A lost message loses nothing: the verb sent again answers
-// from the ledger and tells the scheduler again.
-func (s *Scheduler) LeadRecovered(handle string, rec RecoveryMark) {
-	s.mu.Lock()
-	if s.leadRecovered == nil {
-		s.leadRecovered = map[string]RecoveryMark{}
-	}
-	s.leadRecovered[handle] = rec
-	s.mu.Unlock()
+	return t.State == task.StateBlocked && t.BlockReason == ReasonLedgerTampered && tm.Alarm != "" &&
+		strings.Contains(t.BlockDetail, "; alarm "+tm.Alarm+")")
 }
 
 // RestoreLedgerTampers takes the tamper alarms a previous incarnation
@@ -360,8 +367,14 @@ func (s *Scheduler) RestoreLedgerTampers(st State) int {
 			s.tampered = map[string]*LedgerTamper{}
 		}
 		tm := tm
+		if tm.Alarm == "" {
+			// a hold an earlier build of this branch wrote without an id;
+			// its blocks name none, so the lead resets their tasks by hand
+			tm.Alarm = newAlarmID()
+		}
 		s.tampered[tm.Handle] = &tm
 	}
+	s.publishHolds()
 	return len(st.LedgerTampered)
 }
 

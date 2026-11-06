@@ -164,8 +164,16 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	push_target_unacknowledged: () => ["the push target is not the one the owner's grant names now", "ask the owner to acknowledge the push target in the grant"],
 	// 3.2.0-0c-B rule 7: the tamper alarm's typed block (the scheduler's
 	// prepare, the commit step's write-time refusal), with the seat and the
-	// quarantine path on the record line below the rule (blockWords)
-	ledger_tampered: () => ["the seat's commit record failed its check", "the lead investigates before the seat works again"],
+	// quarantine path on the record line below the rule (blockWords); the
+	// prepare's hold names its alarm id, and the words name the decision by
+	// alarm that releases it (the plan reviewer's ruling on Codex's delta
+	// pass on c267382d)
+	ledger_tampered: (d) => {
+		const a = tamperAlarm(d.block_detail);
+		return a
+			? [`seat ${a.seat}'s commit record failed its check (alarm ${a.alarm})`, `after investigating, the lead runs amq-squad scheduler recover --seat ${a.seat} --alarm ${a.alarm}`]
+			: ["the seat's commit record failed its check", "the lead investigates before the seat works again"];
+	},
 	tool_pin_mismatch: () => ["a pinned tool is not the pinned version", "ask the owner to check the pin"],
 	verifier_timeout: () => ["its verifier ran past its time limit", `${RESET}, or ask the owner to raise the limit`],
 	verifier_output_exceeded: () => ["its verifier printed more than the limit", `${RESET}, or ask the owner to raise the limit`],
@@ -342,6 +350,18 @@ export function blockNeedsRecord(reason: string): boolean {
 // refused the write: commit ledger H: ...; the refused document is
 // quarantined at PATH; ..."): the seat and the slot.
 const TAMPER_DETAIL = /(?:seat|commit ledger) (\S+):.*?quarantined at ([^\s;]+)/;
+
+// TAMPER_ALARM is the hold's alarm id in the prepare's detail (tamper.go
+// tamperDetail, "seat H: ... (seq N; alarm ID): ..."), with its seat.
+const TAMPER_ALARM = /^seat (\S+): .*?\(seq \S+; alarm ([0-9a-f]{8})\)/;
+
+// tamperAlarm is the seat and the alarm id a tamper block's detail names
+// (the prepare's hold), or undefined (the commit step's write-time
+// refusal names none).
+export function tamperAlarm(detail: string | undefined): { seat: string; alarm: string } | undefined {
+	const m = TAMPER_ALARM.exec(detail ?? "");
+	return m ? { seat: m[1], alarm: m[2] } : undefined;
+}
 
 // tamperRecord is the record line of a tamper block: the seat and the
 // quarantine path when the detail names them, else the detail itself.
@@ -554,7 +574,9 @@ export function decisionWords(d: { kind: string; seat?: string; task_id?: string
 	const l = own(LAUNCH_WORDS, code) ?? own(LAUNCH_WORDS, d.stage);
 	if (!f && l) return `${happened}: ${l}; ${todo}`;
 	if (!f) return `${happened}; ${todo}`;
-	const [why, then] = f({});
+	// the tamper alarm's decision carries its detail (the alarm id) as its
+	// reason: the words read it as the block's own record
+	const [why, then] = f(code === "ledger_tampered" ? { block_detail: d.reason } : {});
 	return `${happened}: ${why}; ${then}`;
 }
 

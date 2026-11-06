@@ -136,7 +136,7 @@ func TestRecoveryThroughTheSchedulerMakesTheSeatGrantable(t *testing.T) {
 	all := r.ticks(40)
 	slot := filepath.Join(seatcommit.QuarantineDir(r.root), "commits."+r.handle+".seq1")
 	failed := kinds(all, "seat_prepare_failed")
-	if len(failed) != 1 || failed[0].ReasonCode != scheduler.ReasonLedgerTampered || !strings.Contains(failed[0].Reason, "quarantined at "+slot+" (seq 1)") {
+	if len(failed) != 1 || failed[0].ReasonCode != scheduler.ReasonLedgerTampered || !strings.Contains(failed[0].Reason, "quarantined at "+slot+" (seq 1; alarm ") {
 		t.Fatalf("seat_prepare_failed over 40 ticks: %+v", failed)
 	}
 	if len(kinds(all, "blocked")) != 1 || len(kinds(all, "dispatched")) != 0 {
@@ -399,38 +399,64 @@ func TestARestoredDocumentIsReleasedByTheLeadsDecision(t *testing.T) {
 	}
 }
 
-// The plan reviewer on af1a6124, the process half of a hold with no slot:
-// the seat is held by an alarm that quarantined nothing (restored from a
-// state file, its task blocked with the alarm's detail); a later refused
-// read quarantined the document (slot seq1); the document put back
-// verifies, and ticks alone release nothing; the lead's recover verb on
-// that slot seals its decision and tells the scheduler, and the next tick
-// releases the seat (the record it was told is the one the ledger
-// answers). Reverted (the apply step does not tell the scheduler), the
-// hold stays.
-func TestTheLeadsVerbReleasesAHoldWithNoSlot(t *testing.T) {
+// Codex's delta pass on c267382d (1), the plan reviewer's ruling, on real
+// files through the decision socket's apply step: a seat held by an alarm
+// that quarantined nothing (restored from a state file, its task blocked
+// with the alarm's detail). While the document is still tampered, the
+// decision by alarm is refused recover_alarm_unverified and nothing is
+// written; a wrong alarm id is refused recover_alarm_not_held. The
+// document put back verifies, ticks alone release nothing (no slot names
+// the hold), and the decision naming the hold's alarm is OK: the record
+// names the alarm, the decision line says so, and the next ticks release
+// the seat. The same id sent once the hold is gone is refused
+// recover_alarm_not_held. Reverted: the held-alarm check (the wrong id is
+// accepted), the verify-now check (the tampered ledger is resealed).
+func TestTheAlarmVerbReleasesAHoldWithNoSlot(t *testing.T) {
 	r := newTamperedSeatRig(t)
-	if _, err := seatcommit.ReadLedgerAs(r.root, r.handle, "the lead's inspection"); err == nil {
-		t.Fatal("the tampered document verified")
-	}
-	detail := "seat " + r.handle + ": the refused document could not be quarantined (seq 1): the copy failed"
+	const alarm = "3fa9c1d2"
+	detail := "seat " + r.handle + ": the refused document could not be quarantined (seq 1; alarm " + alarm + "): the copy failed"
 	if _, err := r.store.Block(r.tk.ID, "", scheduler.ReasonLedgerTampered, detail, task.RouteLead, r.now); err != nil {
 		t.Fatal(err)
 	}
-	r.s.RestoreLedgerTampers(scheduler.State{LedgerTampered: []scheduler.LedgerTamper{{Handle: r.handle, Seq: "1", Detail: detail, At: r.now, Tasks: []string{r.tk.ID}}}})
+	r.s.RestoreLedgerTampers(scheduler.State{LedgerTampered: []scheduler.LedgerTamper{{Handle: r.handle, Seq: "1", Detail: detail, At: r.now, Tasks: []string{r.tk.ID}, Alarm: alarm}}})
+	decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
 	p := filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: alarm, Reason: "too early"}); reply.OK || reply.Code != seatcommit.RecoverAlarmUnverified {
+		t.Fatalf("a decision by alarm on a tampered ledger: %+v", reply)
+	}
+	if got, err := os.ReadFile(p); err != nil || !bytes.Equal(got, r.tampered) {
+		t.Fatalf("the refused decision wrote the ledger: %v", err)
+	}
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: "0badcafe", Reason: "the wrong alarm"}); reply.OK || reply.Code != RefusedRecoverAlarmNotHeld || !strings.Contains(reply.Detail, alarm) {
+		t.Fatalf("a wrong alarm id: %+v", reply)
+	}
 	if err := os.WriteFile(p, r.original, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if all := r.ticks(5); len(kinds(all, "ledger_hold_released")) != 0 || len(kinds(all, "dispatched")) != 0 {
 		t.Fatalf("ticks alone released a hold with no slot: %+v", all)
 	}
-	decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
-	if reply := decide("lead", RecoverRequest{Seat: r.handle, Seq: "1", Slot: 1, Reason: "the copy failed; the document is back"}); !reply.OK {
-		t.Fatalf("the decision: %+v", reply)
+	reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: alarm, Reason: "the copy failed; the document is back"})
+	var res seatcommit.RecoverResult
+	if !reply.OK || json.Unmarshal(reply.Data, &res) != nil || res.Alarm != alarm || !res.Verified || res.NewSeq != 2 {
+		t.Fatalf("the decision by alarm: %+v", reply)
+	}
+	if rec, ok := seatcommit.RecoveryOf(r.root, r.handle); !ok || rec.Alarm != alarm || rec.Slot != "" || rec.Link != 2 {
+		t.Fatalf("the sealed record: %v %+v", ok, rec)
 	}
 	all := r.ticks(3)
 	if !has(all, "ledger_hold_released", "", r.handle) || !has(all, "task_reset", r.tk.ID, r.handle) || !has(all, "dispatched", r.tk.ID, r.handle) {
-		t.Fatalf("the lead's verb did not release the hold with no slot: %+v", all)
+		t.Fatalf("the decision by alarm did not release the hold: %+v", all)
+	}
+	lines, _ := ReadDecisionsTail(r.root)
+	found := false
+	for _, l := range lines {
+		found = found || (l.Kind == DecisionLedgerRecovered && strings.Contains(l.Reason, "released alarm "+alarm+" of seat "+r.handle))
+	}
+	if !found {
+		t.Fatalf("no decision line naming the alarm: %+v", lines)
+	}
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: alarm, Reason: "again"}); reply.OK || reply.Code != RefusedRecoverAlarmNotHeld {
+		t.Fatalf("the old alarm once its hold is gone: %+v", reply)
 	}
 }

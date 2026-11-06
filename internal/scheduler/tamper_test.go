@@ -27,10 +27,9 @@ type tamperPreparer struct {
 }
 
 type recoveryRecord struct {
-	seq  int
-	slot string
-	link int
-	at   time.Time
+	seq   int
+	slot  string
+	alarm string
 }
 
 func (p *tamperPreparer) PrepareSeat(h string) error {
@@ -55,7 +54,7 @@ func (p *tamperPreparer) recover(h string, seq int, slot string) {
 
 func (p *tamperPreparer) LedgerRecovery(h string) (RecoveryMark, bool) {
 	r, ok := p.ledgers[h]
-	return RecoveryMark{Seq: r.seq, Slot: r.slot, Link: r.link, At: r.at}, ok
+	return RecoveryMark{Seq: r.seq, Slot: r.slot, Alarm: r.alarm}, ok
 }
 
 var _ RecoveryReader = (*tamperPreparer)(nil)
@@ -116,7 +115,8 @@ func TestTamperAlarmBlocksOnceAndHoldsTheSeat(t *testing.T) {
 	if got.State != task.StateBlocked || got.BlockReason != ReasonLedgerTampered || got.BlockRoute != task.RouteLead {
 		t.Fatalf("the task is not blocked ledger_tampered for the lead: %+v", got)
 	}
-	for _, want := range []string{"seat seat-a", "quarantined at /root/extensions/amq-squad/quarantine/commits.seat-a.seq150", "(seq 150)"} {
+	alarm := h.s.tampered["seat-a"].Alarm
+	for _, want := range []string{"seat seat-a", "quarantined at /root/extensions/amq-squad/quarantine/commits.seat-a.seq150", "(seq 150; alarm " + alarm + ")"} {
 		if !strings.Contains(got.BlockDetail, want) || !strings.Contains(line.Reason, want) {
 			t.Fatalf("the block detail or the line does not name %q:\n%s\n%s", want, got.BlockDetail, line.Reason)
 		}
@@ -427,7 +427,7 @@ func (p *twoSeatPreparer) PrepareSeat(h string) error {
 
 func (p *twoSeatPreparer) LedgerRecovery(h string) (RecoveryMark, bool) {
 	r, ok := p.ledgers[h]
-	return RecoveryMark{Seq: r.seq, Slot: r.slot, Link: r.link, At: r.at}, ok
+	return RecoveryMark{Seq: r.seq, Slot: r.slot, Alarm: r.alarm}, ok
 }
 
 func intPtr(n int) *int { return &n }
@@ -553,7 +553,7 @@ func TestALoweredSeqReplayDoesNotReleaseTheHold(t *testing.T) {
 	tk := h.add("a", &sonnet)
 	h.up("seat-a", sonnet)
 	h.tick()
-	p.ledgers = map[string]recoveryRecord{"seat-a": {seq: 3, slot: slotOf("seat-a", "3"), link: 4, at: h.clk.Now().Add(-time.Hour).UTC()}}
+	p.ledgers = map[string]recoveryRecord{"seat-a": {seq: 3, slot: slotOf("seat-a", "3")}}
 	for i := 0; i < 20; i++ {
 		ds := h.tick()
 		h.clk.Add(2 * time.Second)
@@ -572,7 +572,7 @@ func TestALoweredSeqReplayDoesNotReleaseTheHold(t *testing.T) {
 			t.Fatalf("the restarted scheduler released the hold on the replay: %v %+v", err, ds)
 		}
 	}
-	p.ledgers["seat-a"] = recoveryRecord{seq: 1, slot: slotOf("seat-a", "1"), link: 5, at: h.clk.Now().UTC()}
+	p.ledgers["seat-a"] = recoveryRecord{seq: 1, slot: slotOf("seat-a", "1")}
 	if ds, err := next.Tick(); err != nil || !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "task_reset", tk.ID, "seat-a") {
 		t.Fatalf("the hold's own slot did not release it: %v %+v", err, ds)
 	}
@@ -590,7 +590,7 @@ func TestARecoveryForAnotherSlotDoesNotReleaseTheHold(t *testing.T) {
 	tk := h.add("a", &sonnet)
 	h.up("seat-a", sonnet)
 	h.tick()
-	p.ledgers = map[string]recoveryRecord{"seat-a": {seq: 150, slot: slotOf("seat-a", "150") + ".2", link: 151, at: h.clk.Now().UTC()}}
+	p.ledgers = map[string]recoveryRecord{"seat-a": {seq: 150, slot: slotOf("seat-a", "150") + ".2"}}
 	for i := 0; i < 10; i++ {
 		ds := h.tick()
 		h.clk.Add(2 * time.Second)
@@ -603,15 +603,14 @@ func TestARecoveryForAnotherSlotDoesNotReleaseTheHold(t *testing.T) {
 	}
 }
 
-// The plan reviewer on af1a6124: a hold with no slot (the refusal could
-// not quarantine the document) is never released by a record alone, even
-// one at the hold's seq; a decision for another seat, or one the ledger
-// does not record, does not release it; the lead's recover verb telling
-// the scheduler the decision it sealed (LeadRecovered) releases it once
-// the ledger records that decision. Reverted (a record at or past the
-// hold's seq covers a hold with no slot), the record alone releases it.
-func TestAHoldWithNoSlotIsReleasedOnlyByTheLeadsVerb(t *testing.T) {
-	h := newHarness(t, Config{IdleTimeout: time.Hour})
+// Codex's delta pass on c267382d (1), the plan reviewer's ruling: a hold
+// with no slot (the refusal could not quarantine the document) is never
+// released by a record that names a slot or a seq, nor by a decision by
+// alarm for another alarm; it keeps its alarm id across a restart (the
+// state file); the decision by alarm naming its own alarm releases it.
+// Reverted (no release by alarm), the hold strands.
+func TestAHoldWithNoSlotIsReleasedOnlyByItsAlarm(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour, StatePath: filepath.Join(t.TempDir(), "scheduler.json")})
 	e := tamperErr("seat-a", "150")
 	e.Quarantine = ""
 	p := &tamperPreparer{seat: "seat-a", err: e}
@@ -619,27 +618,108 @@ func TestAHoldWithNoSlotIsReleasedOnlyByTheLeadsVerb(t *testing.T) {
 	tk := h.add("a", &sonnet)
 	h.up("seat-a", sonnet)
 	h.tick()
-	rec := recoveryRecord{seq: 150, slot: slotOf("seat-a", "150") + ".1", link: 151, at: h.clk.Now().UTC()}
-	p.ledgers = map[string]recoveryRecord{"seat-a": rec}
+	alarm := h.s.tampered["seat-a"].Alarm
+	if len(alarm) != 8 || !strings.Contains(h.get(tk.ID).BlockDetail, "; alarm "+alarm+")") {
+		t.Fatalf("the hold's alarm %q is not in its block: %q", alarm, h.get(tk.ID).BlockDetail)
+	}
+	for _, rec := range []recoveryRecord{
+		{seq: 150, slot: slotOf("seat-a", "150") + ".1"}, // a slot and the hold's seq
+		{alarm: "0badcafe"}, // another alarm
+	} {
+		p.ledgers = map[string]recoveryRecord{"seat-a": rec}
+		for i := 0; i < 5; i++ {
+			ds := h.tick()
+			h.clk.Add(2 * time.Second)
+			if has(ds, "ledger_hold_released", "", "seat-a") || has(ds, "task_reset", tk.ID, "") {
+				t.Fatalf("%+v released a hold with no slot: %+v", rec, ds)
+			}
+		}
+	}
+	st, err := ReadState(h.s.Config.StatePath)
+	if err != nil || len(st.LedgerTampered) != 1 || st.LedgerTampered[0].Alarm != alarm {
+		t.Fatalf("the state file does not keep the alarm: %v %+v", err, st.LedgerTampered)
+	}
+	next := &Scheduler{Store: h.store, Now: h.clk.Now, Launcher: h.l, Doorbell: h.bell, Config: h.s.Config, Incarnation: "u", Preparer: p}
+	next.RestoreLedgerTampers(st)
+	if got, ok := next.HeldAlarm("seat-a"); !ok || got != alarm {
+		t.Fatalf("the restarted hold's alarm: %q %v, want %q", got, ok, alarm)
+	}
+	p.ledgers["seat-a"] = recoveryRecord{alarm: alarm}
+	p.err = nil // the ledger verifies again
+	next.requests = append(next.requests, request{req: SeatRequest{ID: "test-seat-a", Pool: sonnet}, at: h.clk.Now()})
+	next.Post(Event{Kind: SeatUp, At: h.clk.Now(), Handle: "seat-a", Pool: sonnet, RequestID: "test-seat-a"})
+	ds, err := next.Tick()
+	if err != nil || !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "task_reset", tk.ID, "seat-a") || !has(ds, "dispatched", tk.ID, "seat-a") {
+		t.Fatalf("the decision by its alarm did not release the hold: %v %+v", err, ds)
+	}
+	if _, ok := next.HeldAlarm("seat-a"); ok {
+		t.Fatal("the released seat is still published as held")
+	}
+}
+
+// Codex's delta pass on c267382d (2): a hold on slot X (seq 150); the head
+// lowered to seq 1 gives a later slot Y at a lower seq; the recovery from
+// Y (its record names Y) does not release X's hold, which no verified
+// recovery of X can answer either (the chain is behind X's seq); X's hold
+// is released only by the decision naming its alarm. Reverted (no release
+// by alarm), the hold strands.
+func TestALowerSeqSlotLeavesTheHoldToItsAlarm(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	p := &tamperPreparer{seat: "seat-a", err: tamperErr("seat-a", "150")}
+	h.s.Preparer = p
+	tk := h.add("a", &sonnet)
+	h.up("seat-a", sonnet)
+	h.tick()
+	alarm := h.s.tampered["seat-a"].Alarm
+	p.ledgers = map[string]recoveryRecord{"seat-a": {seq: 1, slot: slotOf("seat-a", "1")}}
 	for i := 0; i < 10; i++ {
 		ds := h.tick()
 		h.clk.Add(2 * time.Second)
-		if has(ds, "ledger_hold_released", "", "seat-a") || has(ds, "task_reset", tk.ID, "") {
-			t.Fatalf("a record alone released a hold with no slot: %+v", ds)
+		if has(ds, "ledger_hold_released", "", "seat-a") {
+			t.Fatalf("the recovery of the lower-seq slot released X's hold: %+v", ds)
 		}
 	}
-	mark := RecoveryMark{Seq: rec.seq, Slot: rec.slot, Link: rec.link, At: rec.at}
-	h.s.LeadRecovered("seat-b", mark)
-	other := mark
-	other.Link = 152
-	h.s.LeadRecovered("seat-a", other)
-	if ds := h.tick(); has(ds, "ledger_hold_released", "", "seat-a") {
-		t.Fatalf("a decision the ledger does not record released the hold: %+v", ds)
+	p.recover("seat-a", 0, "")
+	p.ledgers["seat-a"] = recoveryRecord{alarm: alarm}
+	ds := h.tick()
+	if !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "task_reset", tk.ID, "seat-a") || !has(ds, "dispatched", tk.ID, "seat-a") {
+		t.Fatalf("X's alarm did not release its hold: %+v", ds)
 	}
-	h.s.LeadRecovered("seat-a", mark)
-	p.err = nil // the recovered ledger prepares
-	if ds := h.tick(); !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "task_reset", tk.ID, "seat-a") || !has(ds, "dispatched", tk.ID, "seat-a") {
-		t.Fatalf("the lead's verb did not release the hold: %+v", ds)
+	for _, d := range ds {
+		if d.Kind == "ledger_hold_released" && !strings.Contains(d.Reason, "alarm "+alarm+" is released") {
+			t.Fatalf("the release does not name the alarm: %q", d.Reason)
+		}
+	}
+}
+
+// Codex's delta pass on c267382d (3): a decision by alarm for an earlier
+// hold that lands late (the ledger records alarm A) never releases a newer
+// hold on the same seat (alarm B), over many ticks; B's own decision does.
+// Reverted (any decision by alarm releases), the late decision releases B.
+func TestALateDecisionForAnEarlierAlarmDoesNotReleaseANewerHold(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	p := &tamperPreparer{seat: "seat-a", err: tamperErr("seat-a", "150")}
+	h.s.Preparer = p
+	tk := h.add("a", &sonnet)
+	h.up("seat-a", sonnet)
+	h.tick()
+	b := h.s.tampered["seat-a"].Alarm
+	a := "a0000001"
+	if a == b {
+		a = "a0000002"
+	}
+	p.ledgers = map[string]recoveryRecord{"seat-a": {alarm: a}}
+	for i := 0; i < 20; i++ {
+		ds := h.tick()
+		h.clk.Add(2 * time.Second)
+		if has(ds, "ledger_hold_released", "", "seat-a") || has(ds, "task_reset", tk.ID, "") {
+			t.Fatalf("an earlier alarm's decision released the newer hold: %+v", ds)
+		}
+	}
+	p.recover("seat-a", 0, "")
+	p.ledgers["seat-a"] = recoveryRecord{alarm: b}
+	if ds := h.tick(); !has(ds, "ledger_hold_released", "", "seat-a") {
+		t.Fatalf("the newer hold's own decision did not release it: %+v", ds)
 	}
 }
 
@@ -730,7 +810,7 @@ func TestARecoveryKeepsATamperBlockOfAnotherSlot(t *testing.T) {
 	h.up("seat-a", sonnet)
 	h.tick()
 	p.recover("seat-a", 150, slotOf("seat-a", "150"))
-	again := tamperDetail("seat-a", tamperErr("seat-a", "151"))
+	again := tamperDetail("seat-a", tamperErr("seat-a", "151"), "0badcafe")
 	prev := storeGet
 	t.Cleanup(func() { storeGet = prev })
 	storeGet = func(st task.Store, id string) (task.Task, error) {

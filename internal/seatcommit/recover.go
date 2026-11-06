@@ -65,6 +65,10 @@ type RecoverOptions struct {
 	Lead   string
 	Reason string
 	Now    time.Time
+	// Alarm, when set, is a decision by alarm (recordAlarm): the scheduler's
+	// alarm id of the hold the lead releases, on a ledger that verifies now;
+	// it names no slot and no seq, and carries nothing.
+	Alarm string
 }
 
 // CarryEntry names one quarantined commit entry to carry.
@@ -82,7 +86,9 @@ type RecoverResult struct {
 	AlreadyRecovered bool   `json:"already_recovered,omitempty"`
 	// Verified: the document verified when the decision came; the record
 	// was sealed into the next link of the same body (recordVerified).
-	Verified   bool           `json:"verified,omitempty"`
+	Verified bool `json:"verified,omitempty"`
+	// Alarm: a decision by alarm released this alarm id (recordAlarm).
+	Alarm      string         `json:"alarm,omitempty"`
 	Slot       string         `json:"slot"`
 	OldSeq     int            `json:"old_seq"`
 	NewSeq     int            `json:"new_seq"`
@@ -106,7 +112,13 @@ const (
 	RecoverEntryUnpushed     = "recover_entry_unpushed"
 	RecoverEntryTreeMismatch = "recover_entry_tree_mismatch"
 	RecoverWriteFailed       = "recover_write_failed"
+	// RecoverAlarmUnverified: a decision by alarm on a ledger that does not
+	// verify now (it is recovered from its quarantine slot instead).
+	RecoverAlarmUnverified = "recover_alarm_unverified"
 )
+
+// AlarmIDRe is a scheduler alarm id: eight lowercase hex characters.
+var AlarmIDRe = regexp.MustCompile(`^[0-9a-f]{8}$`)
 
 // RecoverRefusal is a recovery refused, with its code.
 type RecoverRefusal struct {
@@ -141,6 +153,20 @@ func RecoverSlotName(handle, seq string, k int) string {
 // seals them and never removes them.
 func RecoverLedger(o RecoverOptions) (RecoverResult, error) {
 	var out RecoverResult
+	if o.Alarm != "" {
+		if o.Handle == "" || !AlarmIDRe.MatchString(o.Alarm) || o.Seq != "" || o.Slot != 0 || len(o.Carry) > 0 {
+			return out, refuseRecover(RecoverSlotInvalid, "a decision by alarm names a seat and an alarm id, and no slot, seq or carried entry")
+		}
+		if o.Now.IsZero() {
+			o.Now = time.Now()
+		}
+		err := withLedgerLock(o.Root, o.Handle, func() error {
+			var err error
+			out, err = recordAlarm(o)
+			return err
+		})
+		return out, err
+	}
 	if o.Handle == "" || !recoverSeqRe.MatchString(o.Seq) || o.Slot < 0 {
 		return out, refuseRecover(RecoverSlotInvalid, "a recovery names a seat, a head seq (or %s) and a slot number", quarantineSeqUnknown)
 	}
@@ -329,6 +355,40 @@ func recordVerified(o RecoverOptions, live Ledger, slotPath string) (RecoverResu
 		return out, err
 	}
 	return RecoverResult{Handle: o.Handle, Verified: true, Slot: slot.path, OldSeq: oldSeq, NewSeq: link.Seq, Prev: prev.Tag, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, Base: live.Base}, nil
+}
+
+// recordAlarm is a decision by alarm (the plan reviewer's ruling on
+// Codex's delta pass on c267382d): the lead releases the hold of one
+// scheduler alarm, named by its id, on a ledger that verifies now. It
+// names no slot and no seq, so it releases a hold whose refusal
+// quarantined nothing, and a hold whose slot the chain has moved past (a
+// later slot at a lower seq recovered first). The ledger must verify now,
+// or the decision is refused (recover_alarm_unverified: the ledger is
+// recovered from its quarantine slot instead); nothing is carried; the
+// next link seals the same body with the record naming the alarm. The
+// same alarm decided again is answered from the ledger (AlreadyRecovered).
+func recordAlarm(o RecoverOptions) (RecoverResult, error) {
+	var out RecoverResult
+	live, _, rerr := readLedger(o.Root, o.Handle)
+	if rerr != nil {
+		return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s does not verify now (%v); a decision by alarm needs a ledger that verifies: recover it from its quarantine slot", o.Handle, rerr)
+	}
+	if live.Seal == nil {
+		return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s has no seal", o.Handle)
+	}
+	if r := live.Recovered; r != nil && r.Alarm == o.Alarm {
+		return RecoverResult{Handle: o.Handle, AlreadyRecovered: true, Verified: true, Alarm: o.Alarm, NewSeq: r.Link, Base: live.Base}, nil
+	}
+	now := o.Now.UTC()
+	prev := live.Seal
+	l := live
+	l.Seal = nil
+	l.Recovered = &LedgerRecovery{Alarm: o.Alarm, By: o.Lead, Reason: o.Reason, At: now, Verified: true, Link: prev.Seq + 1}
+	link, err := sealWrite(o.Root, o.Handle, prev, l, now)
+	if err != nil {
+		return out, err
+	}
+	return RecoverResult{Handle: o.Handle, Verified: true, Alarm: o.Alarm, OldSeq: prev.Seq, NewSeq: link.Seq, Prev: prev.Tag, Base: live.Base}, nil
 }
 
 // sealWrite seals l as the link after prev with the session key, writes

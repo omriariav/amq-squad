@@ -105,6 +105,11 @@ type LedgerRecovery struct {
 	// so a retry reports the link written, never one rebuilt from Seq (Codex
 	// on b250b951). 0 in a record written before the field.
 	Link int `json:"link,omitempty"`
+	// Alarm is the scheduler's alarm id a decision by alarm released
+	// (RecoverOptions.Alarm): set, the record names no slot and no seq; the
+	// scheduler releases exactly that alarm's hold from it (the plan
+	// reviewer's ruling on Codex's delta pass on c267382d).
+	Alarm string `json:"alarm,omitempty"`
 }
 
 // ReasonLedgerTampered blocks a step whose commits ledger fails its tag or

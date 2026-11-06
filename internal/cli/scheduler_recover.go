@@ -27,6 +27,7 @@ func runSchedulerRecover(args []string, out io.Writer) error {
 	seq := f.fs.String("seq", "", "the quarantined head seq in the slot's name (N of commits.H.seqN), or unknown")
 	slot := f.fs.Int("slot", 1, "the slot's suffix K of commits.H.seqN.K (1 for the first slot)")
 	reason := f.fs.String("reason", "", "why the lead recovers the ledger")
+	alarm := f.fs.String("alarm", "", "a decision by alarm: the hold's alarm id from its stop line (on a ledger that verifies now; no --seq, --slot or --carry)")
 	var carry multiFlag
 	f.fs.Var(&carry, "carry", "a quarantined entry to carry, TASK:COMMIT (repeatable; checked against origin)")
 	if err := parseFlags(f.fs, args); err != nil {
@@ -38,10 +39,17 @@ func runSchedulerRecover(args []string, out io.Writer) error {
 	if flagWasSet(f.fs, "me") {
 		return usageErrorf("scheduler recover: takes no --me; the scheduler proves the lead from the process, never from a flag")
 	}
-	if strings.TrimSpace(*seat) == "" || strings.TrimSpace(*seq) == "" || strings.TrimSpace(*reason) == "" {
-		return usageErrorf("scheduler recover: --seat, --seq and --reason are required")
-	}
-	if *slot < 1 {
+	byAlarm := flagWasSet(f.fs, "alarm")
+	switch {
+	case byAlarm && (flagWasSet(f.fs, "seq") || flagWasSet(f.fs, "slot") || len(carry) > 0):
+		return usageErrorf("scheduler recover --alarm: names the hold's alarm, not a slot: no --seq, --slot or --carry")
+	case byAlarm && !seatcommit.AlarmIDRe.MatchString(strings.TrimSpace(*alarm)):
+		return usageErrorf("scheduler recover --alarm: the alarm id is the eight hex characters the seat's stop line shows")
+	case byAlarm && (strings.TrimSpace(*seat) == "" || strings.TrimSpace(*reason) == ""):
+		return usageErrorf("scheduler recover --alarm: --seat and --reason are required")
+	case !byAlarm && (strings.TrimSpace(*seat) == "" || strings.TrimSpace(*seq) == "" || strings.TrimSpace(*reason) == ""):
+		return usageErrorf("scheduler recover: --seat, --seq and --reason are required (or --seat, --alarm and --reason)")
+	case !byAlarm && *slot < 1:
 		return usageErrorf("scheduler recover: --slot is the slot's suffix, 1 or more")
 	}
 	if _, err := schedproc.ParseCarry(carry); err != nil {
@@ -57,6 +65,9 @@ func runSchedulerRecover(args []string, out io.Writer) error {
 		return fmt.Errorf("scheduler recover: no running scheduler for %s (the recovery is the scheduler's to write): %v", root, err)
 	}
 	req := schedproc.RecoverRequest{Seat: strings.TrimSpace(*seat), Seq: strings.TrimSpace(*seq), Slot: *slot, Carry: carry, Reason: strings.TrimSpace(*reason)}
+	if byAlarm {
+		req = schedproc.RecoverRequest{Seat: strings.TrimSpace(*seat), Alarm: strings.TrimSpace(*alarm), Reason: strings.TrimSpace(*reason)}
+	}
 	var reply schedproc.DecideReply
 	if rec.DecisionSocket == "" {
 		reply = schedproc.DecideReply{Code: schedproc.RefusedStarting, Detail: "the scheduler is starting: its decision socket opens once the exits ledger is loaded and every seat of the previous incarnation is closed and confirmed gone"}
@@ -70,7 +81,9 @@ func runSchedulerRecover(args []string, out io.Writer) error {
 	} else if reply.OK {
 		fmt.Fprintf(out, "scheduler recover: %s\n", reply.Detail)
 		var res seatcommit.RecoverResult
-		if json.Unmarshal(reply.Data, &res) == nil {
+		if json.Unmarshal(reply.Data, &res) == nil && res.Alarm != "" {
+			fmt.Fprintf(out, "  alarm %s: the decision is sealed at link %d\n", res.Alarm, res.NewSeq)
+		} else if json.Unmarshal(reply.Data, &res) == nil {
 			fmt.Fprintf(out, "  slot %s\n  chain: seq %d after the quarantined seq %d; base %s\n", res.Slot, res.NewSeq, res.OldSeq, res.Base)
 			for _, c := range res.Carried {
 				fmt.Fprintf(out, "  carried %s %s (%s)\n", c.Task, c.Commit, c.Note)

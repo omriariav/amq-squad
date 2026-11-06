@@ -37,6 +37,7 @@ Usage:
   amq-squad scheduler relaunch [--root DIR] [--reason TEXT] [--start STAMP] [--json]
   amq-squad scheduler clear --seat H --warning CODE --launch ID [--root DIR] [--json]
   amq-squad scheduler recover --seat H --seq N [--slot K] [--carry TASK:COMMIT ...] --reason TEXT [--root DIR] [--json]
+  amq-squad scheduler recover --seat H --alarm ID --reason TEXT [--root DIR] [--json]
 
 scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
 supervised by the lead's team mode). It ticks the deterministic scheduler
@@ -140,7 +141,13 @@ that fails refuses the whole recovery and nothing is carried. --seq N is
 the seq in the slot's name (unknown for a slot whose head did not decode);
 --slot K is the slot's suffix (1 for the first). The quarantined copies are
 never read as a ledger, never sealed, never removed. The tasks blocked
-ledger_tampered on the seat return to pending at the next tick. A clear
+ledger_tampered on the seat return to pending at the next tick. The seat's
+stop line names its hold's alarm id; --alarm ID is the decision by alarm,
+for a hold no slot answers (a refusal that quarantined nothing, or a slot
+whose seq the chain has moved past): it is refused unless the seat is held
+by that alarm now and the ledger on disk verifies now, carries nothing,
+and seals the next link with a record naming the alarm, which releases
+exactly that hold. A clear
 (scheduler clear) is not the recovery: ledger_tampered is no warning, and
 no clear makes the seat grantable. Refusals: recover_slot_missing,
 recover_slot_invalid (the slot's copies and sidecar disagree, or it is
@@ -149,7 +156,9 @@ recover_slot_stale (the ledger on disk is not the slot's document; it is
 quarantined in a slot of its own, named in the reply), recover_seq_unknown,
 recover_base_unobserved (no staged launch record or worktree HEAD),
 recover_entry_unknown, recover_entry_unpushed, recover_entry_tree_mismatch,
-recover_write_failed, recover_malformed; and the socket's not_lead and
+recover_write_failed, recover_malformed, recover_alarm_not_held (the seat
+is not held by that alarm now), recover_alarm_unverified (the ledger does
+not verify now: recover it from its slot); and the socket's not_lead and
 origin_unknown. Exit 15: refused.
 `
 

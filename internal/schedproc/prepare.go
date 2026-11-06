@@ -78,7 +78,7 @@ func prepareError(handle string, err error) error {
 
 // recoveryMark is a ledger's recovery record as the scheduler compares it.
 func recoveryMark(r seatcommit.LedgerRecovery) scheduler.RecoveryMark {
-	return scheduler.RecoveryMark{Seq: r.Seq, Slot: r.Slot, Link: r.Link, At: r.At}
+	return scheduler.RecoveryMark{Seq: r.Seq, Slot: r.Slot, Alarm: r.Alarm}
 }
 
 // LedgerRecovery is the recovery the seat's sealed ledger records

@@ -42,6 +42,12 @@ func TestSchedulerRecoverSendsTheDecisionOverTheSocket(t *testing.T) {
 		"bad carry": {"recover", "--seat", "dev", "--seq", "150", "--reason", "r", "--carry", "t1:abc"},
 		"--me":      {"recover", "--seat", "dev", "--seq", "150", "--reason", "r", "--me", "dev"},
 		"argument":  {"recover", "--seat", "dev", "--seq", "150", "--reason", "r", "extra"},
+		// the decision by alarm: an alarm id, a seat and a reason, no slot
+		"alarm and seq":   {"recover", "--seat", "dev", "--alarm", "3fa9c1d2", "--seq", "150", "--reason", "r"},
+		"alarm and slot":  {"recover", "--seat", "dev", "--alarm", "3fa9c1d2", "--slot", "2", "--reason", "r"},
+		"alarm and carry": {"recover", "--seat", "dev", "--alarm", "3fa9c1d2", "--carry", "t1:" + strings.Repeat("a", 40), "--reason", "r"},
+		"alarm bad id":    {"recover", "--seat", "dev", "--alarm", "a3f9", "--reason", "r"},
+		"alarm no reason": {"recover", "--seat", "dev", "--alarm", "3fa9c1d2"},
 	} {
 		_, _, err := captureOutput(t, func() error { return runScheduler(args) })
 		var ue UsageError
@@ -88,6 +94,23 @@ func TestSchedulerRecoverSendsTheDecisionOverTheSocket(t *testing.T) {
 		if _, err := os.Lstat(filepath.Join(root, rel)); err == nil {
 			t.Fatalf("the verb wrote %s", rel)
 		}
+	}
+	// the decision by alarm (Codex's delta pass on c267382d): the seat, the
+	// alarm and the reason are sent, no seq, slot or carry; the output names
+	// the alarm and its link
+	reply = schedproc.DecideReply{OK: true, Detail: "seat dev: alarm 3fa9c1d2 released by decision, sealed at link 8; the scheduler releases the seat at its next tick"}
+	reply.Data, _ = json.Marshal(seatcommit.RecoverResult{Handle: "dev", Verified: true, Alarm: "3fa9c1d2", OldSeq: 7, NewSeq: 8})
+	stdout, _, err = captureOutput(t, func() error {
+		return runScheduler([]string{"recover", "--seat", "dev", "--alarm", "3fa9c1d2", "--reason", "investigated"})
+	})
+	if err != nil || len(sent) != 2 {
+		t.Fatalf("the decision by alarm: %v (sent %d)", err, len(sent))
+	}
+	if got := sent[1]; got.Seat != "dev" || got.Alarm != "3fa9c1d2" || got.Reason != "investigated" || got.Seq != "" || got.Slot != 0 || len(got.Carry) != 0 {
+		t.Fatalf("sent %+v", got)
+	}
+	if !strings.Contains(stdout, "alarm 3fa9c1d2 released by decision") || !strings.Contains(stdout, "alarm 3fa9c1d2: the decision is sealed at link 8") {
+		t.Fatalf("the output:\n%s", stdout)
 	}
 	// a refusal
 	reply = schedproc.DecideReply{Code: schedproc.RefusedNotLead, Detail: "pid 7 does not descend from the lead"}

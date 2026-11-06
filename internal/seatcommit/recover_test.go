@@ -659,9 +659,11 @@ func TestAVerifiedRecoveryRetriedReportsItsLink(t *testing.T) {
 // edit (slot X.2, whose bytes are the live document's). The decision for X
 // is refused while the live document is X.2's; the recovery from X.2
 // continues the chain and names X.2; the document now verifies, and the
-// decision for X is then recorded in the verified mode, naming X, so a
-// hold on X is answerable (the scheduler's exact-slot rule). Reverted (the
-// verifying document refused), X stays unanswerable.
+// decision for X is then recorded in the verified mode, naming X: here
+// X.2 is at X's own seq, so the chain is at or past X's. When the later
+// slot is at a lower seq the verified mode refuses X and only the decision
+// by alarm answers its hold (TestADecisionByAlarmAnswersAHoldNoSlotCan).
+// Reverted (the verifying document refused), X stays unanswerable.
 func TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery(t *testing.T) {
 	f := newFixture(t)
 	original := readFile(t, ledgerPath(f.root, f.handle))
@@ -686,5 +688,94 @@ func TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery(t *testing.T) {
 	}
 	if rec, ok := RecoveryOf(f.root, f.handle); !ok || rec.Slot != x.Slot || !rec.Verified || rec.Link != first.NewSeq {
 		t.Fatalf("the record: %v %+v", ok, rec)
+	}
+}
+
+// Codex's delta pass on c267382d (2), on real files, and the decision by
+// alarm's ledger half (the plan reviewer's ruling): the chain at link N
+// (two commit steps); the document refused at seq N (slot X); its head then lowered to seq 1
+// and refused again (slot Y, a lower seq). X is refused while the live
+// document is Y's; Y's recovery continues the chain at link 2; X is then
+// refused again, its seq past the chain (no verified recovery can answer
+// it), so a hold on X is released only by the decision naming its alarm.
+// That decision is refused while the ledger does not verify
+// (recover_alarm_unverified, nothing written), and on the ledger that
+// verifies it seals the next link with the record naming the alarm (no
+// slot, no seq, Verified), the body otherwise unchanged; sent again it is
+// answered from the ledger; a carry with it is refused. Reverted (the
+// verify-now check), the tampered ledger is resealed.
+func TestADecisionByAlarmAnswersAHoldNoSlotCan(t *testing.T) {
+	f := newFixture(t)
+	for _, line := range []string{"// one\n", "// two\n"} {
+		write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n"+line)
+		tk := f.reported("cmd/")
+		if res := f.run(tk); !res.OK {
+			t.Fatalf("the commit step: %+v", res)
+		}
+		if _, err := f.store.Complete(tk.ID, f.now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	live, err := ReadLedger(f.root, f.handle)
+	if err != nil || live.Seal.Seq < 3 {
+		t.Fatalf("the chain: %v %+v", err, live.Seal)
+	}
+	n := strconv.Itoa(live.Seal.Seq)
+	original := readFile(t, ledgerPath(f.root, f.handle))
+	tamperBase(t, f, f.base, '0')
+	x := f.quarantined()
+	if _, err := RecoverLedger(RecoverOptions{Root: f.root, Handle: f.handle, Alarm: "3fa9c1d2", Lead: "cto", Reason: "too early", Now: f.now}); recoverCode(t, err) != RecoverAlarmUnverified {
+		t.Fatalf("a decision by alarm on a tampered ledger: %v", err)
+	}
+	if !bytes.Equal(readFile(t, ledgerPath(f.root, f.handle)), readFile(t, filepath.Join(x.Slot, quarantineBodyFile))) {
+		t.Fatal("the refused decision by alarm wrote the ledger")
+	}
+	write(t, ledgerPath(f.root, f.handle), string(original))
+	hp := sealchain.HeadPath(f.root, "commits."+f.handle)
+	var hd map[string]any
+	if err := json.Unmarshal(readFile(t, hp), &hd); err != nil {
+		t.Fatal(err)
+	}
+	hd["seq"] = 1
+	lowered, _ := json.Marshal(hd)
+	write(t, hp, string(lowered))
+	y := f.quarantined()
+	if x.Seq != n || y.Seq != "1" {
+		t.Fatalf("the slots: X seq %s, Y seq %s", x.Seq, y.Seq)
+	}
+	if _, err := f.recover(n, 1); err == nil {
+		t.Fatal("X was recovered while the live document is Y's")
+	}
+	ry, err := f.recover("1", 1)
+	if err != nil || ry.Slot != y.Slot || ry.NewSeq != 2 {
+		t.Fatalf("Y's recovery: %v %+v", err, ry)
+	}
+	if _, err := f.recover(n, 1); recoverCode(t, err) != RecoverNotTampered || !strings.Contains(err.Error(), "behind the slot's seq "+n) {
+		t.Fatalf("X after Y's recovery: %v", err)
+	}
+	if _, err := RecoverLedger(RecoverOptions{Root: f.root, Handle: f.handle, Alarm: "3fa9c1d2", Carry: []CarryEntry{{Task: "t1", Commit: strings.Repeat("a", 40)}}, Lead: "cto", Reason: "r", Now: f.now}); recoverCode(t, err) != RecoverSlotInvalid {
+		t.Fatalf("a decision by alarm with a carry: %v", err)
+	}
+	before, err := ReadLedger(f.root, f.handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := RecoverLedger(RecoverOptions{Root: f.root, Handle: f.handle, Alarm: "3fa9c1d2", Lead: "cto", Reason: "X's alarm, investigated", Now: f.now})
+	if err != nil || !res.Verified || res.Alarm != "3fa9c1d2" || res.NewSeq != 3 {
+		t.Fatalf("the decision by alarm: %v %+v", err, res)
+	}
+	after, err := ReadLedger(f.root, f.handle)
+	if err != nil || after.Seal.Seq != 3 || after.Seal.Prev != before.Seal.Tag {
+		t.Fatalf("the next link: %v %+v", err, after.Seal)
+	}
+	if r := after.Recovered; r == nil || r.Alarm != "3fa9c1d2" || r.Slot != "" || r.Seq != 0 || !r.Verified || r.Link != 3 || r.By != "cto" {
+		t.Fatalf("the record: %+v", after.Recovered)
+	}
+	if len(after.Commits) != len(before.Commits) || after.Base != before.Base {
+		t.Fatalf("the body changed: %+v", after)
+	}
+	again, err := RecoverLedger(RecoverOptions{Root: f.root, Handle: f.handle, Alarm: "3fa9c1d2", Lead: "cto", Reason: "again", Now: f.now})
+	if err != nil || !again.AlreadyRecovered || again.NewSeq != 3 {
+		t.Fatalf("the same decision again: %v %+v", err, again)
 	}
 }
