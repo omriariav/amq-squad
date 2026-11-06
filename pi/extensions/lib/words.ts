@@ -710,17 +710,6 @@ export function trainStop(refusal: string): string {
 	return `the merge train stopped at PR #${m[1]}: ${w[0]}; ${w[1]}`;
 }
 
-// RECOVER_REFUSAL_WORDS are the decision by alarm's two refusals
-// (scheduler recover --alarm; schedproc RefusedRecoverAlarmNotHeld,
-// seatcommit RecoverAlarmUnverified), in words: what happened; what to do
-// (the plan reviewer's ruling on Codex's pass on 254f2c2c). The lead runs
-// the verb, which prints the code and its detail; no screen key sends the
-// decision yet, and one that does reads this table.
-export const RECOVER_REFUSAL_WORDS: Record<string, [string, string]> = {
-	recover_alarm_not_held: ["the seat is not held by that alarm now: its hold was released, or another alarm holds the seat", "read the seat's stop line for the alarm that holds it now"],
-	recover_alarm_unverified: ["the seat's commit record does not verify and could not be copied into the quarantine", "fix what the refusal names (below the line), then send the decision again"],
-};
-
 // RELAY_WORDS maps the relay's refusal names of a phone request
 // (status-contract requests[].refused) to words.
 export const RELAY_WORDS: Record<string, string> = {
