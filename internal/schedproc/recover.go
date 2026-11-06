@@ -140,6 +140,9 @@ func recoverDecision(_ *scheduler.Scheduler, root string, apply RecoverApply, no
 		if res.AlreadyRecovered {
 			verb = "had recovered (the decision sent again; the sealed ledger records it)"
 		}
+		if res.Verified {
+			verb = "recorded the release of (its ledger verified when the decision came; the record is sealed into the next link, nothing restarted)"
+		}
 		reason := fmt.Sprintf("the lead %s %s the commits ledger of seat %s from quarantine seq %d (%s): the chain continues at seq %d after the quarantined head's link; carried entries: %s; base %s; reason: %s",
 			lead, verb, req.Seat, res.OldSeq, res.Slot, res.NewSeq, firstOrNone(carried), res.Base, firstNonEmptyString(req.Reason, "none given"))
 		at := now().UTC()

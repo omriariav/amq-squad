@@ -428,3 +428,33 @@ func (p *twoSeatPreparer) LedgerRecovery(h string) (int, string, bool) {
 }
 
 func intPtr(n int) *int { return &n }
+
+// The plan reviewer on c9826c31: the input where covers decides. A seat
+// whose ledger verifies and carries an older recovery record (seq 3, its
+// slot) while the hold is from a later alarm (seq 150): the record does
+// not cover the hold, the seat stays held over many ticks and the task
+// blocked; the record of the hold's own slot releases it. Reverted (covers
+// always true), the older record releases the hold.
+func TestAnOlderRecoveryRecordDoesNotReleaseAHold(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	p := &tamperPreparer{seat: "seat-a", err: tamperErr("seat-a", "150")}
+	h.s.Preparer = p
+	tk := h.add("a", &sonnet)
+	h.up("seat-a", sonnet)
+	h.tick()
+	p.ledgers = map[string]recoveryRecord{"seat-a": {seq: 3, slot: slotOf("seat-a", "3")}}
+	for i := 0; i < 20; i++ {
+		ds := h.tick()
+		h.clk.Add(2 * time.Second)
+		if has(ds, "ledger_hold_released", "", "seat-a") || has(ds, "task_reset", tk.ID, "") || has(ds, "dispatched", tk.ID, "seat-a") {
+			t.Fatalf("an older record released the hold: %+v", ds)
+		}
+	}
+	if got := h.get(tk.ID); got.State != task.StateBlocked || p.calls != 1 {
+		t.Fatalf("the hold did not stand: %s, prepared %d times", got.State, p.calls)
+	}
+	p.recover("seat-a", 150, slotOf("seat-a", "150"))
+	if ds := h.tick(); !has(ds, "ledger_hold_released", "", "seat-a") || !has(ds, "dispatched", tk.ID, "seat-a") {
+		t.Fatalf("the hold's own record did not release it: %+v", ds)
+	}
+}

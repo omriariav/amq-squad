@@ -96,6 +96,10 @@ type LedgerRecovery struct {
 	Reason     string    `json:"reason,omitempty"`
 	At         time.Time `json:"at"`
 	Carried    []string  `json:"carried,omitempty"`
+	// Verified: the document verified when the lead decided (a transient
+	// alarm, or a document put back); the record was sealed into the next
+	// link of the same body, nothing restarted and nothing carried.
+	Verified bool `json:"verified,omitempty"`
 }
 
 // ReasonLedgerTampered blocks a step whose commits ledger fails its tag or

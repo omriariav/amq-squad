@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -511,5 +512,76 @@ func TestRecoveryDecidedAgainIsAnsweredFromTheLedger(t *testing.T) {
 	}
 	if _, err := f.recover("1", 2); recoverCode(t, err) != RecoverNotTampered {
 		t.Fatalf("another slot on a recovered ledger: %v", err)
+	}
+}
+
+// The plan reviewer on c9826c31, the reachable input: a transient alarm
+// (the session seed unreadable for one read) quarantines the document and
+// the scheduler holds the seat; the seed readable again, the document
+// verifies with no record of the slot, and a recovery would have refused
+// not_tampered, so the hold could never have been released. The decision
+// is recorded as the next link of the same body (Verified), nothing
+// restarted and nothing carried, and RecoveryOf then answers the slot so
+// the scheduler's reconciliation releases the hold; the quarantine copy
+// is unchanged. A carry on a verifying ledger is refused. Reverted (the
+// verifying document refused), the hold is a dead end.
+func TestADocumentVerifyingAgainIsReleasedByARecordedDecision(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads a mode-0 seed")
+	}
+	f := newFixture(t)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// transient\n")
+	tk := f.reported("cmd/")
+	if res := f.run(tk); !res.OK {
+		t.Fatalf("the commit step: %+v", res)
+	}
+	before, err := ReadLedger(f.root, f.handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seed := sealchain.SeedPath(f.root)
+	if err := os.Chmod(seed, 0); err != nil {
+		t.Fatal(err)
+	}
+	q := f.quarantined()
+	if err := os.Chmod(seed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(q.Err.Error(), "the session seed") || q.Seq != strconv.Itoa(before.Seal.Seq) {
+		t.Fatalf("the transient alarm: %v (seq %s)", q.Err, q.Seq)
+	}
+	if _, err := ReadLedger(f.root, f.handle); err != nil {
+		t.Fatalf("the document does not verify again: %v", err)
+	}
+	if _, ok := RecoveryOf(f.root, f.handle); ok {
+		t.Fatal("a record before the decision")
+	}
+	slotBody := readFile(t, filepath.Join(q.Slot, quarantineBodyFile))
+	if _, err := f.recover(q.Seq, 1, CarryEntry{Task: tk.ID, Commit: before.Commits[0].Commit}); recoverCode(t, err) != RecoverEntryUnknown {
+		t.Fatalf("a carry on a verifying ledger: %v", err)
+	}
+	res, err := f.recover(q.Seq, 1)
+	if err != nil || !res.Verified || res.OldSeq != before.Seal.Seq || res.NewSeq != before.Seal.Seq+1 || res.Slot != q.Slot {
+		t.Fatalf("the verified recovery: %v %+v", err, res)
+	}
+	after, err := ReadLedger(f.root, f.handle)
+	if err != nil || after.Seal.Seq != before.Seal.Seq+1 || after.Seal.Prev != before.Seal.Tag {
+		t.Fatalf("the next link: %v %+v", err, after.Seal)
+	}
+	if after.Recovered == nil || !after.Recovered.Verified || after.Recovered.Slot != q.Slot || after.Recovered.Seq != before.Seal.Seq || after.Recovered.BodySHA256 != digestOf(slotBody) {
+		t.Fatalf("the record: %+v", after.Recovered)
+	}
+	if len(after.Commits) != 1 || after.Commits[0].Commit != before.Commits[0].Commit || after.Commits[0].Note != "" || after.Base != before.Base || after.Rest != before.Rest {
+		t.Fatalf("the body changed: %+v", after)
+	}
+	if rec, ok := RecoveryOf(f.root, f.handle); !ok || rec.Slot != q.Slot {
+		t.Fatalf("RecoveryOf after the decision: %v %+v", ok, rec)
+	}
+	if !bytes.Equal(readFile(t, filepath.Join(q.Slot, quarantineBodyFile)), slotBody) {
+		t.Fatal("the quarantine copy changed")
+	}
+	// the slot holds the refused bytes; the document moved on to the new link
+	if bytes.Equal(slotBody, readFile(t, ledgerPath(f.root, f.handle))) {
+		t.Fatal("the document did not move to the new link")
 	}
 }

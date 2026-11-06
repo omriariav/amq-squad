@@ -34,7 +34,7 @@ type tamperedSeatRig struct {
 	handle, wt, origin string
 	target             seatcommit.Target
 	tk                 task.Task
-	tampered           []byte
+	original, tampered []byte
 }
 
 func newTamperedSeatRig(t *testing.T) *tamperedSeatRig {
@@ -85,6 +85,7 @@ func newTamperedSeatRig(t *testing.T) *tamperedSeatRig {
 		t.Fatal(err)
 	}
 	head := gitRun(t, r.wt, "rev-parse", "HEAD")
+	r.original = raw
 	r.tampered = bytes.Replace(raw, []byte(head), []byte(strings.Repeat("0", 40)), 1)
 	if bytes.Equal(r.tampered, raw) {
 		t.Fatal("the base is not in the ledger")
@@ -352,5 +353,48 @@ func TestInterruptedRecoveryCompletesFromTheLedger(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("the retry's decision line: %d, want 1", n)
+	}
+}
+
+// The plan reviewer on c9826c31, end to end: the held seat's document is
+// put back (the refused bytes replaced by the document it was edited
+// from, which verifies at the same seq): the reconciliation holds (the
+// ledger records no recovery), the lead's decision on the slot is recorded
+// as the next link (Verified), and the next tick releases the seat and
+// dispatches. Reverted (the verifying document refused not_tampered), the
+// seat is held for good.
+func TestARestoredDocumentIsReleasedByTheLeadsDecision(t *testing.T) {
+	r := newTamperedSeatRig(t)
+	r.ticks(3)
+	if got, _ := r.store.Get(r.tk.ID); got.State != task.StateBlocked {
+		t.Fatalf("not blocked: %+v", got)
+	}
+	p := filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")
+	if err := os.WriteFile(p, r.original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seatcommit.ReadLedger(r.root, r.handle); err != nil {
+		t.Fatalf("the restored document does not verify: %v", err)
+	}
+	if all := r.ticks(5); len(kinds(all, "ledger_hold_released")) != 0 || len(kinds(all, "dispatched")) != 0 {
+		t.Fatalf("the restored document released the hold without a decision: %+v", all)
+	}
+	decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
+	reply := decide("lead", RecoverRequest{Seat: r.handle, Seq: "1", Slot: 1, Reason: "a transient alarm"})
+	var res seatcommit.RecoverResult
+	if !reply.OK || json.Unmarshal(reply.Data, &res) != nil || !res.Verified || res.NewSeq != 2 {
+		t.Fatalf("the decision: %+v", reply)
+	}
+	all := r.ticks(3)
+	if !has(all, "ledger_hold_released", "", r.handle) || !has(all, "task_reset", r.tk.ID, r.handle) || !has(all, "dispatched", r.tk.ID, r.handle) {
+		t.Fatalf("the decision did not release the seat: %+v", all)
+	}
+	lines, _ := ReadDecisionsTail(r.root)
+	found := false
+	for _, l := range lines {
+		found = found || (l.Kind == DecisionLedgerRecovered && strings.Contains(l.Reason, "recorded the release of"))
+	}
+	if !found {
+		t.Fatalf("no verified-recovery line: %+v", lines)
 	}
 }

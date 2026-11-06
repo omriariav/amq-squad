@@ -78,16 +78,19 @@ type CarryEntry struct {
 // slot the decision names; a retry after an interrupted completion, Codex
 // on #904).
 type RecoverResult struct {
-	Handle           string         `json:"handle"`
-	AlreadyRecovered bool           `json:"already_recovered,omitempty"`
-	Slot             string         `json:"slot"`
-	OldSeq           int            `json:"old_seq"`
-	NewSeq           int            `json:"new_seq"`
-	Prev             string         `json:"prev"`
-	BodySHA256       string         `json:"body_sha256,omitempty"`
-	HeadSHA256       string         `json:"head_sha256,omitempty"`
-	Base             string         `json:"base"`
-	Carried          []LedgerCommit `json:"carried,omitempty"`
+	Handle           string `json:"handle"`
+	AlreadyRecovered bool   `json:"already_recovered,omitempty"`
+	// Verified: the document verified when the decision came; the record
+	// was sealed into the next link of the same body (recordVerified).
+	Verified   bool           `json:"verified,omitempty"`
+	Slot       string         `json:"slot"`
+	OldSeq     int            `json:"old_seq"`
+	NewSeq     int            `json:"new_seq"`
+	Prev       string         `json:"prev"`
+	BodySHA256 string         `json:"body_sha256,omitempty"`
+	HeadSHA256 string         `json:"head_sha256,omitempty"`
+	Base       string         `json:"base"`
+	Carried    []LedgerCommit `json:"carried,omitempty"`
 }
 
 // Refusal codes of a recovery (RecoverRefusal.Code). They are the verb's
@@ -195,7 +198,14 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 		}
 		return out, nil
 	case rerr == nil:
-		return out, refuseRecover(RecoverNotTampered, "the commits ledger of seat %s verifies; there is nothing to recover", o.Handle)
+		// The document verifies now, with no record of the slot: the alarm
+		// was transient (the seed unreadable for a tick) or the document was
+		// put back by hand. The chain is not restarted; the lead's decision
+		// is recorded as a new link that carries the recovery record
+		// (Verified), so the scheduler's reconciliation releases the hold
+		// from the sealed ledger, as for every recovery. Without it the hold
+		// could never be released: the verb would refuse not_tampered.
+		return recordVerified(o, live, slotPath)
 	case errors.Is(rerr, os.ErrNotExist):
 		return out, refuseRecover(RecoverNotTampered, "the commits ledger of seat %s is absent with no sealed head; the launch records a new one", o.Handle)
 	case !errors.Is(rerr, sealchain.ErrTampered):
@@ -265,31 +275,80 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 	if l.Commits == nil {
 		l.Commits = []LedgerCommit{}
 	}
-	key, err := sealchain.SessionKey(o.Root)
+	link, err := sealWrite(o.Root, o.Handle, &sealchain.Link{Seq: oldSeq, Tag: prev}, l, now)
 	if err != nil {
-		return out, refuseRecover(RecoverWriteFailed, "the session seed: %v", err)
+		return out, err
 	}
-	link := sealchain.Seal(key.Key, ledgerLabel, &sealchain.Link{Seq: oldSeq, Tag: prev}, l)
+	return RecoverResult{Handle: o.Handle, Slot: slot.path, OldSeq: oldSeq, NewSeq: link.Seq, Prev: prev, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, Base: base, Carried: carried}, nil
+}
+
+// recordVerified is the recovery of a document that verifies now (the
+// plan reviewer on c9826c31, the input where the scheduler's covers check
+// decides): the slot must exist and be this seat's, the live chain must be
+// at or past the slot's seq (a restored older document would not verify),
+// nothing is carried (the entries stand), and the next link seals the same
+// body with the recovery record marked Verified.
+func recordVerified(o RecoverOptions, live Ledger, slotPath string) (RecoverResult, error) {
+	var out RecoverResult
+	slot, err := readSlot(o.Root, o.Handle, RecoverSlotName(o.Handle, o.Seq, o.Slot))
+	var rr *RecoverRefusal
+	if errors.As(err, &rr) && rr.Code == RecoverSlotMissing {
+		return out, refuseRecover(RecoverNotTampered, "the commits ledger of seat %s verifies and there is no slot %s; there is nothing to recover", o.Handle, RecoverSlotName(o.Handle, o.Seq, o.Slot))
+	}
+	if err != nil {
+		return out, err
+	}
+	oldSeq, _, err := slot.link()
+	if err != nil {
+		return out, err
+	}
+	if live.Seal == nil || live.Seal.Seq < oldSeq {
+		return out, refuseRecover(RecoverNotTampered, "the commits ledger of seat %s verifies at link %d, behind the slot's seq %d; nothing to record", o.Handle, live.Seal.Seq, oldSeq)
+	}
+	if len(o.Carry) > 0 {
+		return out, refuseRecover(RecoverEntryUnknown, "the commits ledger of seat %s verifies and its entries stand; a verified recovery carries nothing", o.Handle)
+	}
+	now := o.Now.UTC()
+	prev := live.Seal
+	l := live
+	l.Seal = nil
+	l.Recovered = &LedgerRecovery{Seq: oldSeq, Slot: slot.path, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, By: o.Lead, Reason: o.Reason, At: now, Verified: true}
+	link, err := sealWrite(o.Root, o.Handle, prev, l, now)
+	if err != nil {
+		return out, err
+	}
+	return RecoverResult{Handle: o.Handle, Verified: true, Slot: slot.path, OldSeq: oldSeq, NewSeq: link.Seq, Prev: prev.Tag, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, Base: live.Base}, nil
+}
+
+// sealWrite seals l as the link after prev with the session key, writes
+// the body and moves the head, and reads the chain back as any reader
+// reads it. It is the recovery's own write (never writeLedger, whose
+// check it is the way back from).
+func sealWrite(root, handle string, prev *sealchain.Link, l Ledger, now time.Time) (*sealchain.Link, error) {
+	key, err := sealchain.SessionKey(root)
+	if err != nil {
+		return nil, refuseRecover(RecoverWriteFailed, "the session seed: %v", err)
+	}
+	link := sealchain.Seal(key.Key, ledgerLabel, prev, l)
 	sealed := l
 	sealed.Seal = link
 	b, err := json.MarshalIndent(sealed, "", "  ")
 	if err != nil {
-		return out, refuseRecover(RecoverWriteFailed, "%v", err)
+		return nil, refuseRecover(RecoverWriteFailed, "%v", err)
 	}
-	if err := os.MkdirAll(LedgerDir(o.Root), 0o700); err != nil {
-		return out, refuseRecover(RecoverWriteFailed, "%v", err)
+	if err := os.MkdirAll(LedgerDir(root), 0o700); err != nil {
+		return nil, refuseRecover(RecoverWriteFailed, "%v", err)
 	}
-	if err := atomicfile.Write(ledgerPath(o.Root, o.Handle), append(b, '\n'), 0o600); err != nil {
-		return out, refuseRecover(RecoverWriteFailed, "%v", err)
+	if err := atomicfile.Write(ledgerPath(root, handle), append(b, '\n'), 0o600); err != nil {
+		return nil, refuseRecover(RecoverWriteFailed, "%v", err)
 	}
-	if err := sealchain.WriteHead(o.Root, ledgerHeadName(o.Handle), key, link, now); err != nil {
-		return out, refuseRecover(RecoverWriteFailed, "the head: %v", err)
+	if err := sealchain.WriteHead(root, ledgerHeadName(handle), key, link, now); err != nil {
+		return nil, refuseRecover(RecoverWriteFailed, "the head: %v", err)
 	}
-	// The written chain must verify as any reader reads it.
-	if _, _, err := readLedger(o.Root, o.Handle); err != nil {
-		return out, refuseRecover(RecoverWriteFailed, "the recovered ledger does not verify: %v", err)
+	if _, _, err := readLedger(root, handle); err != nil {
+		return nil, refuseRecover(RecoverWriteFailed, "the recovered ledger does not verify: %v", err)
 	}
-	return RecoverResult{Handle: o.Handle, Slot: slot.path, OldSeq: oldSeq, NewSeq: link.Seq, Prev: prev, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, Base: base, Carried: carried}, nil
+	return link, nil
 }
 
 // readSlot reads one quarantine slot through the same descriptor-anchored,
