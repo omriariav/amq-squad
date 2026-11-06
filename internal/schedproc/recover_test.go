@@ -16,6 +16,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/panechain"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -396,5 +397,55 @@ func TestARestoredDocumentIsReleasedByTheLeadsDecision(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no verified-recovery line: %+v", lines)
+	}
+}
+
+// Codex on b250b951, the process half of the baseline: the seat's ledger
+// records the lead's verified decision (the restored document, released);
+// then its head's seq is changed to 1, and the prepare's alarm carries the
+// record the refused body had as the hold's baseline, equal to the mark
+// LedgerRecovery answers once the head is put back, so the scheduler's
+// covers check refuses it (the scheduler row). Reverted (no baseline in the
+// prepare's error), the alarm has none.
+func TestThePrepareAlarmCarriesTheLedgersRecordAsTheBaseline(t *testing.T) {
+	r := newTamperedSeatRig(t)
+	r.ticks(3)
+	p := filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")
+	if err := os.WriteFile(p, r.original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Seq: "1", Slot: 1, Reason: "a transient alarm"}); !reply.OK {
+		t.Fatalf("the decision: %+v", reply)
+	}
+	c := r.s.Preparer.(*CleanSeats)
+	before, ok := c.LedgerRecovery(r.handle)
+	if !ok || before.Link != 2 {
+		t.Fatalf("the ledger's record: %v %+v", ok, before)
+	}
+	hp := sealchain.HeadPath(r.root, "commits."+r.handle)
+	orig, err := os.ReadFile(hp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hd map[string]any
+	if err := json.Unmarshal(orig, &hd); err != nil {
+		t.Fatal(err)
+	}
+	hd["seq"] = 1
+	edited, _ := json.Marshal(hd)
+	if err := os.WriteFile(hp, edited, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var e *scheduler.LedgerTamperedError
+	if err := c.PrepareSeat(r.handle); !errors.As(err, &e) || e.Seq != "1" || e.Baseline == nil {
+		t.Fatalf("the alarm: %v %+v", err, e)
+	}
+	if err := os.WriteFile(hp, orig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	back, ok := c.LedgerRecovery(r.handle)
+	if !ok || back.Seq != e.Baseline.Seq || back.Slot != e.Baseline.Slot || back.Link != e.Baseline.Link || !back.At.Equal(e.Baseline.At) {
+		t.Fatalf("the baseline %+v is not the record read back %+v", e.Baseline, back)
 	}
 }

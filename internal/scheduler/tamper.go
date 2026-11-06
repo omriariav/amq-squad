@@ -3,6 +3,7 @@ package scheduler
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,6 +45,9 @@ const ReasonLedgerTampered = "ledger_tampered"
 type LedgerTamperedError struct {
 	Handle, Seq, Quarantine string
 	Err                     error
+	// Baseline is the recovery the refused document already recorded
+	// (nil: none, or a body that did not decode): the hold's baseline.
+	Baseline *RecoveryMark
 }
 
 func (e *LedgerTamperedError) Error() string { return e.Err.Error() }
@@ -61,14 +65,33 @@ type LedgerTamper struct {
 	// Tasks are the tasks blocked ledger_tampered on this seat: the
 	// recovery returns them to pending.
 	Tasks []string `json:"tasks,omitempty"`
+	// Baseline is the recovery the ledger already recorded when the alarm
+	// was raised (Codex on b250b951): it was not decided for this alarm, so
+	// it never releases the hold. Kept in the state file with the hold.
+	Baseline *RecoveryMark `json:"baseline,omitempty"`
+}
+
+// RecoveryMark is a recovery record as the scheduler compares it: the
+// quarantined seq and slot it continued from, the link that sealed it and
+// when the lead decided. Two marks are the same decision when all four are
+// equal.
+type RecoveryMark struct {
+	Seq  int       `json:"seq"`
+	Slot string    `json:"slot"`
+	Link int       `json:"link,omitempty"`
+	At   time.Time `json:"at"`
+}
+
+func (m RecoveryMark) same(o RecoveryMark) bool {
+	return m.Seq == o.Seq && m.Slot == o.Slot && m.Link == o.Link && m.At.Equal(o.At)
 }
 
 // RecoveryReader is a preparer that reads the recovery a seat's sealed
 // ledger records (schedproc's CleanSeats through seatcommit.RecoveryOf):
-// the quarantined seq and slot path it continued from; ok false when the
-// ledger does not verify or records none.
+// the quarantined seq and slot path it continued from, its link and time;
+// ok false when the ledger does not verify or records none.
 type RecoveryReader interface {
-	LedgerRecovery(handle string) (seq int, slot string, ok bool)
+	LedgerRecovery(handle string) (RecoveryMark, bool)
 }
 
 // prepareFailure is the last non-tamper prepare failure of one task on
@@ -94,22 +117,26 @@ func (s *Scheduler) prepareFailed(t task.Task, handle string, err error, now tim
 	}
 	s.logOnce(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()},
 		Decision{Kind: "seat_prepare_suppressed", TaskID: t.ID, Seat: handle, Reason: "the same prepare failure repeats; further repeats are counted, not logged, until the task, the seat or the reason changes: " + err.Error()},
-		t.UpdatedAt.UTC().Format(time.RFC3339Nano), log)
+		t.UpdatedAt.UTC().Format(time.RFC3339Nano), reasonIdentity(err.Error()), log)
 	return nil, nil
 }
 
 // logOnce logs first once per its task (and the task record's change),
-// seat, kind and reason, then count once more when it repeats, then
-// counts: the prepare failures and the release retries (Codex and the plan
-// reviewer on c9826c31). preparePassed clears a seat's keys.
-func (s *Scheduler) logOnce(first, count Decision, change string, log func(Decision)) {
+// seat, kind and reason identity, then count once more when it repeats,
+// then counts: the prepare failures and the release retries (Codex and the
+// plan reviewer on c9826c31). The identity is the reason with its
+// per-attempt parts masked (reasonIdentity), never the raw text, so a
+// failure that names a fresh temp file each tick is one failure (Codex on
+// b250b951); the logged record keeps the full text. preparePassed clears a
+// seat's keys.
+func (s *Scheduler) logOnce(first, count Decision, change, identity string, log func(Decision)) {
 	if s.prepareFails == nil {
 		s.prepareFails = map[string]*prepareFailure{}
 	}
 	key := prepareKey(first.Seat, first.TaskID) + "\x00" + first.Kind
 	f := s.prepareFails[key]
-	if f == nil || f.task != change || f.reason != first.Reason {
-		s.prepareFails[key] = &prepareFailure{task: change, reason: first.Reason, count: 1}
+	if f == nil || f.task != change || f.reason != identity {
+		s.prepareFails[key] = &prepareFailure{task: change, reason: identity, count: 1}
 		log(first)
 		return
 	}
@@ -138,7 +165,7 @@ func (s *Scheduler) blockOnTamper(t task.Task, handle string, e *LedgerTamperedE
 	}
 	tm := s.tampered[handle]
 	if tm == nil {
-		tm = &LedgerTamper{Handle: handle, Seq: e.Seq, Quarantine: e.Quarantine, Detail: detail, At: now.UTC()}
+		tm = &LedgerTamper{Handle: handle, Seq: e.Seq, Quarantine: e.Quarantine, Detail: detail, At: now.UTC(), Baseline: e.Baseline}
 		s.tampered[handle] = tm
 	}
 	tm.Tasks = append(tm.Tasks, t.ID)
@@ -174,7 +201,9 @@ func (s *Scheduler) tamperedSeat(handle string) bool { return s.tampered[handle]
 // fails once, Codex on c9826c31).
 var (
 	storeGet   = func(st task.Store, id string) (task.Task, error) { return st.Get(id) }
-	storeReset = func(st task.Store, id string, now time.Time) (task.Task, error) { return st.Reset(id, nil, now) }
+	storeReset = func(st task.Store, id string, now time.Time) (task.Task, error) {
+		return st.ResetIfBlocked(id, ReasonLedgerTampered, now)
+	}
 )
 
 // applyRecoveries reconciles every held seat against its ledger's
@@ -198,10 +227,11 @@ func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 	sort.Strings(handles)
 	for _, h := range handles {
 		tm := s.tampered[h]
-		seq, slot, ok := reader.LedgerRecovery(h)
-		if !ok || !tm.covers(seq, slot) {
+		rec, ok := reader.LedgerRecovery(h)
+		if !ok || !tm.covers(rec) {
 			continue
 		}
+		seq, slot := rec.Seq, rec.Slot
 		kept := false
 		for _, id := range tm.Tasks {
 			t, err := storeGet(s.Store, id)
@@ -216,7 +246,12 @@ func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 			if t.State != task.StateBlocked || t.BlockReason != ReasonLedgerTampered {
 				continue // reset by the lead already
 			}
-			if _, err := storeReset(s.Store, id, now); err != nil {
+			if _, err := storeReset(s.Store, id, now); errors.Is(err, task.ErrNotFound) || errors.Is(err, task.ErrBlockChanged) {
+				// gone, or no longer the tamper block: another decision
+				// (the lead's reset, a new block) came between the read and
+				// the reset, and it stands (Codex on b250b951)
+				continue
+			} else if err != nil {
 				s.releaseFailed(id, h, "the task could not be returned to pending; the hold stays and the release is retried next tick: "+err.Error(), log)
 				kept = true
 				continue
@@ -234,21 +269,44 @@ func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 }
 
 // releaseFailed is a release's store failure, logged once per task, seat
-// and reason, then counted.
+// and reason identity, then counted.
 func (s *Scheduler) releaseFailed(id, h, reason string, log func(Decision)) {
 	s.logOnce(Decision{Kind: "ledger_release_failed", TaskID: id, Seat: h, Reason: reason},
-		Decision{Kind: "ledger_release_suppressed", TaskID: id, Seat: h, Reason: "the release keeps failing; further repeats are counted, not logged, until the reason changes: " + reason}, "", log)
+		Decision{Kind: "ledger_release_suppressed", TaskID: id, Seat: h, Reason: "the release keeps failing; further repeats are counted, not logged, until the reason changes: " + reason}, "", reasonIdentity(reason), log)
 }
 
-// covers reports whether a recovery record (its quarantined seq and slot)
-// answers this hold: the slot the hold named, or any seq at or past the
-// hold's (a hold of an unknown seq is answered by its slot only).
-func (tm *LedgerTamper) covers(seq int, slot string) bool {
-	if tm.Quarantine != "" && slot == tm.Quarantine {
+// The per-attempt parts of a failure's text: a path (a temp file or
+// directory named fresh each attempt: amq-squad-shadow-<random>, an
+// atomic write's temp) and any run of digits (a random suffix, a pid, a
+// byte count).
+var (
+	reasonPath   = regexp.MustCompile(`[^\s:'"()]*/[^\s:'"()]*`)
+	reasonDigits = regexp.MustCompile(`[0-9]+`)
+)
+
+// reasonIdentity is a failure's suppression identity: its text with every
+// path and every run of digits masked. Two failures that differ only in a
+// temp name are one failure; two that say different things are two (a
+// changed reason is logged again).
+func reasonIdentity(reason string) string {
+	return reasonDigits.ReplaceAllString(reasonPath.ReplaceAllString(reason, "<path>"), "#")
+}
+
+// covers reports whether a recovery record answers this hold: never the
+// record the ledger already carried when the alarm was raised (the
+// baseline: Codex on b250b951, an old recovery read again once the
+// document verifies again is not a decision for this alarm); otherwise the
+// slot the hold named, or any seq at or past the hold's (a hold of an
+// unknown seq is answered by its slot only).
+func (tm *LedgerTamper) covers(rec RecoveryMark) bool {
+	if tm.Baseline != nil && tm.Baseline.same(rec) {
+		return false
+	}
+	if tm.Quarantine != "" && rec.Slot == tm.Quarantine {
 		return true
 	}
 	n, err := strconv.Atoi(tm.Seq)
-	return err == nil && seq >= n
+	return err == nil && rec.Seq >= n
 }
 
 // RestoreLedgerTampers takes the tamper alarms a previous incarnation

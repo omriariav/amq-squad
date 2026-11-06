@@ -604,3 +604,76 @@ func TestADocumentVerifyingAgainIsReleasedByARecordedDecision(t *testing.T) {
 		t.Fatal("the document did not move to the new link")
 	}
 }
+
+// Codex on b250b951 (the P3): a verified decision on a slot whose seq is
+// behind the live chain (the transient alarm at seq N, then another commit
+// step) writes the link after the live one, and a retry of the same
+// decision reports that link and Verified from the record (Link), never
+// the slot's seq plus one. And (the P2's seatcommit half): the head's seq
+// changed then, the refusal's quarantine carries the record the refused
+// body had (Prior), equal to the record the ledger answers once the head
+// is put back, which is the scheduler's baseline. Reverted (the retry's
+// link rebuilt from the slot's seq), the retry reports N+1.
+func TestAVerifiedRecoveryRetriedReportsItsLink(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads a mode-0 seed")
+	}
+	f := newFixture(t)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// one\n")
+	one := f.reported("cmd/")
+	if res := f.run(one); !res.OK {
+		t.Fatalf("the first commit step: %+v", res)
+	}
+	if _, err := f.store.Complete(one.ID, f.now); err != nil {
+		t.Fatal(err)
+	}
+	seed := sealchain.SeedPath(f.root)
+	if err := os.Chmod(seed, 0); err != nil {
+		t.Fatal(err)
+	}
+	q := f.quarantined()
+	if err := os.Chmod(seed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if q.Prior != nil {
+		t.Fatalf("a record before any decision: %+v", q.Prior)
+	}
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// two\n")
+	if res := f.run(f.reported("cmd/")); !res.OK {
+		t.Fatalf("the second commit step: %+v", res)
+	}
+	live, err := ReadLedger(f.root, f.handle)
+	if err != nil || strconv.Itoa(live.Seal.Seq) == q.Seq {
+		t.Fatalf("the live chain is not ahead of the slot: %v %+v (slot seq %s)", err, live.Seal, q.Seq)
+	}
+	first, err := f.recover(q.Seq, 1)
+	if err != nil || !first.Verified || first.NewSeq != live.Seal.Seq+1 {
+		t.Fatalf("the verified decision: %v %+v (live %d)", err, first, live.Seal.Seq)
+	}
+	again, err := f.recover(q.Seq, 1)
+	if err != nil || !again.AlreadyRecovered || !again.Verified || again.NewSeq != first.NewSeq {
+		t.Fatalf("the retry: %v %+v, want link %d verified", err, again, first.NewSeq)
+	}
+	rec, ok := RecoveryOf(f.root, f.handle)
+	if !ok || rec.Link != first.NewSeq {
+		t.Fatalf("the record's link: %v %+v", ok, rec)
+	}
+	// the head's seq changed: the quarantine carries the record as it was
+	hp := sealchain.HeadPath(f.root, "commits."+f.handle)
+	orig := readFile(t, hp)
+	var hd map[string]any
+	if err := json.Unmarshal(orig, &hd); err != nil {
+		t.Fatal(err)
+	}
+	hd["seq"] = 1
+	edited, _ := json.Marshal(hd)
+	write(t, hp, string(edited))
+	q2 := f.quarantined()
+	if q2.Seq != "1" || q2.Prior == nil || q2.Prior.Seq != rec.Seq || q2.Prior.Slot != rec.Slot || q2.Prior.Link != rec.Link || !q2.Prior.At.Equal(rec.At) {
+		t.Fatalf("the quarantine's prior record: seq %s %+v, want %+v", q2.Seq, q2.Prior, rec)
+	}
+	write(t, hp, string(orig))
+	if back, ok := RecoveryOf(f.root, f.handle); !ok || back.Link != q2.Prior.Link || back.Slot != q2.Prior.Slot || !back.At.Equal(q2.Prior.At) {
+		t.Fatalf("the head put back: %v %+v", ok, back)
+	}
+}

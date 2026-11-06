@@ -189,7 +189,14 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 		// decision line not appended, the hold not released): the retry
 		// returns the recovery as the sealed ledger records it, so the
 		// caller records and releases; nothing is written again.
-		out = RecoverResult{Handle: o.Handle, AlreadyRecovered: true, Slot: slotPath, OldSeq: live.Recovered.Seq, NewSeq: live.Recovered.Seq + 1,
+		// The link and the mode are the record's own (Codex on b250b951: a
+		// verified decision at live link 150 wrote 151, not seq+1); a record
+		// written before Link falls back to the chain continuation's seq+1.
+		newSeq := live.Recovered.Link
+		if newSeq == 0 {
+			newSeq = live.Recovered.Seq + 1
+		}
+		out = RecoverResult{Handle: o.Handle, AlreadyRecovered: true, Verified: live.Recovered.Verified, Slot: slotPath, OldSeq: live.Recovered.Seq, NewSeq: newSeq,
 			BodySHA256: live.Recovered.BodySHA256, HeadSHA256: live.Recovered.HeadSHA256, Base: live.Base}
 		for _, c := range live.Commits {
 			if c.Note != "" {
@@ -266,7 +273,7 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 		return out, err
 	}
 	now := o.Now.UTC()
-	recovery := &LedgerRecovery{Seq: oldSeq, Slot: slot.path, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, By: o.Lead, Reason: o.Reason, At: now}
+	recovery := &LedgerRecovery{Seq: oldSeq, Slot: slot.path, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, By: o.Lead, Reason: o.Reason, At: now, Link: oldSeq + 1}
 	for _, c := range carried {
 		recovery.Carried = append(recovery.Carried, c.Task+":"+c.Commit)
 	}
@@ -316,7 +323,7 @@ func recordVerified(o RecoverOptions, live Ledger, slotPath string) (RecoverResu
 	prev := live.Seal
 	l := live
 	l.Seal = nil
-	l.Recovered = &LedgerRecovery{Seq: oldSeq, Slot: slot.path, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, By: o.Lead, Reason: o.Reason, At: now, Verified: true}
+	l.Recovered = &LedgerRecovery{Seq: oldSeq, Slot: slot.path, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, By: o.Lead, Reason: o.Reason, At: now, Verified: true, Link: prev.Seq + 1}
 	link, err := sealWrite(o.Root, o.Handle, prev, l, now)
 	if err != nil {
 		return out, err

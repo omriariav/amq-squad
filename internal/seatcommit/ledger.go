@@ -100,6 +100,11 @@ type LedgerRecovery struct {
 	// alarm, or a document put back); the record was sealed into the next
 	// link of the same body, nothing restarted and nothing carried.
 	Verified bool `json:"verified,omitempty"`
+	// Link is the seq of the link that sealed this decision (the chain's
+	// next link: the quarantined seq's, or the live chain's when Verified),
+	// so a retry reports the link written, never one rebuilt from Seq (Codex
+	// on b250b951). 0 in a record written before the field.
+	Link int `json:"link,omitempty"`
 }
 
 // ReasonLedgerTampered blocks a step whose commits ledger fails its tag or
