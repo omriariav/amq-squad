@@ -169,50 +169,42 @@ func (a Audit) Read() ([]Entry, error) {
 // head is taken out again by a terminal rebind_superseded entry (the lead's
 // re-bind whose conditional binding write refused, rebind.go) and brought
 // back only by a terminal rebind_readmitted entry, which only the lead's
-// merge-train rebind verb writes (its applied binding, over the decision
-// socket with the lead proof; no train code path writes it): the latest
-// terminal entry of a head decides, latest in the journal's order (the
-// append sequence), never by the entries' timestamps, and a rebase entry
-// never decides once a terminal entry names the head, whatever the order
-// of the rebase entries (the plan reviewer on #903).
+// merge-train rebind verb writes: headAdmitted decides, and a rebase entry
+// never does once a terminal entry names the head, whatever the order of
+// the rebase entries (the plan reviewer on #903).
 func (a Audit) trainHeads(repository string, pr int) map[string]bool {
 	entries, _ := a.Read()
 	out := map[string]bool{}
 	for _, e := range entries {
-		if e.Kind == "rebase" && e.Repository == repository && e.PR == pr && e.NewHead != "" {
+		if e.Kind == "rebase" && e.Repository == repository && e.PR == pr && e.NewHead != "" && headAdmitted(entries, repository, pr, e.NewHead) {
 			out[e.NewHead] = true
-		}
-	}
-	for h, kind := range terminalKinds(entries, repository, pr) {
-		if kind == "rebind_superseded" {
-			delete(out, h)
 		}
 	}
 	return out
 }
 
-// terminalKinds is each head's latest terminal entry kind (rebind_superseded
-// or rebind_readmitted) for a PR, by the journal's order.
-func terminalKinds(entries []Entry, repository string, pr int) map[string]string {
-	terminal := map[string]string{} // head -> the latest terminal kind, in journal order
+// headAdmitted is the one admission check of a head (the plan reviewer on
+// #903): every path that trusts or binds a head calls it (trainHeads,
+// reconcileRebinds, reconcileUpdates, land's binding write, and Rebind
+// before its own; a source guard fails by file on a binding write in a
+// function that does not call it first). It reads the latest terminal
+// entry for the head (rebind_superseded or rebind_readmitted) in the
+// journal's append order, the order of entries, never their timestamps: a
+// head whose latest terminal entry is rebind_superseded is not admitted
+// until a later rebind_readmitted entry (the lead's verb applied) exists; a
+// head no terminal entry names is admitted.
+func headAdmitted(entries []Entry, repository string, pr int, head string) bool {
+	latest := ""
 	for _, e := range entries {
-		if e.Repository != repository || e.PR != pr || e.NewHead == "" {
+		if e.Repository != repository || e.PR != pr || e.NewHead != head {
 			continue
 		}
 		switch e.Kind {
 		case "rebind_superseded", "rebind_readmitted":
-			terminal[e.NewHead] = e.Kind
+			latest = e.Kind
 		}
 	}
-	return terminal
-}
-
-// supersededHead reports a head whose latest terminal entry is
-// rebind_superseded: the train never binds or recovers it; only the lead's
-// merge-train rebind verb re-admits it.
-func (a Audit) supersededHead(repository string, pr int, head string) bool {
-	entries, _ := a.Read()
-	return terminalKinds(entries, repository, pr)[head] == "rebind_superseded"
+	return latest != "rebind_superseded"
 }
 
 // lastUpdateRequest is the latest journaled update_requested of a real run

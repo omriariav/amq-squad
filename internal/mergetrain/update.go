@@ -321,7 +321,7 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 		// a head a lead re-bind superseded is never the train's to recover
 		// (the plan reviewer on #903): only merge-train rebind re-admits it,
 		// and it needs the binding where it is
-		if t.Audit.supersededHead(req.Repository, it.Number, cur.HeadSHA) {
+		if !headAdmitted(entries, req.Repository, it.Number, cur.HeadSHA) {
 			if err := entry(Entry{Kind: "reconcile", PR: it.Number, Task: it.Task, Head: it.BoundHead, NewHead: cur.HeadSHA,
 				Detail: fmt.Sprintf("the current head %s was superseded by a lead re-bind decision; the train does not recover it, only merge-train rebind re-admits it\nbinding not recovered", short(cur.HeadSHA))}); err != nil {
 				return err

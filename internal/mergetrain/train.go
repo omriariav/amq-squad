@@ -688,6 +688,17 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 				p.Head = pushed
 				return t.refuseUpdate(res, p, entry, RuleRebasePatch, "its change moved during the update")
 			}
+			// the one admission check before any binding write (the plan
+			// reviewer on #903): a head a lead re-bind superseded is never
+			// bound by the train, only merge-train rebind re-admits it
+			journal, err := t.Audit.Read()
+			if err != nil {
+				return err
+			}
+			if !headAdmitted(journal, req.Repository, p.Number, pushed) {
+				p.PatchProof = &PatchProof{Required: true, OldHead: p.Head, NewHead: pushed, OldID: oldPatch, NewID: newPatch, Match: true}
+				return t.refuseUpdate(res, p, entry, RulePRHeadMoved, fmt.Sprintf("the head read back after the update, %s, was superseded by a lead re-bind decision; the train does not bind it, only merge-train rebind re-admits it; nothing is bound", short(pushed)))
+			}
 			// the proof passed: audit first (the rebase entry, then the
 			// rebind), then the binding write, all before the check
 			if err := entry(rebaseEntry); err != nil {
@@ -824,7 +835,7 @@ func (t *Train) reconcileRebinds(ctx context.Context, req *Request, entry func(E
 		// a head a lead re-bind superseded is never replayed (Codex's third
 		// pass on #903: the refused re-bind journals its rebind entry before
 		// the superseded one); only merge-train rebind re-admits it
-		if terminalKinds(entries, req.Repository, it.Number)[pending.NewHead] == "rebind_superseded" {
+		if !headAdmitted(entries, req.Repository, it.Number, pending.NewHead) {
 			if err := entry(Entry{Kind: "reconcile", PR: it.Number, Task: it.Task, Head: it.BoundHead, NewHead: pending.NewHead,
 				Detail: fmt.Sprintf("the journaled rebind to %s was superseded by a lead re-bind decision; the train does not replay it, only merge-train rebind re-admits it\nbinding not recovered", short(pending.NewHead))}); err != nil {
 				return err

@@ -3,6 +3,9 @@ package mergetrain
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1036,8 +1039,64 @@ func TestTrainNeverReadmitsASupersededHead(t *testing.T) {
 
 // The guard from the source: among the package's non-test files only
 // rebind.go (the lead's verb) writes a rebind_readmitted entry; a train path
-// that starts writing one fails here by file.
+// that starts writing one fails here by file. And every binding write (a
+// call of BindPR or BindPRFrom) in a non-test file sits in a function that
+// calls headAdmitted before it (the one admission check, the plan
+// reviewer's rulings on Codex's third pass on #903); a binding write
+// without it fails here by file and function. StoreBinder's own methods
+// are the Binder (the store's write behind it) and are not callers.
 func TestOnlyTheRebindVerbWritesReadmitted(t *testing.T) {
+	t.Run("every binding write is admitted first", func(t *testing.T) {
+		files, err := filepath.Glob("*.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fset := token.NewFileSet()
+		sites := 0
+		for _, name := range files {
+			if strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			file, err := parser.ParseFile(fset, name, nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, d := range file.Decls {
+				fn, ok := d.(*ast.FuncDecl)
+				if !ok || fn.Body == nil || receiverIs(fn, "StoreBinder") {
+					continue
+				}
+				admitted := token.NoPos
+				var binds []*ast.SelectorExpr
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					call, ok := n.(*ast.CallExpr)
+					if !ok {
+						return true
+					}
+					switch fun := call.Fun.(type) {
+					case *ast.Ident:
+						if fun.Name == "headAdmitted" && (admitted == token.NoPos || call.Pos() < admitted) {
+							admitted = call.Pos()
+						}
+					case *ast.SelectorExpr:
+						if fun.Sel.Name == "BindPR" || fun.Sel.Name == "BindPRFrom" {
+							binds = append(binds, fun)
+						}
+					}
+					return true
+				})
+				for _, b := range binds {
+					sites++
+					if admitted == token.NoPos || admitted > b.Pos() {
+						t.Errorf("%s: %s calls %s (line %d) without first calling headAdmitted", name, fn.Name.Name, b.Sel.Name, fset.Position(b.Pos()).Line)
+					}
+				}
+			}
+		}
+		if sites < 4 { // land, reconcileRebinds, reconcileUpdates, Rebind
+			t.Fatalf("the guard found %d binding writes, want at least 4", sites)
+		}
+	})
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -1058,6 +1117,19 @@ func TestOnlyTheRebindVerbWritesReadmitted(t *testing.T) {
 	if !strings.Contains(string(raw), `Kind: "rebind_readmitted"`) {
 		t.Fatal("rebind.go no longer writes the re-admission")
 	}
+}
+
+// receiverIs reports a method declared on the named type (or its pointer).
+func receiverIs(fn *ast.FuncDecl, name string) bool {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return false
+	}
+	typ := fn.Recv.List[0].Type
+	if star, ok := typ.(*ast.StarExpr); ok {
+		typ = star.X
+	}
+	id, ok := typ.(*ast.Ident)
+	return ok && id.Name == name
 }
 
 // blockingForge's PR read blocks until its context ends.
