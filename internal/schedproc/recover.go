@@ -111,6 +111,13 @@ type Recovery struct {
 	Now    func() time.Time
 }
 
+// NewRecovery is the scheduler process's chain writer as scheduler run
+// builds it: the session root and the launch's grant, Git, env and clock
+// left to RecoverLedger's defaults.
+func NewRecovery(root string, target seatcommit.Target) Recovery {
+	return Recovery{Root: root, Target: target}
+}
+
 // Apply is seatcommit.RecoverLedger for a proved request.
 func (r Recovery) Apply(lead string, req RecoverRequest) (seatcommit.RecoverResult, error) {
 	carry, err := ParseCarry(req.Carry)
@@ -192,14 +199,8 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 			if res.AlreadyRecovered {
 				verb = "had released (the decision sent again; the sealed ledger records it)"
 			}
-			how := "its commits ledger verified when the decision came; the record naming the alarm is sealed into link %d, nothing restarted, nothing carried"
-			args := []any{res.NewSeq}
-			if res.Slot != "" {
-				how = "its commits ledger did not verify: the decision copied it to quarantine %s and recovered from it, the chain continuing at seq %d, nothing carried"
-				args = []any{res.Slot, res.NewSeq}
-			}
-			reason = fmt.Sprintf("the lead %s %s alarm %s of seat %s by decision: "+how+"; reason: %s",
-				append(append([]any{lead, verb, req.Alarm, req.Seat}, args...), firstNonEmptyString(req.Reason, "none given"))...)
+			reason = fmt.Sprintf("the lead %s %s alarm %s of seat %s by decision: its commits ledger verified when the decision came; the record naming the alarm is sealed into link %d, nothing restarted, nothing carried; reason: %s",
+				lead, verb, req.Alarm, req.Seat, res.NewSeq, firstNonEmptyString(req.Reason, "none given"))
 		}
 		at := now().UTC()
 		if err := AppendDecision(root, at, scheduler.Decision{Kind: DecisionLedgerRecovered, Seat: req.Seat, Reason: reason}); err != nil {
@@ -212,9 +213,6 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 		}
 		if req.Alarm != "" {
 			detail = fmt.Sprintf("seat %s: alarm %s released by decision, sealed at link %d; the scheduler releases the seat at its next tick", req.Seat, req.Alarm, res.NewSeq)
-			if res.Slot != "" && !res.AlreadyRecovered {
-				detail = fmt.Sprintf("seat %s: alarm %s released by decision: the ledger did not verify, so it was copied to %s and recovered from it at link %d; the scheduler releases the seat at its next tick", req.Seat, req.Alarm, res.Slot, res.NewSeq)
-			}
 			if res.AlreadyRecovered {
 				detail = fmt.Sprintf("seat %s: alarm %s was already released by decision (link %d); the decision is recorded now", req.Seat, req.Alarm, res.NewSeq)
 			}

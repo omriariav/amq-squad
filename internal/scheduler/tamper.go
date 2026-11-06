@@ -77,15 +77,13 @@ type LedgerTamper struct {
 
 // RecoveryMark is what a seat's sealed ledger records of the lead's
 // recoveries, as the scheduler reads it: the chain's own record (the
-// quarantined seq and slot it continued from, and the alarm when a
-// decision by alarm made it, SlotAlarm), and the alarm id of every
+// quarantined seq and slot it continued from) and the alarm id of every
 // decision by alarm the ledger keeps (one record per alarm, never
 // replaced; the plan reviewer's ruling on Codex's pass on 254f2c2c).
 type RecoveryMark struct {
-	Seq       int      `json:"seq"`
-	Slot      string   `json:"slot"`
-	SlotAlarm string   `json:"slot_alarm,omitempty"`
-	Alarms    []string `json:"alarms,omitempty"`
+	Seq    int      `json:"seq"`
+	Slot   string   `json:"slot"`
+	Alarms []string `json:"alarms,omitempty"`
 }
 
 // newAlarmID is a hold's alarm id: eight hex characters from the system's
@@ -362,7 +360,7 @@ func (tm *LedgerTamper) covers(rec RecoveryMark) bool {
 			return true
 		}
 	}
-	return tm.Quarantine != "" && rec.Slot == tm.Quarantine && rec.SlotAlarm == ""
+	return tm.Quarantine != "" && rec.Slot == tm.Quarantine
 }
 
 // names reports whether a task's block is this hold's own: blocked

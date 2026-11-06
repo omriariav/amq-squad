@@ -159,12 +159,21 @@ func RecoverSlotName(handle, seq string, k int) string {
 // seals them and never removes them.
 func RecoverLedger(o RecoverOptions) (RecoverResult, error) {
 	var out RecoverResult
+	// The defaults before any branch (Codex on 8cffafe7: the alarm branch
+	// returned before them, and the scheduler builds its Recovery without
+	// Git, schedproc.NewRecovery).
+	if o.Git == "" {
+		o.Git = "git"
+	}
+	if o.Env == nil {
+		o.Env = os.Environ()
+	}
+	if o.Now.IsZero() {
+		o.Now = time.Now()
+	}
 	if o.Alarm != "" {
 		if o.Handle == "" || !AlarmIDRe.MatchString(o.Alarm) || o.Seq != "" || o.Slot != 0 || len(o.Carry) > 0 {
 			return out, refuseRecover(RecoverSlotInvalid, "a decision by alarm names a seat and an alarm id, and no slot, seq or carried entry")
-		}
-		if o.Now.IsZero() {
-			o.Now = time.Now()
 		}
 		err := withLedgerLock(o.Root, o.Handle, func() error {
 			var err error
@@ -180,15 +189,6 @@ func RecoverLedger(o RecoverOptions) (RecoverResult, error) {
 		if c.Task == "" || !recoverCommitRe.MatchString(c.Commit) {
 			return out, refuseRecover(RecoverEntryUnknown, "a carried entry is named by its task id and its full commit id")
 		}
-	}
-	if o.Git == "" {
-		o.Git = "git"
-	}
-	if o.Env == nil {
-		o.Env = os.Environ()
-	}
-	if o.Now.IsZero() {
-		o.Now = time.Now()
 	}
 	err := withLedgerLock(o.Root, o.Handle, func() error {
 		var err error
@@ -305,17 +305,12 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 		return out, err
 	}
 	now := o.Now.UTC()
-	recovery := &LedgerRecovery{Seq: oldSeq, Slot: slot.path, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, By: o.Lead, Reason: o.Reason, At: now, Link: oldSeq + 1, Alarm: o.Alarm}
+	recovery := &LedgerRecovery{Seq: oldSeq, Slot: slot.path, BodySHA256: slot.bodySHA, HeadSHA256: slot.headSHA, By: o.Lead, Reason: o.Reason, At: now, Link: oldSeq + 1}
 	for _, c := range carried {
 		recovery.Carried = append(recovery.Carried, c.Task+":"+c.Commit)
 	}
 	l := Ledger{Schema: LedgerSchema, Handle: o.Handle, Worktree: rec.Worktree, Branch: rec.Branch, Base: base, Commits: carried, At: now,
 		Target: o.Target, EvidenceSeq: evidenceSeqOf(repo, o.Handle), Recovered: recovery}
-	if o.Alarm != "" {
-		// a decision by alarm recovering from its own copy: the new body's
-		// alarm records start with this decision's
-		l.AlarmRecoveries = []LedgerRecovery{*recovery}
-	}
 	if l.Commits == nil {
 		l.Commits = []LedgerCommit{}
 	}
@@ -380,33 +375,34 @@ func recordVerified(o RecoverOptions, live Ledger, slotPath string) (RecoverResu
 // releases a hold whose refusal quarantined nothing, and a hold whose slot
 // the chain has moved past (a later slot at a lower seq recovered first).
 // On a ledger that verifies, the next link seals the same body with the
-// record naming the alarm; the same alarm decided again is answered from
-// the ledger (AlreadyRecovered). On a ledger that does not verify (Codex
-// on 254f2c2c: a refusal whose copy failed leaves a hold with no slot and
-// no read that makes one), the decision first makes the lead's quarantine
-// copy of the live bytes, the copy a refusing read makes, and then
-// recovers from that slot in the same step, the record naming the slot and
-// the alarm; it is refused recover_alarm_unverified only when the ledger
-// cannot be read as a document or the copy fails, in words. Nothing is
-// carried either way.
+// record naming the alarm appended; the same alarm decided again is
+// answered from the ledger (AlreadyRecovered). On a ledger that does not
+// verify (Codex on 254f2c2c: a refusal whose copy failed leaves a hold
+// with no slot and no read that makes one), the decision makes only the
+// lead's quarantine copy of the live bytes, the copy a refusing read
+// makes, and is refused recover_alarm_unverified naming the slot and the
+// slot recovery to run (the plan reviewer on 8cffafe7: never a rebuild);
+// it is refused in words too when the copy fails or the ledger cannot be
+// read as a document. Nothing is carried.
 func recordAlarm(o RecoverOptions) (RecoverResult, error) {
 	var out RecoverResult
 	live, raw, rerr := readLedger(o.Root, o.Handle)
 	if errors.Is(rerr, sealchain.ErrTampered) {
+		// Copy only, never a rebuild (the plan reviewer's ruling on Codex's
+		// pass on 8cffafe7: a rebuild here recovered a ledger the lead had
+		// not seen). The lead's quarantine copy is the copy a refusing read
+		// makes; the lead then recovers the slot with the slot recovery,
+		// which shows what it carries, and sends the decision again.
 		qerr := quarantine(o.Root, o.Handle, "scheduler recover --alarm", rerr, raw)
 		var q *QuarantinedError
 		if !errors.As(qerr, &q) {
-			return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s does not verify, and the copy of it into the quarantine the decision by alarm recovers from could not be made: %v; fix what the copy names, then send the decision again", o.Handle, qerr)
+			return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s does not verify, and the copy of it into the quarantine could not be made: %v; fix what the copy names, then send the decision again", o.Handle, qerr)
 		}
-		k, err := slotIndex(o.Handle, q.Seq, q.Slot)
-		if err != nil {
-			return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s was copied to %s, whose name the recovery cannot read: %v", o.Handle, q.Slot, err)
+		slotFlag := ""
+		if k, err := slotIndex(o.Handle, q.Seq, q.Slot); err == nil && k > 1 {
+			slotFlag = fmt.Sprintf(" --slot %d", k)
 		}
-		from := o
-		from.Seq, from.Slot = q.Seq, k
-		res, err := recoverLedger(from)
-		res.Alarm = o.Alarm
-		return res, err
+		return out, refuseRecover(RecoverAlarmUnverified, "seat %s's ledger does not verify; it was copied to slot %s; recover it with `amq-squad scheduler recover --seat %s --seq %s%s --reason ...`, which shows what it carries, then send the alarm decision again", o.Handle, q.Slot, o.Handle, q.Seq, slotFlag)
 	}
 	if rerr != nil {
 		return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s cannot be read as a document (%v); the decision by alarm needs one to verify or to quarantine", o.Handle, rerr)
@@ -650,15 +646,8 @@ func carryEntries(o RecoverOptions, slot *quarantinedSlot, oldSeq int, common st
 	return out, nil
 }
 
-// alarmRecords are the ledger's decisions by alarm: the per-alarm list,
-// and the chain's own record when a decision by alarm made it.
-func (l Ledger) alarmRecords() []LedgerRecovery {
-	out := append([]LedgerRecovery(nil), l.AlarmRecoveries...)
-	if l.Recovered != nil && l.Recovered.Alarm != "" {
-		out = append(out, *l.Recovered)
-	}
-	return out
-}
+// alarmRecords are the ledger's decisions by alarm.
+func (l Ledger) alarmRecords() []LedgerRecovery { return l.AlarmRecoveries }
 
 // RecoveriesOf is everything a seat's sealed ledger records of the lead's
 // recoveries, read without a quarantine, in one read: the chain's own

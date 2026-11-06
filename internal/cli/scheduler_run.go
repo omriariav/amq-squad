@@ -364,7 +364,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Decisions: decisions,
 		// 3.2.0-0c-B: the lead's recovery of a quarantined ledger writes
 		// the chain here, with the launch's record of the grant.
-		Recover:   schedproc.Recovery{Root: root, Target: target}.Apply,
+		Recover:   schedproc.NewRecovery(root, target).Apply,
 		LeadState: leadGone,
 		Exits:     committer,
 		// The per-tick liveness of every roster seat from the launch ledger
