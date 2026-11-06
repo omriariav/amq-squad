@@ -37,7 +37,12 @@ for (const f of files) {
 	for (const m of src.matchAll(/^\s*import\s+(type\s+)?[^;]*?from\s+"([^"]+)"/gm)) {
 		const [, isType, spec] = m;
 		if (spec.startsWith(".") && !spec.endsWith(".ts")) problems.push(`${rel}: relative import ${spec} must name its .ts file`);
-		if (spec.startsWith("@earendil-works/") && !isType) problems.push(`${rel}: import ${spec} as a type only (pi supplies it at run time)`);
+		if (rel.startsWith("extensions/") && spec.startsWith("@earendil-works/") && !isType) problems.push(`${rel}: import ${spec} as a type only (pi supplies it at run time)`);
+	}
+	if (rel.startsWith("extensions/")) {
+		for (const m of src.matchAll(/\b(?:import|require)\s*\(\s*["'](@earendil-works\/[^"']+)["']\s*\)/g)) {
+			problems.push(`${rel}: import ${m[1]} as a type only (pi supplies it at run time)`);
+		}
 	}
 	if (rel.startsWith("extensions") && /console\.log\(/.test(src)) problems.push(`${rel}: console.log in extension code`);
 }
