@@ -810,3 +810,33 @@ func TestARecoveryKeepsATamperBlockOfAnotherSlot(t *testing.T) {
 		t.Fatalf("the hold was not released: %+v", ds)
 	}
 }
+
+// The plan reviewer on the masked key: two failures whose texts differ
+// only in a temp file's name are one failure (one seat_prepare_failed),
+// and a failure that differs in words is another (a second
+// seat_prepare_failed): over three ticks, two lines. Reverted (the raw
+// text as the key), the temp name alone logs a second line, three in all.
+func TestReasonsDifferingOnlyInATempNameLogOnce(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	p := &tamperPreparer{seat: "seat-a"}
+	h.s.Preparer = p
+	h.add("a", &sonnet)
+	h.up("seat-a", sonnet)
+	var all []Decision
+	for _, reason := range []string{
+		"the commit ledger of seat seat-a: write /tmp/amq-squad-shadow-4127/index: no space left on device",
+		"the commit ledger of seat seat-a: write /tmp/amq-squad-shadow-90355/index: no space left on device",
+		"the commit ledger of seat seat-a: write /tmp/amq-squad-shadow-90355/index: permission denied",
+	} {
+		p.err = errors.New(reason)
+		all = append(all, h.tick()...)
+		h.clk.Add(2 * time.Second)
+	}
+	if n := countOf(all, "seat_prepare_failed", "seat-a"); n != 2 {
+		t.Fatalf("%d seat_prepare_failed lines, want 2 (the temp name alone is one failure, the words another): %+v", n, all)
+	}
+	if reasonIdentity("write /tmp/amq-squad-shadow-4127/index: no space") != reasonIdentity("write /tmp/amq-squad-shadow-90355/index: no space") ||
+		reasonIdentity("write /tmp/x/index: no space") == reasonIdentity("write /tmp/x/index: permission denied") {
+		t.Fatal("reasonIdentity does not mask the temp name or merges different words")
+	}
+}
