@@ -92,29 +92,30 @@ func (s *Scheduler) prepareFailed(t task.Task, handle string, err error, now tim
 	if errors.As(err, &tampered) {
 		return s.blockOnTamper(t, handle, tampered, now, log)
 	}
-	s.logOnce("seat_prepare_failed", "seat_prepare_suppressed", t.ID, handle, t.UpdatedAt.UTC().Format(time.RFC3339Nano), err.Error(),
-		"the same prepare failure repeats; further repeats are counted, not logged, until the task, the seat or the reason changes: ", log)
+	s.logOnce(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()},
+		Decision{Kind: "seat_prepare_suppressed", TaskID: t.ID, Seat: handle, Reason: "the same prepare failure repeats; further repeats are counted, not logged, until the task, the seat or the reason changes: " + err.Error()},
+		t.UpdatedAt.UTC().Format(time.RFC3339Nano), log)
 	return nil, nil
 }
 
-// logOnce logs kind once per task (and its record's change, change), seat
-// and reason, then countKind once more when it repeats, then counts: the
-// prepare failures and the release retries (Codex and the plan reviewer on
-// c9826c31). preparePassed clears a seat's keys.
-func (s *Scheduler) logOnce(kind, countKind, taskID, handle, change, reason, countPrefix string, log func(Decision)) {
+// logOnce logs first once per its task (and the task record's change),
+// seat, kind and reason, then count once more when it repeats, then
+// counts: the prepare failures and the release retries (Codex and the plan
+// reviewer on c9826c31). preparePassed clears a seat's keys.
+func (s *Scheduler) logOnce(first, count Decision, change string, log func(Decision)) {
 	if s.prepareFails == nil {
 		s.prepareFails = map[string]*prepareFailure{}
 	}
-	key := prepareKey(handle, taskID) + "\x00" + kind
+	key := prepareKey(first.Seat, first.TaskID) + "\x00" + first.Kind
 	f := s.prepareFails[key]
-	if f == nil || f.task != change || f.reason != reason {
-		s.prepareFails[key] = &prepareFailure{task: change, reason: reason, count: 1}
-		log(Decision{Kind: kind, TaskID: taskID, Seat: handle, Reason: reason})
+	if f == nil || f.task != change || f.reason != first.Reason {
+		s.prepareFails[key] = &prepareFailure{task: change, reason: first.Reason, count: 1}
+		log(first)
 		return
 	}
 	f.count++
 	if f.count == 2 {
-		log(Decision{Kind: countKind, TaskID: taskID, Seat: handle, Reason: countPrefix + reason})
+		log(count)
 	}
 }
 
@@ -208,8 +209,7 @@ func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 				continue // gone
 			}
 			if err != nil {
-				s.logOnce("ledger_release_failed", "ledger_release_suppressed", id, h, "", "the task's record could not be read; the hold stays and the release is retried next tick: "+err.Error(),
-					"the release keeps failing; further repeats are counted, not logged, until the reason changes: ", log)
+				s.releaseFailed(id, h, "the task's record could not be read; the hold stays and the release is retried next tick: "+err.Error(), log)
 				kept = true
 				continue
 			}
@@ -217,8 +217,7 @@ func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 				continue // reset by the lead already
 			}
 			if _, err := storeReset(s.Store, id, now); err != nil {
-				s.logOnce("ledger_release_failed", "ledger_release_suppressed", id, h, "", "the task could not be returned to pending; the hold stays and the release is retried next tick: "+err.Error(),
-					"the release keeps failing; further repeats are counted, not logged, until the reason changes: ", log)
+				s.releaseFailed(id, h, "the task could not be returned to pending; the hold stays and the release is retried next tick: "+err.Error(), log)
 				kept = true
 				continue
 			}
@@ -232,6 +231,13 @@ func (s *Scheduler) applyRecoveries(now time.Time, log func(Decision)) error {
 		log(Decision{Kind: "ledger_hold_released", Seat: h, Reason: fmt.Sprintf("the commits ledger of seat %s records the lead's recovery from quarantine seq %d (%s); the seat is grantable again", h, seq, slot)})
 	}
 	return nil
+}
+
+// releaseFailed is a release's store failure, logged once per task, seat
+// and reason, then counted.
+func (s *Scheduler) releaseFailed(id, h, reason string, log func(Decision)) {
+	s.logOnce(Decision{Kind: "ledger_release_failed", TaskID: id, Seat: h, Reason: reason},
+		Decision{Kind: "ledger_release_suppressed", TaskID: id, Seat: h, Reason: "the release keeps failing; further repeats are counted, not logged, until the reason changes: " + reason}, "", log)
 }
 
 // covers reports whether a recovery record (its quarantined seq and slot)
