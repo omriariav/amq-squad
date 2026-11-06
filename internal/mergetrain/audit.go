@@ -55,8 +55,15 @@ const AuditSchema = "amq-squad-merge-audit/1"
 
 // Entry is one audit log line. Kind is one of: protection (the branch
 // protection check), batch (the digest of the ordered set about to land,
-// written again after a rebase that changes a head), refusal, rebase, merge,
-// stop (manual mode or an error ended the run), plan (a dry run's result).
+// written again after a rebase that changes a head), refusal, update_requested
+// (the train is about to ask GitHub to update a branch: the PR, the bound
+// head and the base tip, journaled before the mutation, brief 3.2.0-3a item
+// 0), update_failed (GitHub definitely refused the mutation, so the request
+// counts for nothing), update_ambiguous (the mutation failed on this side
+// without a definite refusal, so the request stays live), rebase (the head
+// the update produced, read back), rebind, merge_intent,
+// merge, reconcile, stop (manual mode or an error ended the run), plan (a
+// dry run's result).
 type Entry struct {
 	Schema     string   `json:"schema"`
 	At         string   `json:"at"`
@@ -89,14 +96,36 @@ func AuditFor(root string) Audit {
 	return Audit{Path: filepath.Join(root, "extensions", "amq-squad", "mergetrain", "audit.jsonl")}
 }
 
-// Append writes one entry and fsyncs it. Under the append lock the tail is
-// checked first, the rule of the outcome log (2b-4 AppendJSONL): a torn last
-// line (no newline) is terminated before the entry, so the entry stays one
-// whole line and Read skips only the torn one (5 re-pass, P2-6).
+// Append writes one entry and fsyncs it, under the journal lock
+// (AuditLockPath: the one lock every appender takes, and bindAdmitted's
+// check-and-write). Under the lock the tail is checked first, the rule of
+// the outcome log (2b-4 AppendJSONL): a torn last line (no newline) is
+// terminated before the entry, so the entry stays one whole line and Read
+// skips only the torn one (5 re-pass, P2-6).
 func (a Audit) Append(e Entry) error {
+	return a.locked(func() error { return a.appendLocked(e) })
+}
+
+// AuditLockPath is the journal lock: <audit.jsonl>.lock, an exclusive
+// flock (internal/flock WithLock). Every append (Append, so every writer of
+// rebind_superseded and rebind_readmitted) and bindAdmitted's fresh read,
+// admission check and binding write run under it, one at a time.
+func (a Audit) AuditLockPath() string { return a.Path + ".lock" }
+
+// locked runs fn under the journal lock (AuditLockPath), so no entry is
+// appended while fn runs. fn appends only through appendLocked.
+func (a Audit) locked(fn func() error) error {
 	if a.Path == "" {
 		return errors.New("merge train: no audit log path")
 	}
+	if err := os.MkdirAll(filepath.Dir(a.Path), 0o700); err != nil {
+		return err
+	}
+	return flock.WithLock(a.AuditLockPath(), fn)
+}
+
+// appendLocked writes one entry; the caller holds the journal lock.
+func (a Audit) appendLocked(e Entry) error {
 	if e.Schema == "" {
 		e.Schema = AuditSchema
 	}
@@ -107,29 +136,24 @@ func (a Audit) Append(e Entry) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(a.Path), 0o700); err != nil {
+	f, err := os.OpenFile(a.Path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
+	if err != nil {
 		return err
 	}
-	return flock.WithLock(a.Path+".lock", func() error {
-		f, err := os.OpenFile(a.Path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
-		if err != nil {
-			return err
+	out := append(line, '\n')
+	st, err := f.Stat()
+	if err == nil && st.Size() > 0 {
+		last := make([]byte, 1)
+		if _, err = f.ReadAt(last, st.Size()-1); err == nil && last[0] != '\n' {
+			out = append([]byte{'\n'}, out...)
 		}
-		out := append(line, '\n')
-		st, err := f.Stat()
-		if err == nil && st.Size() > 0 {
-			last := make([]byte, 1)
-			if _, err = f.ReadAt(last, st.Size()-1); err == nil && last[0] != '\n' {
-				out = append([]byte{'\n'}, out...)
-			}
+	}
+	if err == nil {
+		if _, err = f.Write(out); err == nil {
+			err = f.Sync()
 		}
-		if err == nil {
-			if _, err = f.Write(out); err == nil {
-				err = f.Sync()
-			}
-		}
-		return errors.Join(err, f.Close())
-	})
+	}
+	return errors.Join(err, f.Close())
 }
 
 // Read returns every well-formed entry; a torn line is skipped.
@@ -158,14 +182,73 @@ func (a Audit) Read() ([]Entry, error) {
 }
 
 // trainHeads are the heads the train's own rebases produced for a PR: a
-// force push that lands on one of them is the train's, not a seat's.
+// force push that lands on one of them is the train's, not a seat's. A
+// head is taken out again by a terminal rebind_superseded entry (the lead's
+// re-bind whose conditional binding write refused, rebind.go) and brought
+// back only by a terminal rebind_readmitted entry, which only the lead's
+// merge-train rebind verb writes: headAdmitted decides, and a rebase entry
+// never does once a terminal entry names the head, whatever the order of
+// the rebase entries (the plan reviewer on #903).
 func (a Audit) trainHeads(repository string, pr int) map[string]bool {
 	entries, _ := a.Read()
 	out := map[string]bool{}
 	for _, e := range entries {
-		if e.Kind == "rebase" && e.Repository == repository && e.PR == pr && e.NewHead != "" {
+		if e.Kind == "rebase" && e.Repository == repository && e.PR == pr && e.NewHead != "" && headAdmitted(entries, repository, pr, e.NewHead) {
 			out[e.NewHead] = true
 		}
 	}
 	return out
+}
+
+// headAdmitted is the one admission check of a head (the plan reviewer on
+// #903): every path that trusts or binds a head calls it (trainHeads,
+// reconcileRebinds, reconcileUpdates, land's binding write, and Rebind
+// before its own; a source guard fails by file on a binding write in a
+// function that does not call it first). It reads the latest terminal
+// entry for the head (rebind_superseded or rebind_readmitted) in the
+// journal's append order, the order of entries, never their timestamps: a
+// head whose latest terminal entry is rebind_superseded is not admitted
+// until a later rebind_readmitted entry (the lead's verb applied) exists; a
+// head no terminal entry names is admitted.
+func headAdmitted(entries []Entry, repository string, pr int, head string) bool {
+	latest := ""
+	for _, e := range entries {
+		if e.Repository != repository || e.PR != pr || e.NewHead != head {
+			continue
+		}
+		switch e.Kind {
+		case "rebind_superseded", "rebind_readmitted":
+			latest = e.Kind
+		}
+	}
+	return latest != "rebind_superseded"
+}
+
+// lastUpdateRequest is the latest journaled update_requested of a real run
+// for a PR at a bound head: the train asked GitHub to update that branch
+// from that head, and the entry carries the base tip it pinned. A request
+// GitHub definitely refused is followed by an update_failed entry for the
+// same head and counts for nothing: GitHub never took it, so a later move
+// of the branch is not the train's. A request whose mutation failed
+// without a definite refusal (a timeout, a 5xx, a dropped connection: the
+// plan reviewer on #903) is followed by update_ambiguous and stays live,
+// since GitHub may have completed it; ambiguous carries that entry's
+// detail.
+func lastUpdateRequest(entries []Entry, repository string, pr int, head string) (req Entry, ambiguous string, found bool) {
+	for _, e := range entries {
+		if e.DryRun || e.Repository != repository || e.PR != pr || e.Head != head {
+			continue
+		}
+		switch e.Kind {
+		case "update_requested":
+			req, ambiguous, found = e, "", true
+		case "update_failed":
+			req, ambiguous, found = Entry{}, "", false
+		case "update_ambiguous":
+			if found {
+				ambiguous = e.Detail
+			}
+		}
+	}
+	return req, ambiguous, found
 }
