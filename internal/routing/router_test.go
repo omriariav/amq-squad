@@ -397,16 +397,21 @@ func TestLeadPin(t *testing.T) {
 		t.Fatalf("pin: %+v", d)
 	}
 	// A pin must resolve to a tier the class may run on (Codex pass 1, P1-1).
-	for _, c := range []struct{ class, pin, why string }{
-		{"plan", "claude:haiku:low", "tiers the class may not run on"},         // below plan
-		{"plan", "claude:sonnet:high", "in no chain"},                          // in no chain of the table
-		{"review", "codex:gpt-5.6-sol:high", "tiers the class may not run on"}, // plan tier, not advisor
+	for _, c := range []struct{ class, pin string }{
+		{"plan", "claude:haiku:low"},         // below plan
+		{"plan", "claude:sonnet:high"},       // in no chain of the table
+		{"review", "codex:gpt-5.6-sol:high"}, // plan tier, not advisor
 	} {
 		p := newTask("t2", c.class)
 		p.Pool = pl(c.pin)
-		if _, route := f.router().Decide(p, nil); route.Block != BlockPinUnresolved || route.Pool != nil || !strings.Contains(route.Detail, c.why) {
+		if _, route := f.router().Decide(p, nil); route.Block != BlockPinUnresolved || route.Pool != nil || !strings.Contains(route.Detail, "class "+c.class+" runs on") || !strings.Contains(route.Detail, "the pin "+c.pin) {
 			t.Fatalf("%s pinned to %s: %+v", c.class, c.pin, route)
 		}
+	}
+	p := newTask("t3", "plan")
+	p.Pool = pl("codex:gpt-5.6-terra:medium")
+	if _, route := f.router().Decide(p, nil); route.Detail != "the pin codex:gpt-5.6-terra:medium is on the task tier (class implement); class plan runs on claude:opus:high, codex:gpt-5.6-sol:high" {
+		t.Fatalf("pin detail = %q", route.Detail)
 	}
 	// A review pinned to an advisor entry runs there.
 	rv := newTask("t4", "review")

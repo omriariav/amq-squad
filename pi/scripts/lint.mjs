@@ -29,15 +29,23 @@ function walk(d) {
 for (const f of files) {
 	const rel = relative(root, f);
 	const src = readFileSync(f, "utf8");
+	let runtimeSrc = src;
 	try {
-		stripTypeScriptTypes(src, { mode: "strip" });
+		runtimeSrc = stripTypeScriptTypes(src, { mode: "strip" });
 	} catch (err) {
 		problems.push(`${rel}: not erasable TypeScript: ${err.message.split("\n")[0]}`);
 	}
 	for (const m of src.matchAll(/^\s*import\s+(type\s+)?[^;]*?from\s+"([^"]+)"/gm)) {
 		const [, isType, spec] = m;
 		if (spec.startsWith(".") && !spec.endsWith(".ts")) problems.push(`${rel}: relative import ${spec} must name its .ts file`);
-		if (spec.startsWith("@earendil-works/") && !isType) problems.push(`${rel}: import ${spec} as a type only (pi supplies it at run time)`);
+		if (rel.startsWith("extensions/") && spec.startsWith("@earendil-works/") && !isType) problems.push(`${rel}: import ${spec} as a type only (pi supplies it at run time)`);
+	}
+	if (rel.startsWith("extensions/")) {
+		// Type-position import() expressions disappear under the same erasure
+		// check above. Scan the erased source so only runtime loads are refused.
+		for (const m of runtimeSrc.matchAll(/\b(?:import|require)\s*\(\s*["'](@earendil-works\/[^"']+)["']\s*\)/g)) {
+			problems.push(`${rel}: load ${m[1]} only in a type position (pi supplies it at run time)`);
+		}
 	}
 	if (rel.startsWith("extensions") && /console\.log\(/.test(src)) problems.push(`${rel}: console.log in extension code`);
 }
