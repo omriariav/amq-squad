@@ -129,28 +129,36 @@ var ErrHeadSuperseded = errors.New("head superseded by a lead re-bind decision")
 
 // bindWrite is one binding write: the task's binding of PR moves from the
 // bound head From to To. Conditional makes it hold only while the task is
-// still bound at From (BindPRFrom, the lead's verb); Readmit is that verb,
-// the one re-admission of a superseded head.
+// still bound at From (BindPRFrom, the lead's verb). Readmit is that verb,
+// the one re-admission of a superseded head; Readmitted, when set, builds
+// the verb's rebind_readmitted entry from whether the head was admitted,
+// and bindAdmitted appends it in the same critical section as the write.
 type bindWrite struct {
 	Task, Repository string
 	PR               int
 	From, To         string
 	Conditional      bool
 	Readmit          bool
+	Readmitted       func(admitted bool) Entry
 }
 
 // bindAdmitted is the only writer of a task's PR binding (Codex's fourth
 // pass on #903): every binding write of the train and of the lead's verb
 // goes through it, and a source guard fails on any other reference to
-// BindPR or BindPRFrom. Under the audit log's lock it re-reads the journal
-// and calls headAdmitted on that fresh read immediately before the write,
-// so a rebind_superseded entry appended at any time before (during a
-// proof, a CI wait or another PR's work) is seen, and none can be appended
-// between the check and the write. A Readmit write binds a superseded head
-// and reports it was not admitted (admitted false). Otherwise a superseded
-// head is refused: no binding is written, record (when set) gets a
-// reconcile entry naming the lead's merge-train rebind verb once the lock
-// is released, and the error is ErrHeadSuperseded.
+// BindPR or BindPRFrom. It is one critical section under the journal lock
+// (Audit.AuditLockPath, `<audit.jsonl>.lock`, the exclusive flock every
+// Append takes, so every writer of rebind_superseded and rebind_readmitted
+// takes it too): the fresh read of the journal, headAdmitted on that read,
+// the binding write and, for the lead's verb, its rebind_readmitted entry.
+// The two orders serialize: a supersede appended first is seen by the
+// fresh read and the write is refused; one appended after a binding write
+// lands in the journal after it, so trainHeads and every later admission
+// read it. A Readmit write binds a superseded head and reports that it was
+// not admitted (admitted false). Otherwise a superseded head is refused:
+// no binding is written, record (when set) gets a reconcile entry naming
+// the lead's merge-train rebind verb once the lock is released, and the
+// error is ErrHeadSuperseded. A binding written whose readmitted entry
+// could not be appended returns an error wrapping errReadmittedNotWritten.
 func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (admitted bool, err error) {
 	err = a.locked(func() error {
 		journal, err := a.Read()
@@ -162,9 +170,17 @@ func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (adm
 			return ErrHeadSuperseded
 		}
 		if w.Conditional {
-			return b.BindPRFrom(w.Task, w.Repository, w.PR, w.From, w.To)
+			err = b.BindPRFrom(w.Task, w.Repository, w.PR, w.From, w.To)
+		} else {
+			err = b.BindPR(w.Task, w.Repository, w.PR, w.To)
 		}
-		return b.BindPR(w.Task, w.Repository, w.PR, w.To)
+		if err != nil || w.Readmitted == nil {
+			return err
+		}
+		if aerr := a.appendLocked(w.Readmitted(admitted)); aerr != nil {
+			return fmt.Errorf("%w: %v", errReadmittedNotWritten, aerr)
+		}
+		return nil
 	})
 	if errors.Is(err, ErrHeadSuperseded) && record != nil {
 		if rerr := record(Entry{Kind: "reconcile", PR: w.PR, Task: w.Task, Head: w.From, NewHead: w.To,
@@ -174,6 +190,10 @@ func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (adm
 	}
 	return admitted, err
 }
+
+// errReadmittedNotWritten: the binding is written and the verb's
+// rebind_readmitted entry could not be appended.
+var errReadmittedNotWritten = errors.New("the readmission entry was not written")
 
 // Binder writes a task's PR binding. Its BindPR and BindPRFrom are called
 // only by bindAdmitted.

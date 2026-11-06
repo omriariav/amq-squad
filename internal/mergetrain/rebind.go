@@ -137,16 +137,36 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 		return RebindResult{}, &RebindRefusal{Code: RefusedRebindFailed, Detail: "audit log: " + err.Error()}
 	}
 	// The write goes through the one admission (bindAdmitted, under the
-	// audit lock, on a fresh read of the journal): this verb is the
-	// re-admission, so a superseded head is bound here, and admitted says
-	// whether it had been superseded, for the readmission's words. The
+	// journal lock, on a fresh read of the journal): this verb is the
+	// re-admission, so a superseded head is bound here, and whether it had
+	// been superseded words the readmission entry. The
 	// write holds only while the binding is still at From, checked under
 	// the store's lock (Codex on #903): a train run that advanced the
 	// binding since the snapshot above keeps its head and its merge fact.
 	// The two entries above stay journaled; reconcileRebinds applies a
 	// rebind entry only to a task still bound at its Head, so they bind
 	// nothing later.
-	admitted, err := bindAdmitted(in.Audit, in.Binder, nil, bindWrite{Task: tk.ID, Repository: repository, PR: in.PR, From: in.From, To: in.To, Conditional: true, Readmit: true})
+	//
+	// The re-admission (the plan reviewer on #903): a head a superseded
+	// re-bind had taken out of trainHeads comes back only through this
+	// verb's applied binding, recorded as the terminal rebind_readmitted
+	// entry under this run, appended in the binding write's own critical
+	// section under the journal lock, so no supersede can fall between the
+	// binding and its readmission; headAdmitted reads the latest terminal
+	// entry of a head. The binding is written even when the append fails,
+	// so that is reported in the result's words, not as a refusal.
+	readmitted := func(admitted bool) Entry {
+		readmission := "the lead's re-bind bound this head; it is the train's own"
+		if !admitted {
+			readmission += " again, after a superseded attempt"
+		}
+		return Entry{Kind: "rebind_readmitted", Run: res.Run, Repository: repository, Base: cur.BaseRef, PR: in.PR, Task: tk.ID, Head: in.From, NewHead: in.To, Detail: readmission}
+	}
+	_, err = bindAdmitted(in.Audit, in.Binder, nil, bindWrite{Task: tk.ID, Repository: repository, PR: in.PR, From: in.From, To: in.To, Conditional: true, Readmit: true, Readmitted: readmitted})
+	if errors.Is(err, errReadmittedNotWritten) {
+		res.Push += " (" + err.Error() + ")"
+		return res, nil
+	}
 	if err != nil {
 		if errors.Is(err, task.ErrPRBindingMismatch) {
 			// The terminal entry (the plan reviewer on #903): the rebase
@@ -161,19 +181,6 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 			return RebindResult{}, &RebindRefusal{Code: RefusedRebindHead, Detail: why + " (the proof's entries and the superseded entry are journaled under run " + res.Run + ")"}
 		}
 		return RebindResult{}, &RebindRefusal{Code: "binding_failed", Detail: fmt.Sprintf("task %s to %s: %v", tk.ID, short(in.To), err)}
-	}
-	// The re-admission (the plan reviewer on #903): a head a superseded
-	// re-bind had taken out of trainHeads comes back only through this
-	// verb's applied binding, recorded as the terminal rebind_readmitted
-	// entry under this run; headAdmitted reads the latest terminal entry
-	// of a head. The binding is written, so a failed append is reported in
-	// the result's words, not as a refusal.
-	readmission := "the lead's re-bind bound this head; it is the train's own"
-	if !admitted {
-		readmission += " again, after a superseded attempt"
-	}
-	if err := write(Entry{Kind: "rebind_readmitted", PR: in.PR, Task: tk.ID, Head: in.From, NewHead: in.To, Detail: readmission}); err != nil {
-		res.Push += " (the readmission entry was not written: " + err.Error() + ")"
 	}
 	return res, nil
 }

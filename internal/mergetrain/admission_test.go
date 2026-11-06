@@ -3,6 +3,7 @@ package mergetrain
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -278,4 +279,99 @@ func TestSupersededDuringTheRecoveryIsNotBound(t *testing.T) {
 			t.Fatalf("no reconcile entry names the verb: %v", kinds(entries, 1))
 		}
 	})
+}
+
+// The reviewer's condition on bindAdmitted (one lock, two serialized
+// orders), order (a): the supersede takes the journal lock first. The
+// binding write, started while the lock is held, waits for it; its fresh
+// read then sees the supersede and refuses, and the head stays unbound.
+// Reverted (the journal read before the lock is taken), the write reads
+// the journal without the supersede and binds the head.
+func TestSupersedeFirstIsSeenByTheBindingWrite(t *testing.T) {
+	f, id, old, _ := strictBound(t)
+	_, moved := moveBranch(f, "pr1", nil, true)
+	s, a := f.tasks(), f.train.Audit
+	done := make(chan error, 1)
+	err := a.locked(func() error {
+		started := make(chan struct{})
+		go func() {
+			close(started)
+			_, err := bindAdmitted(a, StoreBinder{Store: s}, nil, bindWrite{Task: id, Repository: fixtureRepo, PR: 1, From: old, To: moved})
+			done <- err
+		}()
+		<-started
+		time.Sleep(200 * time.Millisecond) // the write is at the lock now
+		select {
+		case err := <-done:
+			return fmt.Errorf("the binding write did not wait for the journal lock: %v", err)
+		default:
+		}
+		return a.appendLocked(Entry{Run: "mt-rebind-first", Kind: "rebind_superseded", Repository: fixtureRepo, Base: "main", PR: 1, Head: old, NewHead: moved, Detail: "the supersede takes the lock first"})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, ErrHeadSuperseded) || boundHead(t, f, id) != old {
+		t.Fatalf("the write after the supersede bound the head: %v (bound %s)", err, boundHead(t, f, id))
+	}
+}
+
+// lockedBinder holds the binding write open for a while and starts a
+// supersede append meanwhile, which must wait for the journal lock the
+// write runs under.
+type lockedBinder struct {
+	StoreBinder
+	a                Audit
+	old, head        string
+	appended, waited chan error
+}
+
+func (b *lockedBinder) BindPR(taskID, repository string, pr int, head string) error {
+	go func() {
+		b.appended <- b.a.Append(Entry{Run: "mt-rebind-after", Kind: "rebind_superseded", Repository: repository, Base: "main", PR: pr, Head: b.old, NewHead: b.head, Detail: "the supersede takes the lock after the binding write"})
+	}()
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case err := <-b.appended:
+		b.waited <- fmt.Errorf("the supersede was appended during the binding write: %v", err)
+		b.appended <- err
+	default:
+		b.waited <- nil
+	}
+	return b.StoreBinder.BindPR(taskID, repository, pr, head)
+}
+
+// Order (b): the binding write takes the journal lock first and binds; the
+// supersede, started during the write, is appended after it. The binding
+// is the head, the journal has the supersede after the train's rebase
+// entry, trainHeads excludes the head, and the next run refuses it on
+// force_push. Reverted (the binding write outside the lock), the supersede
+// lands during the write.
+func TestBindingFirstThenSupersedeIsExcludedNextRun(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	_, moved := moveBranch(f, "pr1", nil, true)
+	if err := f.train.Audit.Append(Entry{Run: "mt-earlier", Kind: "rebase", Repository: fixtureRepo, Base: "main", PR: 1, Head: old, NewHead: moved, BaseSHA: f.head("main")}); err != nil {
+		t.Fatal(err)
+	}
+	if !f.train.Audit.trainHeads(fixtureRepo, 1)[moved] {
+		t.Fatal("the train's rebase entry does not name the head")
+	}
+	b := &lockedBinder{StoreBinder: StoreBinder{Store: f.tasks()}, a: f.train.Audit, old: old, head: moved, appended: make(chan error, 1), waited: make(chan error, 1)}
+	if _, err := bindAdmitted(f.train.Audit, b, nil, bindWrite{Task: id, Repository: fixtureRepo, PR: 1, From: old, To: moved}); err != nil {
+		t.Fatalf("the binding write: %v", err)
+	}
+	if err := <-b.waited; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-b.appended; err != nil {
+		t.Fatal(err)
+	}
+	if boundHead(t, f, id) != moved || f.train.Audit.trainHeads(fixtureRepo, 1)[moved] {
+		t.Fatalf("bound %s, trainHeads %v", boundHead(t, f, id), f.train.Audit.trainHeads(fixtureRepo, 1))
+	}
+	f.realRun(&req)
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil || res.PRs[0].Status != "refused" || !slices.ContainsFunc(res.PRs[0].Refusals, func(r Refusal) bool { return r.Rule == RuleForcePush }) {
+		t.Fatalf("the superseded head was taken for the train's own: %v %+v", err, res.PRs)
+	}
 }

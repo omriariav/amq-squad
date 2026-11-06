@@ -96,14 +96,36 @@ func AuditFor(root string) Audit {
 	return Audit{Path: filepath.Join(root, "extensions", "amq-squad", "mergetrain", "audit.jsonl")}
 }
 
-// Append writes one entry and fsyncs it. Under the append lock the tail is
-// checked first, the rule of the outcome log (2b-4 AppendJSONL): a torn last
-// line (no newline) is terminated before the entry, so the entry stays one
-// whole line and Read skips only the torn one (5 re-pass, P2-6).
+// Append writes one entry and fsyncs it, under the journal lock
+// (AuditLockPath: the one lock every appender takes, and bindAdmitted's
+// check-and-write). Under the lock the tail is checked first, the rule of
+// the outcome log (2b-4 AppendJSONL): a torn last line (no newline) is
+// terminated before the entry, so the entry stays one whole line and Read
+// skips only the torn one (5 re-pass, P2-6).
 func (a Audit) Append(e Entry) error {
+	return a.locked(func() error { return a.appendLocked(e) })
+}
+
+// AuditLockPath is the journal lock: <audit.jsonl>.lock, an exclusive
+// flock (internal/flock WithLock). Every append (Append, so every writer of
+// rebind_superseded and rebind_readmitted) and bindAdmitted's fresh read,
+// admission check and binding write run under it, one at a time.
+func (a Audit) AuditLockPath() string { return a.Path + ".lock" }
+
+// locked runs fn under the journal lock (AuditLockPath), so no entry is
+// appended while fn runs. fn appends only through appendLocked.
+func (a Audit) locked(fn func() error) error {
 	if a.Path == "" {
 		return errors.New("merge train: no audit log path")
 	}
+	if err := os.MkdirAll(filepath.Dir(a.Path), 0o700); err != nil {
+		return err
+	}
+	return flock.WithLock(a.AuditLockPath(), fn)
+}
+
+// appendLocked writes one entry; the caller holds the journal lock.
+func (a Audit) appendLocked(e Entry) error {
 	if e.Schema == "" {
 		e.Schema = AuditSchema
 	}
@@ -114,41 +136,24 @@ func (a Audit) Append(e Entry) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(a.Path), 0o700); err != nil {
+	f, err := os.OpenFile(a.Path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
+	if err != nil {
 		return err
 	}
-	return flock.WithLock(a.Path+".lock", func() error {
-		f, err := os.OpenFile(a.Path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
-		if err != nil {
-			return err
+	out := append(line, '\n')
+	st, err := f.Stat()
+	if err == nil && st.Size() > 0 {
+		last := make([]byte, 1)
+		if _, err = f.ReadAt(last, st.Size()-1); err == nil && last[0] != '\n' {
+			out = append([]byte{'\n'}, out...)
 		}
-		out := append(line, '\n')
-		st, err := f.Stat()
-		if err == nil && st.Size() > 0 {
-			last := make([]byte, 1)
-			if _, err = f.ReadAt(last, st.Size()-1); err == nil && last[0] != '\n' {
-				out = append([]byte{'\n'}, out...)
-			}
-		}
-		if err == nil {
-			if _, err = f.Write(out); err == nil {
-				err = f.Sync()
-			}
-		}
-		return errors.Join(err, f.Close())
-	})
-}
-
-// locked runs fn under the audit log's append lock (the lock Append
-// takes), so no entry is appended while fn runs. fn must not Append.
-func (a Audit) locked(fn func() error) error {
-	if a.Path == "" {
-		return errors.New("merge train: no audit log path")
 	}
-	if err := os.MkdirAll(filepath.Dir(a.Path), 0o700); err != nil {
-		return err
+	if err == nil {
+		if _, err = f.Write(out); err == nil {
+			err = f.Sync()
+		}
 	}
-	return flock.WithLock(a.Path+".lock", fn)
+	return errors.Join(err, f.Close())
 }
 
 // Read returns every well-formed entry; a torn line is skipped.
