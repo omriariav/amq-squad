@@ -547,9 +547,25 @@ order and the rows hold. Two P2 and a P3, the plan reviewer's rulings
    not part of this PR: Codex's `CompleteBound` race, a commit result
    cached at the old head applied after the train bound H.
 
-The train's own callers of `bindAdmitted` (`land`, the reconciles) are
-unchanged on a `CommittedError`: they stop the run as on any binding
-error, and the durable binding is what the next run reads.
+The train's own callers of `bindAdmitted` (`land`, the reconciles) stop
+the run on a `CommittedError`, as on any binding error, and the durable
+binding is what the next run reads; the plan reviewer accepted that stop
+on one condition, round ten below: it says so in words.
+
+## The stop on a committed bind in words (round ten)
+
+The plan reviewer accepted the train stopping on a `CommittedError` (and
+the `internal/task/bind.go` widening) on one condition: the stop line says
+what happened, the way the verb's does (commit `8cf20c3d`).
+`bindingError` (`binding.go`) words the failed binding write of `land`,
+`reconcileRebinds` and `reconcileUpdates`: a `*task.CommittedError` is
+`ErrBindingReplayPending`, `the binding is written; the task store's
+replay is pending; the next run continues from it (task <id> to <head>:
+<the store's error>)`; any other error stays `ErrBindingFailed`
+(`binding_failed: ...`). `land`'s stop line is `#<pr>: <that>`; a
+reconcile that stops on it now sets the run's stop line to it and
+journals the stop entry (`reconcileStop`), as `land`'s stop does; the CLI
+prints the error as `merge-train: <that>`.
 
 ## Rows
 
@@ -608,6 +624,7 @@ error, and the durable binding is what the next run reads.
 | no supersede between | Round eight: a supersede `Append` of H started inside the verb's `BindPRFrom` has not landed 200 ms in, and lands after the section, as H's latest terminal entry (after the readmission): H is bound and not admitted, and the next real run refuses it on `force_push`. | `internal/mergetrain` `TestSupersedeCannotLandBetweenReadmissionAndBind` |
 | the committed bind | Codex's fifth pass (P2-1): a binder whose `BindPRFrom` binds durably and then returns `*task.CommittedError` (past the store's commit point, the after-image to be replayed): the verb succeeds and reports `the binding is written; the task store's replay is pending: ...`; no `rebind_superseded` under its run, H admitted and bound, and the next real run lands the PR. | `internal/mergetrain` `TestCommittedBindIsNotUndone` |
 | the same target first | Codex's fifth pass (P2-2): the train binds the task at H right before the verb's `BindPRFrom(old, H)` (a train's recovery that proved and bound the same head first): the store finds the task already bound at exactly the target (the same repository and PR number, `PRHead == H`) and returns a read-only success, so the verb succeeds with H admitted and bound. The stale-write row checks the store's side: `BindPRFrom` from the wrong head to a different target is still `ErrPRBindingMismatch`, and to the head already bound it is a success with no write (`UpdatedAt` and the recorded merge fact unchanged). | `internal/mergetrain` `TestTrainBindingTheSameHeadFirstIsTheVerbsSuccess`; `TestRebindRefusesWhenTheBindingMovedMeanwhile` |
+| the committed stop in words | Round ten: land's bind, and the recovery's bind (a journaled request and the push), each through a binder that binds durably and returns `*task.CommittedError`: the run's error is `ErrBindingReplayPending` and not `ErrBindingFailed`, the run's stop line and its stop entry carry `the binding is written; the task store's replay is pending; the next run continues from it`, the binding is the new head, and the next real run continues from it and lands the PR. | `internal/mergetrain` `TestCommittedTrainBindStopsInWords` (2 subtests) |
 | the wrappers whole | Item 2 as ruled: the match strips one of gh's two wrappers whole from gh's last stderr line, `gh: <message>` or `GraphQL: <message> (<path>)`, and compares the rest exactly, case aside. Definite: the table text in either wrapper (rows (1) and (2): the fake's `gh:` refusal through the production path is `definite refusal` above). Ambiguous, never definite (row (3), the text with anything extra): around `gh: ` a path after the message, `Retry later.` after it, `gh: gh: `, `warning: gh: `, `gh:` with no space, a second line (gh api's newline between several errors, or gh's scopes line after it), `gh: HTTP 502`, `gh: HTTP 422`; around `GraphQL: ` no path, a second path, the old fake's `[fake: ...]` after the path, a line after it, two errors on one line, `warning: GraphQL: `, `graphql: `; each table message's fragment inside unfamiliar text (`... while checking expected head ...`, `Internal server error: Head branch was modified...`, `Head branch was modified... Retry later.`, `Something went wrong, resource not accessible by integration` in both wrappers, `Resource not accessible by integration token`, `... not mergeable by ...`), a prefix of a message (`Head branch was modified`, `Resource not accessible`, in both wrappers), and an error not from gh carrying the GraphQL text; the fake's pinned-head mismatch through `GH.run` is definite by its own exact output with no table entry. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError` |
 
 Rule 18: every row runs under a `t.TempDir` root; the mergetrain rows run
@@ -1501,6 +1518,23 @@ admission_test.go:447: the crash state: admitted true, bound 762f11feef757f80025
 (the crash left no readmission: nothing records the lead's decision)
 restored: `ok ... 1.355s`.
 
+### The stop in words (two runs, on `8cf20c3d`)
+
+`903p the generic error`: `internal/mergetrain/binding.go`
+(`bindingError`) `if errors.As(err, &committed) {` to `... && false {`
+(every failed write `binding_failed`);
+`go test -count=1 -timeout 300s -run '^TestCommittedTrainBindStopsInWords$/^land.*$' ./internal/mergetrain/`;
+```
+admission_test.go:619: the stop line: binding_failed: task t1 to 74b4f33080df: task transaction txn-test committed but needs replay: apply the after-image: disk full (stopped "#1: binding_failed: task t1 to 74b4f33080df: task transaction txn-test committed but needs replay: apply the after-image: disk full")
+```
+restored: `ok ... 1.570s`. The same revert, the subtest `the recovery's
+bind`;
+```
+admission_test.go:619: the stop line: binding_failed: task t1 to 9d1c1cadfad7: task transaction txn-test committed but needs replay: apply the after-image: disk full (stopped "")
+```
+(the reconcile's generic error sets no stop line) restored: `ok ...
+1.546s`.
+
 R4 has no revert: it is the package's existing rows, run green on the new
 code (the gates below).
 
@@ -1779,6 +1813,14 @@ the whole-module gate and `make ci` under the host's gate lock:
   and `GOTOOLCHAIN=go1.26.10`: exit 0.
 - `go run ./scripts/redact-evidence -check docs/v3-spike/320-3a-train/`:
   exit 0.
+
+On `8cf20c3d` (round ten, `internal/mergetrain/` only), held for the lead's
+batch with Codex's sixth pass, so the package gate only: `go build ./...
+&& go vet ./internal/mergetrain/` exit 0; `go test -count=1
+./internal/mergetrain/` exit 0 (`ok ... 203.714s`); the changed files
+written with the go1.26.10 toolchain's `gofmt -w`; `go run
+./scripts/redact-evidence -check docs/v3-spike/320-3a-train/` exit 0. The
+whole-module gate, `make ci` and `npm test` are not run on it yet.
 
 ## Residual risk
 
