@@ -1,11 +1,9 @@
 package schedproc
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -135,7 +133,7 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 	// The launch-time base (3.0.2 t22): at every launch the seat's worktree
 	// and its resting branch start from the base branch's tip, never from
 	// the commit ledger's first base or the branch's previous head.
-	g := baseGit{bin: firstNonEmpty(s.Git, "git")}
+	g := seatcommit.BaseGit{Bin: firstNonEmpty(s.Git, "git")}
 	var common, gd, head string
 	var err error
 	if statErr == nil {
@@ -148,7 +146,7 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 			return seat, fmt.Errorf("seat %s: %v", seat.Handle, err)
 		}
 		common = commonOf(gd)
-		if head, err = g.run(seat.Worktree, []string{"GIT_DIR=" + gd}, "rev-parse", "--verify", "-q", "HEAD^{commit}"); err != nil || head == "" {
+		if head, err = g.Run(seat.Worktree, []string{"GIT_DIR=" + gd}, "rev-parse", "--verify", "-q", "HEAD^{commit}"); err != nil || head == "" {
 			return seat, fmt.Errorf("%s: seat %s: the worktree %s has a HEAD that names no commit; the launch never resets over it: check out a commit or remove the worktree, then launch again", ReasonSeatHeadUnreadable, seat.Handle, seat.Worktree)
 		}
 	} else if common, err = commonDir(root); err != nil {
@@ -163,12 +161,12 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 	// refuses (ReasonSeatBranchUnpushed), and every update-ref of the branch
 	// passes this value as the expected old one, so a concurrent move
 	// refuses rather than being overwritten.
-	cur, err := g.run(common, []string{"GIT_DIR=" + common}, "rev-parse", "--verify", "-q", "refs/heads/"+seat.Branch+"^{commit}")
+	cur, err := g.Run(common, []string{"GIT_DIR=" + common}, "rev-parse", "--verify", "-q", "refs/heads/"+seat.Branch+"^{commit}")
 	if err != nil {
 		cur = ""
 	}
 	if cur != "" && cur != tip {
-		ahead, err := g.run(common, []string{"GIT_DIR=" + common}, "rev-list", "--abbrev-commit", "--max-count=11", tip+".."+cur)
+		ahead, err := g.Run(common, []string{"GIT_DIR=" + common}, "rev-list", "--abbrev-commit", "--max-count=11", tip+".."+cur)
 		if err != nil {
 			return seat, fmt.Errorf("seat %s branch: %v", seat.Handle, err)
 		}
@@ -180,7 +178,7 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 	// one the tip holds: a detached HEAD at a local commit would lose its
 	// files in the move and its last reference at the HEAD switch.
 	if statErr == nil && head != tip && head != cur {
-		ahead, err := g.run(common, []string{"GIT_DIR=" + common}, "rev-list", "--abbrev-commit", "--max-count=11", tip+".."+head)
+		ahead, err := g.Run(common, []string{"GIT_DIR=" + common}, "rev-list", "--abbrev-commit", "--max-count=11", tip+".."+head)
 		if err != nil {
 			return seat, fmt.Errorf("seat %s worktree: %v", seat.Handle, err)
 		}
@@ -189,13 +187,13 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 		}
 	}
 	if statErr == nil {
-		if err := g.moveWorktree(gd, common, seat, head, tip, cur); err != nil {
+		if err := moveWorktree(g, gd, common, seat, head, tip, cur); err != nil {
 			return seat, fmt.Errorf("seat %s worktree to the base tip %s: %v", seat.Handle, short(tip), err)
 		}
 		return seat, nil
 	}
 	// A local reset of the resting branch, never a push.
-	if _, err := g.run(root, []string{"GIT_DIR=" + common}, "update-ref", "-m", "amq-squad launch base "+seat.Handle, "refs/heads/"+seat.Branch, tip, cur); err != nil {
+	if _, err := g.Run(root, []string{"GIT_DIR=" + common}, "update-ref", "-m", "amq-squad launch base "+seat.Handle, "refs/heads/"+seat.Branch, tip, cur); err != nil {
 		return seat, fmt.Errorf("seat %s branch: %v", seat.Handle, err)
 	}
 	// The hardened git (R2): no hook, filter or attribute of the shared
@@ -241,11 +239,11 @@ const ReasonBaseFetchUnauthenticated = "base_fetch_unauthenticated"
 // repository's config, remotes and url rewrites are never read), or the
 // local base branch when the grant names no push URL. A remote seat branch
 // ahead of the tip and unmerged refuses with ReasonSeatBranchUnmerged.
-func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string, error) {
+func (s *Slots) baseTip(g seatcommit.BaseGit, common string, seat seatlaunch.Seat) (string, error) {
 	base := firstNonEmpty(s.BaseBranch, "main")
 	url := s.Target.PushURL
 	if url == "" {
-		tip, err := g.run(common, []string{"GIT_DIR=" + common}, "rev-parse", "--verify", "refs/heads/"+base+"^{commit}")
+		tip, err := g.Run(common, []string{"GIT_DIR=" + common}, "rev-parse", "--verify", "refs/heads/"+base+"^{commit}")
 		if err != nil {
 			return "", fmt.Errorf("seat %s base: the local base branch %s: %v", seat.Handle, base, err)
 		}
@@ -265,14 +263,14 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 		}
 		return fmt.Errorf("seat %s base: %v", seat.Handle, err)
 	}
-	sh, err := newBaseShadow(g, common)
+	sh, err := seatcommit.NewBaseShadow(g, common)
 	if err != nil {
 		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
 	}
-	defer os.RemoveAll(sh.dir)
-	fg := baseGit{bin: g.bin, pre: cred} // ls-remote and fetch only
-	fenv := append(append([]string(nil), sh.env...), credEnv...)
-	out, err := fg.run(sh.dir, fenv, "ls-remote", "--", url, "refs/heads/"+base, "refs/heads/"+seat.Branch)
+	defer os.RemoveAll(sh.Dir)
+	fg := seatcommit.BaseGit{Bin: g.Bin, Pre: cred} // ls-remote and fetch only
+	fenv := append(append([]string(nil), sh.Env...), credEnv...)
+	out, err := fg.Run(sh.Dir, fenv, "ls-remote", "--", url, "refs/heads/"+base, "refs/heads/"+seat.Branch)
 	if err != nil {
 		return "", fetchFailed(err)
 	}
@@ -289,10 +287,10 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 	if refs["refs/heads/"+seat.Branch] != "" {
 		specs = append(specs, "+refs/heads/"+seat.Branch+":refs/seat")
 	}
-	if _, err := fg.run(sh.dir, fenv, append([]string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", url}, specs...)...); err != nil {
+	if _, err := fg.Run(sh.Dir, fenv, append([]string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", url}, specs...)...); err != nil {
 		return "", fetchFailed(err)
 	}
-	tip, err := g.run(sh.dir, sh.env, "rev-parse", "--verify", "refs/base^{commit}")
+	tip, err := g.Run(sh.Dir, sh.Env, "rev-parse", "--verify", "refs/base^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
 	}
@@ -300,7 +298,7 @@ func (s *Slots) baseTip(g baseGit, common string, seat seatlaunch.Seat) (string,
 		return "", fmt.Errorf("%s: seat %s: the push URL's %s was %s at ls-remote and %s at the fetch; launch again", ReasonBaseTipMoved, seat.Handle, base, short(want), short(tip))
 	}
 	if len(specs) == 2 {
-		ahead, err := g.run(sh.dir, sh.env, "rev-list", "--abbrev-commit", "--max-count=11", "refs/base..refs/seat")
+		ahead, err := g.Run(sh.Dir, sh.Env, "rev-list", "--abbrev-commit", "--max-count=11", "refs/base..refs/seat")
 		if err != nil {
 			return "", fmt.Errorf("seat %s base: %v", seat.Handle, err)
 		}
@@ -327,7 +325,7 @@ func (s *Slots) GrantBase(handle string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("seat %s base: %v", handle, err)
 		}
-		return s.baseTip(baseGit{bin: firstNonEmpty(s.Git, "git")}, common, seat)
+		return s.baseTip(seatcommit.BaseGit{Bin: firstNonEmpty(s.Git, "git")}, common, seat)
 	}
 	return "", fmt.Errorf("seat %s is not in the squad's seat list", handle)
 }
@@ -356,66 +354,27 @@ func (s *Slots) TaskStart(root string, now func() time.Time) func(handle string,
 // move would overwrite refuses, nothing is lost; CleanSeat keeps any other
 // leftover as evidence), then the resting branch moves from cur to the tip
 // and HEAD names it.
-func (g baseGit) moveWorktree(gd, common string, seat seatlaunch.Seat, head, tip, cur string) error {
+func moveWorktree(g seatcommit.BaseGit, gd, common string, seat seatlaunch.Seat, head, tip, cur string) error {
 	if head != tip {
-		sh, err := newBaseShadow(g, common)
+		sh, err := seatcommit.NewBaseShadow(g, common)
 		if err != nil {
 			return err
 		}
-		defer os.RemoveAll(sh.dir)
-		if _, err := g.run(seat.Worktree, append(sh.env, "GIT_WORK_TREE="+seat.Worktree, "GIT_INDEX_FILE="+filepath.Join(gd, "index")), "read-tree", "-m", "-u", head, tip); err != nil {
+		defer os.RemoveAll(sh.Dir)
+		if _, err := g.Run(seat.Worktree, append(sh.Env, "GIT_WORK_TREE="+seat.Worktree, "GIT_INDEX_FILE="+filepath.Join(gd, "index")), "read-tree", "-m", "-u", head, tip); err != nil {
 			return err
 		}
 	}
-	if _, err := g.run(seat.Worktree, []string{"GIT_DIR=" + common}, "update-ref", "-m", "amq-squad launch base "+seat.Handle, "refs/heads/"+seat.Branch, tip, cur); err != nil {
+	if _, err := g.Run(seat.Worktree, []string{"GIT_DIR=" + common}, "update-ref", "-m", "amq-squad launch base "+seat.Handle, "refs/heads/"+seat.Branch, tip, cur); err != nil {
 		return err
 	}
-	_, err := g.run(seat.Worktree, []string{"GIT_DIR=" + gd}, "symbolic-ref", "HEAD", "refs/heads/"+seat.Branch)
+	_, err := g.Run(seat.Worktree, []string{"GIT_DIR=" + gd}, "symbolic-ref", "HEAD", "refs/heads/"+seat.Branch)
 	return err
 }
 
-// baseGit is the launch-time base's git with the harness's R2 settings
-// (seatcommit's): no global or system config, hooks, attribute files,
-// fsmonitor or replace objects; the push's environment.
-type baseGit struct {
-	bin string
-	pre []string // the fetch's credential settings (FetchCredentials)
-}
-
-func (g baseGit) run(dir string, extra []string, args ...string) (string, error) {
-	argv := append(append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.attributesFile=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never"}, g.pre...), args...)
-	cmd := exec.Command(g.bin, argv...)
-	cmd.Dir = dir
-	// The push's environment (seatcommit.HarnessEnv: its keptGitVars list,
-	// GIT_SSH, GIT_SSH_COMMAND, GIT_SSH_VARIANT and GIT_ASKPASS, in git.go).
-	cmd.Env = append(seatcommit.HarnessEnv(os.Environ()), extra...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("git %s: %v: %s", args[0], err, strings.TrimSpace(stderr.String()))
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// baseShadow is a git directory of the harness's own (git's default config)
-// on the repository's object store.
-type baseShadow struct {
-	dir string
-	env []string
-}
-
-func newBaseShadow(g baseGit, common string) (baseShadow, error) {
-	dir, err := os.MkdirTemp("", "amq-squad-base-*")
-	if err != nil {
-		return baseShadow{}, err
-	}
-	if _, err := g.run(dir, nil, "init", "-q", "--template=", dir); err != nil {
-		os.RemoveAll(dir)
-		return baseShadow{}, err
-	}
-	return baseShadow{dir: dir, env: []string{"GIT_DIR=" + filepath.Join(dir, ".git"), "GIT_OBJECT_DIRECTORY=" + filepath.Join(common, "objects")}}, nil
-}
+// baseGit, baseShadow and newBaseShadow moved to seatcommit (BaseGit,
+// BaseShadow, NewBaseShadow) so the recovery's carry check uses the same
+// shadow and credentials as this fetch (the plan reviewer on #904).
 
 // commonDir is a checkout's common git directory, read from its .git.
 func commonDir(root string) (string, error) {

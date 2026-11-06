@@ -898,6 +898,20 @@ func (r Result) tamperedRefusal(err error) Result {
 	return r.refuse(ReasonLedgerTampered, task.RouteOwner, err.Error()+"; nothing is committed or pushed until the owner inspects the commits ledger and the evidence refs")
 }
 
+// writeOutcome is the commit step's answer to a failed ledger write
+// (3.2.0-0c-B rule 4): the write-time refusal of 0c-A's writeLedger check
+// (the document on disk failed its check, and its body and head are
+// quarantined; the error names the slot) is the typed block
+// ledger_tampered on the task, routed to the lead with the quarantine path
+// in its detail, never a deferral the step would retry into the same
+// refusal. Any other write failure (the disk, the seed) stays a deferral.
+func (r Result) writeOutcome(err error) Result {
+	if errors.Is(err, sealchain.ErrTampered) {
+		return r.refuse(ReasonLedgerTampered, task.RouteLead, "the commits ledger refused the write: "+err.Error()+"; nothing is recorded or pushed until the lead recovers the ledger (scheduler recover)")
+	}
+	return r.defer_("commit ledger: " + err.Error())
+}
+
 // expireEvidence deletes the evidence refs whose retention has expired (the
 // ledger keeps the record, without the ref); an uncleared quarantine's ref
 // never expires.
@@ -1160,7 +1174,7 @@ func commitAndPush(o Options, sh *shadow, l Ledger, base string, res Result) Res
 			DeclaredDigest: res.DeclaredDigest, DiffDigest: res.DiffDigest, Lines: res.Lines, Changes: res.Changes, Branch: res.Branch, Base: base})
 		last = len(l.Commits) - 1
 		if err := writeLedger(o.Root, l, "commit step"); err != nil {
-			return res.defer_("commit ledger: " + err.Error())
+			return res.writeOutcome(err)
 		}
 	}
 	repo := seatRepo(o.Git, harnessEnv(o.Env), sh.rp)
@@ -1202,7 +1216,7 @@ func commitAndPush(o Options, sh *shadow, l Ledger, base string, res Result) Res
 	}
 	l.Commits[last].Pushed = true
 	if err := writeLedger(o.Root, l, "commit step"); err != nil {
-		return res.defer_("commit ledger: " + err.Error())
+		return res.writeOutcome(err)
 	}
 	res.Pushed, res.OK, res.PRHead = true, true, res.Commit
 	return openPR(o, sh, l, res)

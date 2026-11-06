@@ -75,7 +75,10 @@ func (p *plan) close() {
 }
 
 var (
-	sealedNames = map[string]bool{"commits": true, "ledger": true, "routing": true}
+	// quarantine (3.2.0-0c-B rule 6) goes with the commits ledger: the
+	// refused documents the tamper alarm copied are evidence, listed beside
+	// the ledger and removed only with it (--purge), never on their own.
+	sealedNames = map[string]bool{"commits": true, "quarantine": true, "ledger": true, "routing": true}
 	gateNames   = map[string]bool{"gates": true, "answers": true, "denials": true, "reasks": true, "consumed": true, "clears": true}
 	// ownerFiles are the files of ~/.amq-squad this verb removes with
 	// --owner-files; the first two are secrets.
@@ -248,9 +251,10 @@ func discover(o Options) (*plan, error) {
 }
 
 var sealNote = map[string]string{
-	"commits": "the commits ledger (sealed)",
-	"ledger":  "the hook ledger",
-	"routing": "the outcome log and the session seed that seals the ledgers",
+	"commits":    "the commits ledger (sealed)",
+	"quarantine": "the commits ledger's quarantine (the refused documents a tamper alarm copied; evidence, kept with the ledger)",
+	"ledger":     "the hook ledger",
+	"routing":    "the outcome log and the session seed that seals the ledgers",
 }
 
 // children adds one op per entry of x/name.

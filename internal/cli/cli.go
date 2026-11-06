@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 )
 
 // UsageError signals a misuse of the CLI (unknown command/flag, bad
@@ -72,6 +74,10 @@ func Run(args []string, version string) error {
 	if err != nil {
 		return err
 	}
+	// The binary's version as the quarantine's sidecar records it
+	// (3.2.0-0c-B rule 5): the ldflag version main resolved, the same
+	// string `amq-squad version` prints.
+	seatcommit.BinaryVersion = version
 	prev := currentOutputPolicy
 	currentOutputPolicy = policy
 	defer func() { currentOutputPolicy = prev }()

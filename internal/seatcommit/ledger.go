@@ -69,11 +69,42 @@ type Ledger struct {
 	// branch, the base tip recorded at its dispatch and the commit the
 	// worktree was put on. CleanSeat clears it at the next lease boundary.
 	Lease *LedgerLease `json:"lease,omitempty"`
+	// Recovered is the lead's recovery this ledger version starts from
+	// (3.2.0-0c-B, RecoverLedger): the quarantined seq and slot, the
+	// digests of the refused copies and the entries carried. Only the first
+	// link of a recovered chain carries it; the next write keeps it (the
+	// chain's record of where it continued from).
+	Recovered *LedgerRecovery `json:"recovered,omitempty"`
 	// Seal is the ledger's link in its chain (the ruling of the phase 5
 	// re-pass): an HMAC tag keyed by the session seed over the ledger
 	// without its seal, its seq and the previous version's tag; the signed
 	// head under the routing directory names the link the ledger must be at.
 	Seal *sealchain.Link `json:"seal,omitempty"`
+}
+
+// LedgerRecovery is the record of a lead's recovery in the new chain's
+// first link (3.2.0-0c-B rule 3): the quarantined seq N the chain continues
+// after, the slot's path, the sha256 of the quarantined body and head (the
+// sidecar's digests, checked against the copies), who decided and why, and
+// the entries carried as "task:commit".
+type LedgerRecovery struct {
+	Seq        int       `json:"quarantine_seq"`
+	Slot       string    `json:"quarantine_path"`
+	BodySHA256 string    `json:"body_sha256,omitempty"`
+	HeadSHA256 string    `json:"head_sha256,omitempty"`
+	By         string    `json:"by"`
+	Reason     string    `json:"reason,omitempty"`
+	At         time.Time `json:"at"`
+	Carried    []string  `json:"carried,omitempty"`
+	// Verified: the document verified when the lead decided (a transient
+	// alarm, or a document put back); the record was sealed into the next
+	// link of the same body, nothing restarted and nothing carried.
+	Verified bool `json:"verified,omitempty"`
+	// Link is the seq of the link that sealed this decision (the chain's
+	// next link: the quarantined seq's, or the live chain's when Verified),
+	// so a retry reports the link written, never one rebuilt from Seq (Codex
+	// on b250b951). 0 in a record written before the field.
+	Link int `json:"link,omitempty"`
 }
 
 // ReasonLedgerTampered blocks a step whose commits ledger fails its tag or
@@ -294,6 +325,10 @@ type LedgerCommit struct {
 	DiffDigest     string   `json:"diff_digest,omitempty"`
 	Lines          int      `json:"lines,omitempty"`
 	Changes        []Change `json:"changes,omitempty"`
+	// Note marks an entry the lead's recovery carried from a quarantined
+	// chain ("carried from quarantine seq N", 3.2.0-0c-B); "" on an entry
+	// the commit step wrote.
+	Note string `json:"note,omitempty"`
 }
 
 // LedgerDir is the ledger directory under an AMQ session root.
