@@ -22,14 +22,21 @@ import (
 
 // TestCancelledSeatWriterHelper is the fake seat process of R1: it writes
 // live.txt until it is stopped (SIGTERM, as the launcher's close sends).
+// Each write is a temp file renamed into place, so the file never holds a
+// half write (a signal between a truncate and its write would leave it
+// empty, and the row would compare an empty stop against the archive).
 func TestCancelledSeatWriterHelper(t *testing.T) {
 	target := os.Getenv("AMQ_TEST_CANCEL_WRITER")
 	if target == "" {
 		return
 	}
 	for n := 1; ; n++ {
-		if err := os.WriteFile(target, []byte(fmt.Sprintf("write-%06d\n", n)), 0o644); err != nil {
+		tmp := fmt.Sprintf("%s.%d.tmp", target, n)
+		if err := os.WriteFile(tmp, []byte(fmt.Sprintf("write-%06d\n", n)), 0o644); err != nil {
 			os.Exit(2)
+		}
+		if err := os.Rename(tmp, target); err != nil {
+			os.Exit(3)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
