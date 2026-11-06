@@ -895,6 +895,8 @@ func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
 		"gh api graphql: exit status 1: GraphQL: Internal server error (updatePullRequestBranch)":                                                                                 false,
 		"gh api graphql: exit status 1: GraphQL: a wording this code has never seen (updatePullRequestBranch)":                                                                    false,
 		"gh api graphql: exit status 1: GraphQL: Internal server error while checking expected head (updatePullRequestBranch)":                                                    false, // a fragment inside another sentence
+		"gh api graphql: exit status 1: GraphQL: Internal server error: Head branch was modified. Review and try the update again. (updatePullRequestBranch)":                     false, // the message inside another sentence
+		"gh api graphql: exit status 1: GraphQL: Something went wrong, resource not accessible by integration (updatePullRequestBranch)":                                          false,
 		"gh api graphql: exit status 1: GraphQL: Something is not mergeable by this rule (updatePullRequestBranch)":                                                               false,
 		"gh api graphql: exit status 1: GraphQL: head branch was modified. review and try the update again.":                                                                      true,  // the message itself, case aside
 		"gh api graphql: exit status 1: GraphQL: Head branch was modified":                                                                                                        false, // a prefix of the message is not the message
