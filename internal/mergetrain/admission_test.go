@@ -580,3 +580,56 @@ func TestTrainBindingTheSameHeadFirstIsTheVerbsSuccess(t *testing.T) {
 		t.Fatalf("the correctly bound head: admitted %v, bound %s, %v", headAdmitted(entries, fixtureRepo, 1, moved), boundHead(t, f, id), kinds(entries, 1))
 	}
 }
+
+// committedBindPR writes the train's binding durably and then fails as the
+// store does past its commit point.
+type committedBindPR struct{ StoreBinder }
+
+func (b committedBindPR) BindPR(taskID, repository string, pr int, head string) error {
+	if err := b.StoreBinder.BindPR(taskID, repository, pr, head); err != nil {
+		return err
+	}
+	return &task.CommittedError{ID: "txn-test", Cause: errors.New("apply the after-image: disk full")}
+}
+
+// The plan reviewer on #903: when land or a reconcile stops on a
+// CommittedError, the stop line says so in words, "the binding is written;
+// the task store's replay is pending; the next run continues from it", not
+// binding_failed; the binding is durable, and the next run continues from
+// it and lands the PR. Reverted (the generic binding_failed), the stop line
+// is the generic error.
+func TestCommittedTrainBindStopsInWords(t *testing.T) {
+	const words = "the binding is written; the task store's replay is pending; the next run continues from it"
+	for name, prepare := range map[string]func(f *fixture, id, old string){
+		"land's bind": func(f *fixture, id, old string) {},
+		"the recovery's bind": func(f *fixture, id, old string) {
+			if err := f.train.Audit.Append(Entry{Run: "mt-earlier", Kind: "update_requested", Repository: fixtureRepo, Base: "main", PR: 1, Task: id, Head: old, BaseSHA: f.head("main")}); err != nil {
+				f.t.Fatal(err)
+			}
+			moveBranch(f, "pr1", nil, true)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, id, old, req := strictBound(t)
+			prepare(f, id, old)
+			s := f.tasks()
+			f.train.Binder = committedBindPR{StoreBinder{Store: s}}
+			res, err := f.train.Run(context.Background(), req)
+			if !errors.Is(err, ErrBindingReplayPending) || errors.Is(err, ErrBindingFailed) || !strings.Contains(res.Stopped, words) {
+				t.Fatalf("the stop line: %v (stopped %q)", err, res.Stopped)
+			}
+			if boundHead(t, f, id) == old {
+				t.Fatal("the durable binding is not there")
+			}
+			entries, _ := f.train.Audit.Read()
+			if !slices.ContainsFunc(entries, func(e Entry) bool { return e.Kind == "stop" && e.Run == res.Run && strings.Contains(e.Detail, words) }) {
+				t.Fatalf("no stop entry in words: %v", kinds(entries, 1))
+			}
+			f.train.Binder = StoreBinder{Store: s}
+			f.realRun(&req)
+			if next, err := f.train.Run(context.Background(), req); err != nil || next.PRs[0].Status != "merged" {
+				t.Fatalf("the next run did not continue from the binding: %v %+v", err, next.PRs)
+			}
+		})
+	}
+}

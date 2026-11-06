@@ -330,10 +330,10 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 	landed := map[int]string{}
 	if !t.DryRun {
 		if err = t.reconcileRebinds(ctx, &req, entry); err != nil {
-			return res, err
+			return res, t.reconcileStop(&res, entry, err)
 		}
 		if err = t.reconcileUpdates(ctx, &req, res.BaseSHA, res.CIChecks, entry); err != nil {
-			return res, err
+			return res, t.reconcileStop(&res, entry, err)
 		}
 		if landed, err = t.reconcileMerges(ctx, req, entry); err != nil {
 			return res, err
@@ -403,6 +403,18 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		}
 	}
 	return res, nil
+}
+
+// reconcileStop is a reconcile's error as the run's end: a binding write
+// past the task store's commit point stops the run with its words as the
+// stop line (ErrBindingReplayPending), journaled as a stop; any other error
+// ends the run as before.
+func (t *Train) reconcileStop(res *Result, entry func(Entry) error, err error) error {
+	if errors.Is(err, ErrBindingReplayPending) {
+		res.Stopped = err.Error()
+		_ = entry(Entry{Kind: "stop", Detail: res.Stopped})
+	}
+	return err
 }
 
 // errManualStop: manual mode's confirmation was not given.
@@ -713,7 +725,7 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 				if errors.Is(err, ErrHeadSuperseded) {
 					return t.refuseUpdate(res, p, entry, RulePRHeadMoved, fmt.Sprintf("the head read back after the update, %s, was superseded by a lead re-bind decision before the binding write; the train does not bind it, only merge-train rebind re-admits it; nothing is bound", short(pushed)))
 				}
-				return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(pushed), err)
+				return bindingError(it.Task, pushed, err)
 			}
 		}
 		t.waitCI(ctx, req.Repository, pushed, res.CIChecks)
@@ -851,7 +863,7 @@ func (t *Train) reconcileRebinds(ctx context.Context, req *Request, entry func(E
 			if errors.Is(err, ErrHeadSuperseded) {
 				continue // superseded since the snapshot: the reconcile entry is written, the binding stays
 			}
-			return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(pending.NewHead), err)
+			return bindingError(it.Task, pending.NewHead, err)
 		}
 		it.BoundHead = pending.NewHead
 	}

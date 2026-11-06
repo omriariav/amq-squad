@@ -414,7 +414,7 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 			if errors.Is(err, ErrHeadSuperseded) {
 				continue // the reconcile entry is written; the binding stays and the check decides
 			}
-			return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, it.Task, short(cur.HeadSHA), err)
+			return bindingError(it.Task, cur.HeadSHA, err)
 		}
 		it.BoundHead = cur.HeadSHA
 		t.waitCI(ctx, req.Repository, cur.HeadSHA, ci)

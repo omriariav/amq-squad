@@ -122,6 +122,23 @@ func boundTask(store task.Store, repository string, pr int) (task.Task, string, 
 // the run stops before the merge, and the next run sees pr_head_moved.
 var ErrBindingFailed = errors.New("binding_failed")
 
+// ErrBindingReplayPending: the train's binding write crossed the task
+// store's commit point and failed after it (*task.CommittedError): the
+// binding is durable and the store replays its after-image at its next
+// locked access. The run stops, in these words, not as binding_failed (the
+// plan reviewer on #903).
+var ErrBindingReplayPending = errors.New("the binding is written; the task store's replay is pending; the next run continues from it")
+
+// bindingError is a failed train binding write in words: a CommittedError
+// is ErrBindingReplayPending, anything else ErrBindingFailed.
+func bindingError(taskID, head string, err error) error {
+	var committed *task.CommittedError
+	if errors.As(err, &committed) {
+		return fmt.Errorf("%w (task %s to %s: %v)", ErrBindingReplayPending, taskID, short(head), err)
+	}
+	return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, taskID, short(head), err)
+}
+
 // ErrHeadSuperseded: bindAdmitted found the head superseded by a lead
 // re-bind decision in the journal read under the audit lock, and wrote no
 // binding.
