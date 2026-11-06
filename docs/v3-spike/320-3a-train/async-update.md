@@ -126,22 +126,41 @@ error text (`GH.run` wraps it as `gh api graphql: <exit>: <stderr>`):
   gh's wrapper whose message is a known refusal from the closed table
   `graphQLRefusals` in `update.go` (each entry GitHub's exact message with
   its source in a comment, the plan reviewer's clarification on #903,
-  commit `bf4c6458`). The match (the plan reviewer's ruling on Codex's
-  third pass, commit `77a728cf`) strips only gh's wrapper and compares the
-  rest exactly, case aside: `GH.run` returns a `GHError` that carries gh's
+  commit `bf4c6458`). The match (the plan reviewer's rulings on Codex's
+  third pass, commits `77a728cf` and `b9964e30`) strips one of gh's two
+  documented wrappers, each only as a whole, and compares the rest
+  exactly, case aside: `GH.run` returns a `GHError` that carries gh's
   stderr as printed (its error text unchanged), `definiteRefusal` reads
-  gh's last stderr line only, the line must begin with `GraphQL: `, one
-  trailing ` (<path>)` is removed, and the rest must equal a table entry
-  (`strings.EqualFold`). The wrapper is go-gh's `GraphQLError.Error`
-  (`github.com/cli/go-gh/v2`, `pkg/api/errors.go`): `GraphQL: ` and then
-  each error as `<message> (<path>)`, the path's elements joined by `.`,
-  several errors joined by `, `; it is what gh's own commands print (read
-  on gh 2.100.0 with one read-only query: `gh pr view 999999 -R
-  omriariav/amq-squad --json id` prints `GraphQL: Could not resolve to a
-  PullRequest with the number of 999999. (repository.pullRequest)`). A
-  fragment of a table message inside other text, a prefix or a suffix
-  outside the wrapper, a line after gh's, and two errors on one line are
-  ambiguous, never definite. The table: `Head
+  gh's last stderr line only, and `refusalMessage` removes either
+  wrapper; the rest must equal a table entry (`strings.EqualFold`). The
+  two wrappers, read on gh 2.100.0 (whose `go.mod` pins go-gh v2.16.0),
+  each measured with one read-only query of a PR that does not exist:
+  - `gh: <message>`, the line `gh api graphql` prints, which is
+    `GH.Rebase`'s path: cli/cli v2.100.0 `pkg/cmd/api/api.go`,
+    `parseErrorResponse` joins the body's `errors[].message` with `\n`
+    (line 722) and `processResponse` prints
+    `fmt.Fprintf(opts.IO.ErrOut, "gh: %s\n", serverError)` (line 557).
+    Measured: `gh api graphql -f
+    query='query{repository(owner:"omriariav",name:"amq-squad"){pullRequest(number:999999){id}}}'`
+    printed on stderr `gh: Could not resolve to a PullRequest with the
+    number of 999999.` (the body, with `"path":["repository","pullRequest"]`,
+    on stdout).
+  - `GraphQL: <message> (<path>)`, the form gh's other commands print:
+    cli/go-gh v2.16.0 `pkg/api/errors.go`, `GraphQLError.Error` (lines
+    59-68) writes `GraphQL: ` and each error as `<message> (<path>)`, the
+    path's elements joined by `.` (`pathString`, line 82), several errors
+    joined by `, `. Measured: `gh pr view 999999 -R omriariav/amq-squad
+    --json id` printed `GraphQL: Could not resolve to a PullRequest with
+    the number of 999999. (repository.pullRequest)`.
+
+  "Whole" means a GraphQL line must carry its path (a pathless one is not
+  the second form). A fragment of a table message inside other text,
+  anything extra before or after a wrapper, a line after gh's, several
+  errors (gh api's newline, go-gh's `, `) and a `gh: HTTP <code>` line
+  are ambiguous, never definite. The format belongs to gh's version: these
+  are gh 2.100.0's wrappers, and a gh that changes them falls to
+  ambiguous, the safe side (the request stays live and recovers only a
+  proved push inside its window), never to definite. The table: `Head
   branch was modified. Review and try the update again.` (GitHub's
   message when `expectedHeadOid` is no longer the head; the REST "Update a
   pull request branch" page documents the 422 with this body, and the
@@ -151,9 +170,12 @@ error text (`GH.run` wraps it as `gh api graphql: <exit>: <stderr>`):
   and are not in the table (ambiguous: the request stays live, bounded by
   its window; the HTTP 403 form is the 4xx rule). The fake gh prints a
   sentinel line of its own (`fake: expected head X, the head is Y`) and
-  then the first message in gh's wrapper as its last line, so it is
-  classed by the same rule through its own exact output and its sentinel
-  has no table entry. The run stops with `rebase: <error>`. Only
+  then the first message in `gh api graphql`'s real form, `gh: Head
+  branch was modified. Review and try the update again.`, as its last
+  line, so it is classed by the same rule through its own exact output
+  and its sentinel has no table entry; the failed-mutation row runs it
+  through `GH.Rebase` and `GH.run`, the production path, and ends
+  `update_failed`. The run stops with `rebase: <error>`. Only
   these are definite (Codex's re-pass on #903, commit `1491a9f1`: the first
   form took any other GraphQL wording for a refusal and would have retired
   a request GitHub had completed). A new refusal GitHub documents is one
@@ -351,7 +373,7 @@ row comes the first time the new code meets an asynchronous update.
 ## The rulings on Codex's third pass (round five)
 
 The plan reviewer's rulings on Codex's third pass at `675508d4`, by item
-(commits `07c6e5b7` and `77a728cf`, on `e2ba5c18`):
+(commits `07c6e5b7`, `77a728cf` and `b9964e30`, on `e2ba5c18`):
 
 1. **One admission function, not a fix per site.** `headAdmitted`
    (`audit.go`) is the one check: the latest terminal entry for a head by
@@ -365,18 +387,21 @@ The plan reviewer's rulings on Codex's third pass at `675508d4`, by item
    The source guard is extended to the binding write (by file, function and
    line). Rows: Codex's sequence journaled by the real refused re-bind, one
    per caller, the guard (below); revert runs below.
-2. **The GraphQL refusal match strips only gh's wrapper.** `GH.run`
+2. **The refusal match strips only gh's documented wrappers.** `GH.run`
    returns a `GHError` carrying gh's stderr as printed; `definiteRefusal`
-   reads gh's last stderr line, requires it to begin with `GraphQL: `,
-   removes one trailing ` (<path>)` and compares the rest with
-   `graphQLRefusals` by `strings.EqualFold`. The format is go-gh's
-   `GraphQLError.Error` (`github.com/cli/go-gh/v2`, `pkg/api/errors.go`),
-   cited in the code's comment. The fake's sentinel is its own line before
-   the message and stays out of the table. A finding the rule does not
-   change: `gh api graphql`, the command `GH.Rebase` runs, prints a GraphQL
-   error as `gh: <message>` (measured, Residual risk), so the production
-   path's refusals are ambiguous under this rule; reported to the lead, not
-   changed here.
+   reads gh's last stderr line and `refusalMessage` removes, only as a
+   whole, `gh: <message>` (what `gh api graphql`, `GH.Rebase`'s command,
+   prints) or `GraphQL: <message> (<path>)` (what gh's other commands
+   print); the rest must equal a `graphQLRefusals` entry by
+   `strings.EqualFold`. The first form of this round (`77a728cf`) took
+   only the second wrapper; this round's measurement showed `gh api
+   graphql` prints the first, so a real refusal on the production path was
+   ambiguous and the table never fired there. Reported to the lead, and
+   the plan reviewer ruled both wrappers in (`b9964e30`). Both forms are
+   cited in the code's comment and above with the gh source lines and the
+   gh 2.100.0 measurement; the format is gh's version's, and a changed one
+   falls to ambiguous. The fake's refusal prints the real `gh: ...` line,
+   after its sentinel line, which stays out of the table.
 3. **The read's own deadline** (already in, commit `d8c0e0f8`, kept):
    `readUpdatedHead` classes a stalled read on the read context's
    `ctx.Err()` (its deadline), never on the error's type, and
@@ -419,7 +444,7 @@ lower-case row).
 | stale write | Codex #903 (2): a Binder that advances the task's binding right before the conditional write (a concurrent train run's stand-in): the re-bind is refused `rebind_head_mismatch` naming that the binding moved, the advanced head stays; `BindPRFrom` with the wrong head is `ErrPRBindingMismatch` and writes nothing, with the right head it binds. | `internal/mergetrain` `TestRebindRefusesWhenTheBindingMovedMeanwhile` |
 | cancel | Codex #903 (3): the Sleep seam runs the test clock and cancels the context on the first sleep: the wait ends after that one sleep, the PR is refused `branch_update_unconfirmed`, nothing bound or merged (a wait that ignored the cancel would sleep eleven times to the 120 s bound). | `internal/mergetrain` `TestCancelledUpdateWaitIsRefusedUnconfirmed` |
 | past the deadline | Codex #903 (3): every PR read takes 61 s of the test clock; the second read-back starts before the 120 s deadline and completes after it, sees the moved head, and the train proves, binds and merges it. | `internal/mergetrain` `TestPollCrossingTheDeadlineAcceptsAMovedHead` |
-| definite refusal | Codex #903 (4), the reviewer's split: a Forge whose `Rebase` fails with a GraphQL refusal: the run stops with `rebase: ...`, the journal has `update_requested` then `update_failed` (the error in its detail), `lastUpdateRequest` finds no live request; a seat's own force push with the same patch onto the base tip is then not recovered (no reconcile, rebase or rebind entry, the binding unchanged) and the next run refuses it on `force_push`. A seat push with a changed patch after a live request is R3's `a differing patch-id` subtest. | `internal/mergetrain` `TestFailedMutationLeavesNoLiveRequest` |
+| definite refusal | Codex #903 (4), the reviewer's split, on the production path (the ruling on the two wrappers): the fake gh asked to update from a stale pin through `GH.Rebase` and `GH.run` refuses in `gh api graphql`'s real form, `gh: Head branch was modified. Review and try the update again.`: the run stops with `rebase: gh api graphql -F: exit status 1: fake: expected head ...` ending in that line, the journal has `update_requested` then `update_failed` (its detail ends in that line), `lastUpdateRequest` finds no live request; a seat's own force push with the same patch onto the base tip is then not recovered (no reconcile, rebase or rebind entry, the binding unchanged) and the next run refuses it on `force_push`. A seat push with a changed patch after a live request is R3's `a differing patch-id` subtest. | `internal/mergetrain` `TestFailedMutationLeavesNoLiveRequest` |
 | ambiguous, landed | The reviewer's split: the fake performs the (asynchronous) update and the Forge returns `context deadline exceeded`: the same run reads the head back, proves, binds and merges it; `update_ambiguous` (the error in its detail) precedes the `rebase` entry. | `internal/mergetrain` `TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow` (`the update landed and the answer was lost`) |
 | ambiguous, in the window | The update never ran and the Forge returned the transport error: the run ends unconfirmed with the request live and stamped ambiguous; a force push by hand stamped 100 s after the request is recovered at the next run (the rebase entry names the window and the ambiguous failure), bound and merged. | `internal/mergetrain` `TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow` (`a push inside the window is recovered`) |
 | ambiguous, after the window | The same, the push stamped 200 s after the request (past 120 s + 16 s): refused `force_push` and `pr_head_moved`, the binding unchanged, the reconcile entry says `1 after the window, which ended at <time>` and `binding not recovered`. | `internal/mergetrain` `TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow` (`a push after the window is refused`) |
@@ -433,7 +458,7 @@ lower-case row).
 | superseded, any order | Codex's re-pass (2): the entries `rebase(H)`, `rebind_superseded(H)`, `rebase(H)` leave H out of `trainHeads`; another PR's superseded entry does not touch this PR's heads; a `rebind_readmitted(H)` after them brings H back, and a `rebind_superseded(H)` after that takes it out again (the latest terminal entry decides); a readmitted entry stamped a day earlier but appended later wins, and a superseded entry stamped a day later but appended earlier does not (the journal's order, never timestamps). | `internal/mergetrain` `TestSupersededHeadStaysOutWhateverTheOrder` |
 | the verb restores H | The reviewer's clarification: after a superseded attempt, the task bound back at the old head and the verb applied (old to H): the binding is H, `rebind_readmitted` is journaled under the verb's run with the task and the heads, `trainHeads` has H, and the next real run lands the PR. | `internal/mergetrain` `TestRebindRefusesWhenTheBindingMovedMeanwhile` |
 | only the verb re-admits | A train run meeting a superseded head on a journaled request and a sound proof: the binding stays, no rebind, rebase or readmitted entry is written, the head stays out of `trainHeads`, the reconcile entry says `only merge-train rebind re-admits it`, and the check refuses the head on `force_push`; the verb then re-admits it and the next run lands the PR. The source guard: among the package's non-test files only `rebind.go` writes `Kind: "rebind_readmitted"`. | `internal/mergetrain` `TestTrainNeverReadmitsASupersededHead`; `TestOnlyTheRebindVerbWritesReadmitted` |
-| one row per refusal | The closed table, through `GH.run`'s wrapper (`ghFailure`: the exec error and gh's stderr as printed), one class row each: `Head branch was modified. Review and try the update again.` (with and without the `(updatePullRequestBranch)` path, in lower case, and as the fake prints it: its sentinel line, then the message in gh's wrapper as the last line) and `Resource not accessible by integration` (with the mutation's path and with a dotted path); the 4xx forms 422, 403, 404; ambiguous: the unknown wordings, `Pull request is not mergeable`, a bare `Forbidden`, `Internal server error`, `timed out`, `Something went wrong ...`, the 5xx forms, the transport errors, a killed gh with no text. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError` |
+| one row per refusal | The closed table, through `GH.run`'s wrapper (`ghFailure`: the exec error and gh's stderr as printed), one class row each, in both of gh's wrappers: `Head branch was modified. Review and try the update again.` as `gh: <message>` (as printed, in lower case, and as the fake prints it: its sentinel line, then the `gh:` line last) and as `GraphQL: <message> (updatePullRequestBranch)` (as printed and in lower case); `Resource not accessible by integration` as `gh: <message>` and under the mutation's path and a dotted path; the 4xx forms 422, 403, 404; ambiguous: the unknown wordings, `Pull request is not mergeable`, a bare `Forbidden`, `Internal server error`, `timed out`, `Something went wrong ...`, the 5xx forms, the transport errors, a killed gh with no text. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError` |
 | the replay skip | Codex's third pass (1): the refused re-bind's journal as Rebind writes it (rebase, rebind with the `patch-id:` detail, then rebind_superseded), a journaled request and the push: `reconcileRebinds` does not replay the rebind entry and `reconcileUpdates` does not recover the head; two reconcile entries name the verb (`does not replay it`, `does not recover it`); the binding stays, the head stays out, the check refuses it on `force_push`; the verb re-admits it and the next run lands the PR. | `internal/mergetrain` `TestTrainNeverReadmitsASupersededHead` |
 | a killed gh read | Codex's third pass (3): the read-back through `GH.exec` (the real exec path, `CommandContext`) to a gh stand-in that sleeps past a 300 ms wait: the killed read is unmoved for its poll, the run ends refused unconfirmed within 5 s of the mutation, nothing bound. The in-process blocking fake's row (`TestStalledReadReturnsWithinTheBoundedWait`) stands beside it; both time the wait from the mutation's return, since the fake's git work runs under the suite's load. | `internal/mergetrain` `TestStalledGhReadIsUnmovedForThePoll` |
 | the run's bound in words | The reviewer's clarification on (3): the command under a 300 ms bound (a seam) with a gh stand-in that sleeps, its child holding the pipes past the kill, a dry run under a temp root with the default grants: the run ends within the bound and the error reads `merge-train: the run timed out after 300ms, a call to GitHub did not return; nothing more was merged, and the next run starts from the journal` above the rule and `refused (run_timeout): read branch protection: ...` below. | `internal/cli` `TestMergeTrainRunEndsAtItsBoundInWords` |
@@ -448,7 +473,7 @@ lower-case row).
 | the verb (one admission) | A first re-bind's readmission entry reads `the lead's re-bind bound this head; it is the train's own`; after the real refused re-bind of the same head it reads `... it is the train's own again, after a superseded attempt`, the head is admitted and bound, and the next run lands the PR. | `internal/mergetrain` `TestRebindWordsTheReadmissionAfterASupersededAttempt` (2 subtests) |
 | trainHeads (one admission) | `superseded, any order` above: the same row now runs through `headAdmitted`. | `internal/mergetrain` `TestSupersededHeadStaysOutWhateverTheOrder` |
 | the admission guard | The source guard, extended: every non-test `BindPR` or `BindPRFrom` call sits in a function that calls `headAdmitted` before it (go/ast over the package's non-test files; `StoreBinder`'s methods excepted as the Binder itself; at least the four writes of `land`, `reconcileRebinds`, `reconcileUpdates` and `Rebind` found); a write without it fails naming the file, the function, the call and its line. | `internal/mergetrain` `TestOnlyTheRebindVerbWritesReadmitted` (`every binding write is admitted first`) |
-| the wrapper only | Item 2: the match strips only gh's wrapper (gh's last stderr line beginning `GraphQL: `, one trailing ` (<path>)`) and compares the rest exactly, case aside. Ambiguous, never definite: each table message's fragment inside unfamiliar text (`... while checking expected head ...`, `Internal server error: Head branch was modified...`, `Head branch was modified... Retry later.`, `Something went wrong, resource not accessible by integration`, `Resource not accessible by integration token`, `... not mergeable by ...`), a prefix of a message (`Head branch was modified`, `Resource not accessible`), a prefix outside the wrapper (`warning: GraphQL: ...`, `graphql: ...`, gh api's own `gh: <message>`), a suffix outside it (the old fake's `[fake: ...]` after the path, a second path, a line after gh's, two errors on one line), and an error not from gh carrying the GraphQL text; the fake's pinned-head mismatch through `GH.run` is definite by its own exact output with no table entry. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError` |
+| the wrappers whole | Item 2 as ruled: the match strips one of gh's two wrappers whole from gh's last stderr line, `gh: <message>` or `GraphQL: <message> (<path>)`, and compares the rest exactly, case aside. Definite: the table text in either wrapper (rows (1) and (2): the fake's `gh:` refusal through the production path is `definite refusal` above). Ambiguous, never definite (row (3), the text with anything extra): around `gh: ` a path after the message, `Retry later.` after it, `gh: gh: `, `warning: gh: `, `gh:` with no space, a second line (gh api's newline between several errors, or gh's scopes line after it), `gh: HTTP 502`, `gh: HTTP 422`; around `GraphQL: ` no path, a second path, the old fake's `[fake: ...]` after the path, a line after it, two errors on one line, `warning: GraphQL: `, `graphql: `; each table message's fragment inside unfamiliar text (`... while checking expected head ...`, `Internal server error: Head branch was modified...`, `Head branch was modified... Retry later.`, `Something went wrong, resource not accessible by integration` in both wrappers, `Resource not accessible by integration token`, `... not mergeable by ...`), a prefix of a message (`Head branch was modified`, `Resource not accessible`, in both wrappers), and an error not from gh carrying the GraphQL text; the fake's pinned-head mismatch through `GH.run` is definite by its own exact output with no table entry. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError` |
 
 Rule 18: every row runs under a `t.TempDir` root; the mergetrain rows run
 the fake gh over a local bare repository under the test binary's temporary
@@ -1090,7 +1115,10 @@ Each by `python3 revert.py <file> <old> <new> <row>` from the job scratch
 `go test -count=1 -timeout 300s -run ^<row>$ ./internal/mergetrain/`,
 the first failing line verbatim (the class rows iterate a map, so the
 first failing row is whichever came first), then `git checkout -- <file>`
-and the row re-run.
+and the row re-run. The `903j` runs are on the first form of item 2
+(`77a728cf`, one wrapper, `graphQLMessage`); since `b9964e30` the
+function is `refusalMessage` with both wrappers, and its runs are `903k`
+below.
 
 `903i trainHeads`: `internal/mergetrain/audit.go` (`trainHeads`)
 `&& headAdmitted(entries, repository, pr, e.NewHead) {` to ` {` (every
@@ -1184,6 +1212,34 @@ gh's line); the same row;
 async_test.go:947: definiteRefusal("gh api graphql: exit status 1: GraphQL: Head branch was modified. Review and try the update again.") = false, want true
 ```
 restored: `ok ... 0.678s`.
+
+### The ruling on gh's two wrappers (three runs, on `b9964e30`)
+
+The same method as the runs above.
+
+`903k the gh wrapper`: `internal/mergetrain/update.go` (`refusalMessage`)
+the three lines `if msg, ok := strings.CutPrefix(last, "gh: "); ok {`,
+`return msg, true`, `}` removed (only the GraphQL wrapper);
+`TestFailedMutationLeavesNoLiveRequest`;
+```
+async_test.go:667: the failed mutation did not stop the run: <nil> ""
+```
+(row 1 ends ambiguous: the fake's real `gh:` refusal is classed
+`update_ambiguous`, the run reads the head back and goes on instead of
+stopping on `update_failed`) restored: `ok ... 1.317s`. The same revert,
+`TestDefiniteRefusalClassesTheGhError`;
+```
+async_test.go:972: definiteRefusal("gh api graphql: exit status 1: gh: head branch was modified. review and try the update again.") = false, want true
+```
+restored: `ok ... 0.694s`.
+
+`903k the GraphQL wrapper whole`: (`refusalMessage`) the line without its
+path accepted (`return "", false` under the path check to `return msg,
+true`); `TestDefiniteRefusalClassesTheGhError`;
+```
+async_test.go:972: definiteRefusal("gh api graphql: exit status 1: GraphQL: Head branch was modified. Review and try the update again.") = true, want false
+```
+restored: `ok ... 1.106s`.
 
 R4 has no revert: it is the package's existing rows, run green on the new
 code (the gates below).
@@ -1350,6 +1406,22 @@ root:
 - `go run ./scripts/redact-evidence -check docs/v3-spike/320-3a-train/`:
   exit 0.
 
+On `b9964e30` (the ruling on gh's two wrappers, `internal/mergetrain/`
+only; the note's commit after it has the same Go tree), from the worktree
+root, each run once:
+
+- `go build ./... && go vet ./... && go test -count=1 ./...` (the whole
+  module): exit 0, 56 packages `ok`.
+- `cd pi && npm test`: exit 0, `ℹ tests 116`, `ℹ pass 115`, `ℹ fail 0`,
+  `ℹ skipped 1`; `node scripts/lint.mjs`: exit 0.
+- `NPM_FLAGS=--offline make ci` (the PyYAML venv first on PATH): exit 0,
+  70 packages `ok`, pi-test `ℹ fail 0`.
+- `GOTOOLCHAIN=go1.26.10 make fmt-check`: exit 0; with the go1.26.10
+  toolchain's `bin/` first on PATH (`which gofmt` the 1.26.10 one): exit
+  0.
+- `go run ./scripts/redact-evidence -check docs/v3-spike/320-3a-train/`:
+  exit 0.
+
 ## Residual risk
 
 - The first-parent check assumes one commit per task on the seat branch,
@@ -1374,22 +1446,16 @@ root:
 - The classes are read from gh's error text; a message gh changes the
   wording of falls to the ambiguous class (the request stays live, bounded
   by its window), never to the definite one, unless it carries `(HTTP 4`
-  or is, on gh's last stderr line, exactly a table message in gh's
-  `GraphQL: ` wrapper.
-- `GH.Rebase` runs `gh api graphql`, and that command prints a GraphQL
-  error as `gh: <message>`, with neither go-gh's `GraphQL: ` prefix nor
-  the path (read on gh 2.100.0 with one read-only query, `gh api graphql
-  -f query='query{repository(owner:"omriariav",name:"amq-squad"){pullRequest(number:999999){id}}}'`:
-  stderr `gh: Could not resolve to a PullRequest with the number of
-  999999.`; the body, with `"path":["repository","pullRequest"]`, on
-  stdout). So on the production path a refusal GitHub answers in the
-  GraphQL body (with HTTP 200) arrives in that form and is classed
-  ambiguous under the wrapper rule of the ruling: the safe direction (the
-  request stays live and recovers only a proved push inside its window),
-  and the table does not fire there. Accepting gh api's `gh: <message>`
-  line as a second wrapper is a one-line change, reported to the lead for
-  the reviewer's ruling and not made here; a row pins the form as
-  ambiguous.
+  or is, on gh's last stderr line, exactly a table message in one of
+  gh's two wrappers, whole.
+- The refusal classes rest on gh's printed format, which belongs to gh's
+  version: the two wrappers are gh 2.100.0's (`gh: <message>` from `gh
+  api graphql`, `GraphQL: <message> (<path>)` from go-gh v2.16.0's
+  `GraphQLError`), measured and cited above. A gh that prints either
+  differently, or adds text around it, falls to the ambiguous class (the
+  request stays live, bounded by its window), the safe side, never to the
+  definite one; the class rows pin both forms, so a change of format
+  shows there first.
 - A stale re-bind refused on the conditional write leaves its `rebase` and
   `rebind` entries journaled under the re-bind's run, followed by the
   terminal `rebind_superseded` entry: `headAdmitted` (`audit.go`) refuses
