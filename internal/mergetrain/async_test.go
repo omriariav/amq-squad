@@ -881,22 +881,26 @@ func TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow(t *testing.T) {
 // a context deadline or a GraphQL "something went wrong" is ambiguous.
 func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
 	for text, want := range map[string]bool{
-		"gh api graphql: exit status 1: GraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch)":              true,
-		"gh api graphql: exit status 1: GraphQL: Pull request is not mergeable (updatePullRequestBranch)":                                           true,
-		"gh api graphql: exit status 1: GraphQL: Resource not accessible by integration (updatePullRequestBranch)":                                  true,
-		"gh api graphql: exit status 1: gh: Validation Failed (HTTP 422)":                                                                           true,
-		"gh api graphql: exit status 1: gh: Forbidden (HTTP 403)":                                                                                   true,
-		"gh api graphql: exit status 1: GraphQL: expected head abc, the head is def":                                                                true,
-		"gh api graphql: exit status 1: GraphQL: Forbidden (updatePullRequestBranch)":                                                               true,
-		"gh api graphql: exit status 1: gh: Not Found (HTTP 404)":                                                                                   true,
-		"gh api graphql: exit status 1: gh: Bad Gateway (HTTP 502)":                                                                                 false,
-		"gh api graphql: exit status 1: gh: Internal Server Error (HTTP 500)":                                                                       false,
-		"gh api graphql: exit status 1: GraphQL: Something went wrong while executing your query. Please include `ABCD` when reporting this issue.": false,
-		"gh api graphql: exit status 1: GraphQL: Internal server error (updatePullRequestBranch)":                                                   false,
-		"gh api graphql: exit status 1: GraphQL: a wording this code has never seen (updatePullRequestBranch)":                                      false,
-		"gh api graphql: exit status 1: GraphQL: The request timed out (updatePullRequestBranch)":                                                   false,
-		`gh api graphql: exit status 1: Post "https://api.github.com/graphql": context deadline exceeded`:                                           false,
-		"gh api graphql: exit status 1: error connecting to api.github.com: read: connection reset by peer":                                         false,
+		"gh api graphql: exit status 1: GraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch)":                                            true,
+		"gh api graphql: exit status 1: GraphQL: Pull request is not mergeable (updatePullRequestBranch)":                                                                         false, // no evidenced exact wording: ambiguous
+		"gh api graphql: exit status 1: GraphQL: Resource not accessible by integration (updatePullRequestBranch)":                                                                true,
+		"gh api graphql: exit status 1: gh: Validation Failed (HTTP 422)":                                                                                                         true,
+		"gh api graphql: exit status 1: gh: Forbidden (HTTP 403)":                                                                                                                 true,
+		"gh api graphql: exit status 1: GraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch) [fake: expected head abc, the head is def]": true,
+		"gh api graphql: exit status 1: GraphQL: Forbidden (updatePullRequestBranch)":                                                                                             false, // no evidenced exact wording; the HTTP 403 form is the 4xx rule
+		"gh api graphql: exit status 1: gh: Not Found (HTTP 404)":                                                                                                                 true,
+		"gh api graphql: exit status 1: gh: Bad Gateway (HTTP 502)":                                                                                                               false,
+		"gh api graphql: exit status 1: gh: Internal Server Error (HTTP 500)":                                                                                                     false,
+		"gh api graphql: exit status 1: GraphQL: Something went wrong while executing your query. Please include `ABCD` when reporting this issue.":                               false,
+		"gh api graphql: exit status 1: GraphQL: Internal server error (updatePullRequestBranch)":                                                                                 false,
+		"gh api graphql: exit status 1: GraphQL: a wording this code has never seen (updatePullRequestBranch)":                                                                    false,
+		"gh api graphql: exit status 1: GraphQL: Internal server error while checking expected head (updatePullRequestBranch)":                                                    false, // a fragment inside another sentence
+		"gh api graphql: exit status 1: GraphQL: Something is not mergeable by this rule (updatePullRequestBranch)":                                                               false,
+		"gh api graphql: exit status 1: GraphQL: head branch was modified. review and try the update again.":                                                                      true,  // the message itself, case aside
+		"gh api graphql: exit status 1: GraphQL: Head branch was modified":                                                                                                        false, // a prefix of the message is not the message
+		"gh api graphql: exit status 1: GraphQL: The request timed out (updatePullRequestBranch)":                                                                                 false,
+		`gh api graphql: exit status 1: Post "https://api.github.com/graphql": context deadline exceeded`:                                                                         false,
+		"gh api graphql: exit status 1: error connecting to api.github.com: read: connection reset by peer":                                                                       false,
 		"gh api graphql: signal: killed: ": false,
 	} {
 		if got := definiteRefusal(errors.New(text)); got != want {
@@ -984,8 +988,19 @@ func TestTrainNeverReadmitsASupersededHead(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, moved := moveBranch(f, "pr1", nil, true)
-	if err := f.train.Audit.Append(Entry{Run: "mt-rebind-earlier", Kind: "rebind_superseded", Repository: fixtureRepo, Base: "main", PR: 1, Task: id, Head: old, NewHead: moved, Detail: "a stale re-bind"}); err != nil {
-		t.Fatal(err)
+	// the refused re-bind's journal, as Rebind writes it: the rebase and
+	// rebind entries (audit first), then the terminal superseded entry; the
+	// rebind entry is exactly what reconcileRebinds would replay (Codex's
+	// third pass on #903)
+	for _, e := range []Entry{
+		{Kind: "rebase", Head: old, NewHead: moved, BaseSHA: f.head("main"), Detail: "recovered by the lead lead's rebind decision"},
+		{Kind: "rebind", Head: old, NewHead: moved, Detail: "patch-id: abc\nfirst parent: " + f.head("main")},
+		{Kind: "rebind_superseded", Head: old, NewHead: moved, Detail: "a stale re-bind"},
+	} {
+		e.Run, e.Repository, e.Base, e.PR, e.Task = "mt-rebind-earlier", fixtureRepo, "main", 1, id
+		if err := f.train.Audit.Append(e); err != nil {
+			t.Fatal(err)
+		}
 	}
 	res, err := f.train.Run(context.Background(), req)
 	if err != nil || res.PRs[0].Status != "refused" || !slices.ContainsFunc(res.PRs[0].Refusals, func(r Refusal) bool { return r.Rule == RuleForcePush }) || boundHead(t, f, id) != old {
@@ -997,8 +1012,15 @@ func TestTrainNeverReadmitsASupersededHead(t *testing.T) {
 	}) || f.train.Audit.trainHeads(fixtureRepo, 1)[moved] {
 		t.Fatalf("the train wrote a re-admission or a rebind: %v (trainHeads %v)", kinds(entries, 1), f.train.Audit.trainHeads(fixtureRepo, 1))
 	}
-	if rec := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "reconcile" && e.Run == res.Run }); rec < 0 || !strings.Contains(entries[rec].Detail, "only merge-train rebind re-admits it") {
-		t.Fatalf("the reconcile entry does not name the verb: %d", rec)
+	replay, recovery := false, false
+	for _, e := range entries {
+		if e.Kind == "reconcile" && e.Run == res.Run && strings.Contains(e.Detail, "only merge-train rebind re-admits it") {
+			replay = replay || strings.Contains(e.Detail, "does not replay it")
+			recovery = recovery || strings.Contains(e.Detail, "does not recover it")
+		}
+	}
+	if !replay || !recovery {
+		t.Fatalf("the reconcile entries do not name the verb for the replay (%v) and the recovery (%v): %v", replay, recovery, kinds(entries, 1))
 	}
 	s := f.tasks()
 	if _, err := Rebind(context.Background(), RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: StoreBinder{Store: s}, PR: 1, From: old, To: moved, Lead: "lead"}); err != nil {
@@ -1123,4 +1145,49 @@ func (c *cancelAfterMutation) Rebase(ctx context.Context, repository string, num
 	c.mutatedAt = time.Now()
 	go func() { time.Sleep(150 * time.Millisecond); c.cancel() }()
 	return out, err
+}
+
+// Codex's third pass on #903 (3): a real gh killed at the read's deadline
+// returns an exit error, not a context error; the read's own deadline
+// decides that the poll is unmoved. The read-back goes through the real
+// exec path (GH.exec, CommandContext) to a gh stand-in that sleeps past
+// the 300 ms wait: the run ends refused unconfirmed within seconds,
+// nothing bound. Reverted (the error type alone), the run stops with the
+// kill's error.
+func TestStalledGhReadIsUnmovedForThePoll(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	script := filepath.Join(f.dir, "gh-stalled")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.train.Forge = &readBackVia{Forge: f.gh, slow: &GH{Bin: script}}
+	f.train.UpdateWait = 300 * time.Millisecond
+	start := time.Now()
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil || res.PRs[0].Status != "refused" || res.PRs[0].Refusals[0].Rule != RuleUpdateUnconfirmed || boundHead(t, f, id) != old {
+		t.Fatalf("the killed gh read: %v %+v", err, res.PRs)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("the run took %s past a 300 ms wait", elapsed)
+	}
+}
+
+// readBackVia answers the PR reads after the mutation through slow (a real
+// GH over its exec path), everything else from the fake.
+type readBackVia struct {
+	Forge
+	slow    Forge
+	mutated bool
+}
+
+func (r *readBackVia) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
+	r.mutated = true
+	return r.Forge.Rebase(ctx, repository, number, expect)
+}
+
+func (r *readBackVia) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
+	if r.mutated {
+		return r.slow.PR(ctx, repository, number)
+	}
+	return r.Forge.PR(ctx, repository, number)
 }

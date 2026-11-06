@@ -276,7 +276,7 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		p := pr(n)
 		before := rev(p.Head)
 		if before != expect {
-			return fail("GraphQL: expected head %s, the head is %s", expect, before)
+			return fail("GraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch) [fake: expected head %s, the head is %s]", expect, before)
 		}
 		if s.AuditPath != "" {
 			s.AuditAtMutation = nil

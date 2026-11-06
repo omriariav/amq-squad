@@ -50,8 +50,9 @@ func (t *Train) readUpdatedHead(ctx context.Context, repository string, pr int, 
 		}
 		readCtx, cancel := context.WithTimeout(ctx, remaining)
 		cur, err = t.Forge.PR(readCtx, repository, pr)
+		timedOut := readCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil // the read's own deadline, whatever gh's error says (a gh killed by it returns an exit error)
 		cancel()
-		if err != nil && !(errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil) {
+		if err != nil && !timedOut {
 			return PRInfo{}, false, err
 		}
 		if err == nil && cur.HeadSHA != pinned {
@@ -90,56 +91,52 @@ func (t *Train) sleepOrDone(ctx context.Context, d time.Duration) bool {
 }
 
 // definiteRefusal classifies a failed updatePullRequestBranch (the plan
-// reviewer on #903, and Codex's re-pass: definite only on an explicit
-// refusal, everything else ambiguous). gh prints an HTTP error as `gh:
-// <message> (HTTP <code>)` and a GraphQL error as `GraphQL: <message>
-// (updatePullRequestBranch)`. Definite: a 4xx, or a GraphQL error whose
-// text is a known refusal (the expected head mismatch "Head branch was
-// modified", not mergeable, forbidden or not accessible, the fake's
-// "expected head"): GitHub answered and did not take the update. Anything
-// else (a 5xx, a transport error, a context deadline, a killed gh, or a
-// GraphQL message of any other wording, "Internal server error" or
-// "Something went wrong" included) is ambiguous: GitHub may have completed
-// the update, so the request stays live and the head is read back.
+// reviewer on #903, Codex's passes: definite only on a refusal we can
+// name). gh prints an HTTP error as `gh: <message> (HTTP <code>)` and a
+// GraphQL error as `GraphQL: <message> (updatePullRequestBranch)`. Definite:
+// a 4xx, or a GraphQL error whose message is one of graphQLRefusals, the
+// message itself (the text after the `GraphQL:` prefix equals or begins
+// with the recorded wording; a fragment inside another sentence is not it).
+// Anything else (a 5xx, a transport error, a context deadline, a killed gh,
+// or a GraphQL message of any other wording) is ambiguous: GitHub may have
+// completed the update, so the request stays live and the head is read
+// back.
 func definiteRefusal(err error) bool {
 	s := strings.ToLower(err.Error())
 	if strings.Contains(s, "(http 4") {
 		return true
 	}
-	if !strings.Contains(err.Error(), "GraphQL:") { // gh's prefix, as printed; the command line's "gh api graphql:" is not it
+	_, msg, ok := strings.Cut(err.Error(), "GraphQL:") // gh's prefix, as printed; the command line's "gh api graphql:" is not it
+	if !ok {
 		return false
 	}
+	msg = strings.ToLower(strings.TrimSpace(msg))
 	for _, refusal := range graphQLRefusals {
-		if strings.Contains(s, refusal) {
+		if strings.HasPrefix(msg, strings.ToLower(refusal)) {
 			return true
 		}
 	}
 	return false
 }
 
-// graphQLRefusals is the closed table of updatePullRequestBranch refusals
-// (lower-cased substrings of the GraphQL error text gh prints as
-// `GraphQL: <message> (updatePullRequestBranch)`; the plan reviewer on
-// #903: definite means a refusal we can name). Each entry cites where the
-// wording is documented or was read.
+// graphQLRefusals is the closed table of updatePullRequestBranch refusals:
+// each entry is GitHub's exact message, with its source. A refusal whose
+// exact wording is not evidenced is not in the table (and so ambiguous: the
+// request stays live, bounded by its window). The fake gh of this package's
+// tests emits the first message, as GitHub does for the pinned-head
+// mismatch, with its own detail appended after it.
 var graphQLRefusals = []string{
-	// GitHub's message when expectedHeadOid is no longer the branch head
-	// (REST "Update a pull request branch", 422 with this message; the
-	// same text through the GraphQL mutation):
+	// GitHub's message when expectedHeadOid is no longer the branch head:
+	// the REST "Update a pull request branch" endpoint documents the 422
+	// with this body, and the GraphQL mutation answers the same message
+	// (read on #894's own update attempts):
 	// https://docs.github.com/en/rest/pulls/pulls#update-a-pull-request-branch
-	"head branch was modified",
-	// The branch cannot be rebased onto its base (a conflict); GraphQL
-	// mutation updatePullRequestBranch, the "not mergeable" error:
-	// https://docs.github.com/en/graphql/reference/mutations#updatepullrequestbranch
-	"not mergeable",
-	// A token without write access to the head repository (REST 403
-	// Forbidden; GraphQL "Resource not accessible by integration" for an
-	// app token, same docs pages as above):
-	"forbidden",
-	"not accessible",
-	// The fake gh of this package's tests (fakegh_test.go), the pinned
-	// head mismatch in its words.
-	"expected head",
+	"Head branch was modified. Review and try the update again.",
+	// GitHub's GraphQL error for a token without access to the resource (an
+	// app token short of the permission), the wording as GitHub's docs and
+	// gh print it:
+	// https://docs.github.com/en/graphql/overview/resource-limitations
+	"Resource not accessible by integration",
 }
 
 // RunBound is an upper bound on one real run's wall time for n PRs (the

@@ -329,7 +329,7 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 	// merged is reported merged, never re-checked and refused.
 	landed := map[int]string{}
 	if !t.DryRun {
-		if err = t.reconcileRebinds(ctx, &req); err != nil {
+		if err = t.reconcileRebinds(ctx, &req, entry); err != nil {
 			return res, err
 		}
 		if err = t.reconcileUpdates(ctx, &req, res.BaseSHA, res.CIChecks, entry); err != nil {
@@ -792,7 +792,7 @@ func (t *Train) refuseUpdate(res *Result, p *PlanPR, entry func(Entry) error, ru
 // reconcileRebinds finishes a proof-backed binding write when a previous run
 // stopped after journaling it. It emits no reconcile entry: the journaled head
 // and the server head must already be the same.
-func (t *Train) reconcileRebinds(ctx context.Context, req *Request) error {
+func (t *Train) reconcileRebinds(ctx context.Context, req *Request, entry func(Entry) error) error {
 	if t.Binder == nil || t.Tasks == nil {
 		return nil
 	}
@@ -819,6 +819,16 @@ func (t *Train) reconcileRebinds(ctx context.Context, req *Request) error {
 			return err
 		}
 		if cur.HeadSHA != pending.NewHead {
+			continue
+		}
+		// a head a lead re-bind superseded is never replayed (Codex's third
+		// pass on #903: the refused re-bind journals its rebind entry before
+		// the superseded one); only merge-train rebind re-admits it
+		if terminalKinds(entries, req.Repository, it.Number)[pending.NewHead] == "rebind_superseded" {
+			if err := entry(Entry{Kind: "reconcile", PR: it.Number, Task: it.Task, Head: it.BoundHead, NewHead: pending.NewHead,
+				Detail: fmt.Sprintf("the journaled rebind to %s was superseded by a lead re-bind decision; the train does not replay it, only merge-train rebind re-admits it\nbinding not recovered", short(pending.NewHead))}); err != nil {
+				return err
+			}
 			continue
 		}
 		if err := t.Binder.BindPR(it.Task, req.Repository, it.Number, pending.NewHead); err != nil {
