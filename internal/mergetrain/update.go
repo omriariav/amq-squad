@@ -41,13 +41,26 @@ func (t *Train) readUpdatedHead(ctx context.Context, repository string, pr int, 
 	deadline := t.now().Add(t.updateWait())
 	backoff := time.Second
 	for {
-		if cur, err = t.Forge.PR(ctx, repository, pr); err != nil {
+		// each read runs under the remaining wait (Codex's re-pass on #903:
+		// a stalled gh must not hang past the deadline); a read that times
+		// out counts as unmoved for that poll
+		remaining := deadline.Sub(t.now())
+		if remaining <= 0 {
+			remaining = time.Millisecond
+		}
+		readCtx, cancel := context.WithTimeout(ctx, remaining)
+		cur, err = t.Forge.PR(readCtx, repository, pr)
+		cancel()
+		if err != nil && !(errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil) {
 			return PRInfo{}, false, err
 		}
-		if cur.HeadSHA != pinned {
+		if err == nil && cur.HeadSHA != pinned {
 			return cur, true, nil
 		}
-		remaining := deadline.Sub(t.now())
+		if err != nil {
+			cur = PRInfo{HeadSHA: pinned} // the poll timed out: unmoved for this poll
+		}
+		remaining = deadline.Sub(t.now())
 		if remaining <= 0 {
 			return cur, false, nil
 		}
@@ -77,15 +90,17 @@ func (t *Train) sleepOrDone(ctx context.Context, d time.Duration) bool {
 }
 
 // definiteRefusal classifies a failed updatePullRequestBranch (the plan
-// reviewer on #903). gh prints an HTTP error as `gh: <message> (HTTP <code>)`
-// and a GraphQL error as `GraphQL: <message> (updatePullRequestBranch)`; a
-// 4xx, or a GraphQL error that is a refusal (the expected head mismatch
-// "Head branch was modified", a conflict, not mergeable, forbidden), is
-// definite: GitHub answered and did not take the update. A 5xx, a transport
-// error (a dial, reset, EOF or context deadline), or a GraphQL message that
-// says the request itself failed ("Something went wrong while executing
-// your query", "timed out", "temporarily unavailable") is ambiguous: GitHub
-// may have completed the update.
+// reviewer on #903, and Codex's re-pass: definite only on an explicit
+// refusal, everything else ambiguous). gh prints an HTTP error as `gh:
+// <message> (HTTP <code>)` and a GraphQL error as `GraphQL: <message>
+// (updatePullRequestBranch)`. Definite: a 4xx, or a GraphQL error whose
+// text is a known refusal (the expected head mismatch "Head branch was
+// modified", not mergeable, forbidden or not accessible, the fake's
+// "expected head"): GitHub answered and did not take the update. Anything
+// else (a 5xx, a transport error, a context deadline, a killed gh, or a
+// GraphQL message of any other wording, "Internal server error" or
+// "Something went wrong" included) is ambiguous: GitHub may have completed
+// the update, so the request stays live and the head is read back.
 func definiteRefusal(err error) bool {
 	s := strings.ToLower(err.Error())
 	if strings.Contains(s, "(http 4") {
@@ -94,13 +109,37 @@ func definiteRefusal(err error) bool {
 	if !strings.Contains(err.Error(), "GraphQL:") { // gh's prefix, as printed; the command line's "gh api graphql:" is not it
 		return false
 	}
-	for _, vague := range []string{"something went wrong", "timed out", "timeout", "temporarily unavailable", "try again later"} {
-		if strings.Contains(s, vague) {
-			return false
+	for _, refusal := range graphQLRefusals {
+		if strings.Contains(s, refusal) {
+			return true
 		}
 	}
-	return true
+	return false
 }
+
+// graphQLRefusals are the GraphQL error texts that are explicit refusals of
+// updatePullRequestBranch (lower-cased substrings).
+var graphQLRefusals = []string{
+	"head branch was modified", // expectedHeadOid is no longer the head
+	"not mergeable",            // a conflict
+	"forbidden",
+	"not accessible",
+	"expected head", // the fake's expectedHeadOid mismatch
+}
+
+// RunBound is an upper bound on one real run's wall time for n PRs (the
+// CLI runs the train under a context bounded by it, so a stalled gh ends
+// the run instead of hanging it): per PR the bounded update wait, the CI
+// wait and ten minutes for the reads, the checks and the merge.
+func RunBound(n int) time.Duration {
+	if n < 1 {
+		n = 1
+	}
+	return time.Duration(n) * (DefaultUpdateWait + DefaultCIWait + 10*time.Minute)
+}
+
+// DefaultCIWait is how long a rebased head may wait for CI (Train.CIWait).
+const DefaultCIWait = 20 * time.Minute
 
 // UpdateWindowSlack is added to the bounded wait to close the recovery's
 // window on a journaled request: the last backoff of the read-back, so a

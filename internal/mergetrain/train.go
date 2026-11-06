@@ -1008,7 +1008,7 @@ func (t *Train) recordTaskMerge(taskID, repository string, pr int, head, commit 
 func (t *Train) waitCI(ctx context.Context, repository, sha string, required []RequiredCheck) {
 	wait, poll := t.CIWait, t.Poll
 	if wait == 0 {
-		wait = 20 * time.Minute
+		wait = DefaultCIWait
 	}
 	if poll == 0 {
 		poll = 15 * time.Second

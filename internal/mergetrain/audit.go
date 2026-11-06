@@ -174,6 +174,7 @@ func (a Audit) Read() ([]Entry, error) {
 func (a Audit) trainHeads(repository string, pr int) map[string]bool {
 	entries, _ := a.Read()
 	out := map[string]bool{}
+	superseded := map[string]bool{}
 	for _, e := range entries {
 		if e.Repository != repository || e.PR != pr || e.NewHead == "" {
 			continue
@@ -182,8 +183,14 @@ func (a Audit) trainHeads(repository string, pr int) map[string]bool {
 		case "rebase":
 			out[e.NewHead] = true
 		case "rebind_superseded":
-			delete(out, e.NewHead)
+			superseded[e.NewHead] = true
 		}
+	}
+	// the exclusion is terminal whatever the order (Codex's re-pass on
+	// #903: overlapping proof attempts can journal a rebase of the head
+	// after its superseded entry)
+	for h := range superseded {
+		delete(out, h)
 	}
 	return out
 }

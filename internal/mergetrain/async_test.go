@@ -246,6 +246,14 @@ func TestUnrecordedUpdateIsRecoveredOnTheJournalAndTheProof(t *testing.T) {
 			journal(f, id, old, f.head("main"))
 			moveBranch(f, "pr1", nil, true)
 		}, true, ""},
+		{"the run died after the mutation (the #894 shape): no failed or ambiguous entry, the push inside the window", func(f *fixture, id, old string) {
+			journal(f, id, old, f.head("main"))
+			moveBranch(f, "pr1", nil, true)
+			f.edit(func(s *fakeState) {
+				at, _ := time.Parse(time.RFC3339Nano, s.PRs["1"].ForcePushes[0].At)
+				s.PRs["1"].ForcePushes[0].At = at.Add(5 * time.Second).UTC().Format(time.RFC3339)
+			})
+		}, true, ""},
 		{"journaled, the base moved since: onto the current tip", func(f *fixture, id, old string) {
 			journal(f, id, old, f.head("main"))
 			advanceBase(f, map[string]string{"base2.txt": "again\n"})
@@ -308,6 +316,9 @@ func TestUnrecordedUpdateIsRecoveredOnTheJournalAndTheProof(t *testing.T) {
 				}
 				if strings.Contains(r.name, "current tip") && !strings.Contains(entries[ri].Detail, "is the base's current tip") {
 					t.Fatalf("the record does not say the base moved: %q", entries[ri].Detail)
+				}
+				if !strings.Contains(entries[ri].Detail, "inside the request's window") {
+					t.Fatalf("the record does not name the window: %q", entries[ri].Detail)
 				}
 				return
 			}
@@ -626,13 +637,13 @@ func TestFailedMutationLeavesNoLiveRequest(t *testing.T) {
 	f, id, old, req := strictBound(t)
 	f.train.Forge = &failRebaseForge{Forge: f.gh}
 	first, err := f.train.Run(context.Background(), req)
-	if err == nil || !strings.Contains(first.Stopped, "rebase: GraphQL: the update was not taken") {
+	if err == nil || !strings.Contains(first.Stopped, "rebase: gh api graphql: exit status 1: GraphQL: Head branch was modified") {
 		t.Fatalf("the failed mutation did not stop the run: %v %q", err, first.Stopped)
 	}
 	entries, _ := f.train.Audit.Read()
 	ri := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "update_requested" && e.PR == 1 && e.Head == old })
 	fi := slices.IndexFunc(entries, func(e Entry) bool {
-		return e.Kind == "update_failed" && e.PR == 1 && e.Head == old && strings.Contains(e.Detail, "the update was not taken")
+		return e.Kind == "update_failed" && e.PR == 1 && e.Head == old && strings.Contains(e.Detail, "Head branch was modified")
 	})
 	if ri < 0 || fi < ri {
 		t.Fatalf("no update_failed after the request: %v", kinds(entries, 1))
@@ -658,7 +669,7 @@ func TestFailedMutationLeavesNoLiveRequest(t *testing.T) {
 type failRebaseForge struct{ Forge }
 
 func (failRebaseForge) Rebase(context.Context, string, int, string) (string, error) {
-	return "", errors.New("GraphQL: the update was not taken")
+	return "", errors.New("gh api graphql: exit status 1: GraphQL: Head branch was modified. Review and try the update again. (updatePullRequestBranch)")
 }
 
 // Codex on #903 (6): the force push's time is placed after the journaled
@@ -689,6 +700,7 @@ func TestPushedAfterTakesTheSameSecondAsAfter(t *testing.T) {
 type ambiguousForge struct {
 	Forge
 	perform bool
+	text    string // the error; empty: a transport error
 }
 
 func (a *ambiguousForge) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
@@ -696,6 +708,9 @@ func (a *ambiguousForge) Rebase(ctx context.Context, repository string, number i
 		if _, err := a.Forge.Rebase(ctx, repository, number, expect); err != nil {
 			return "", err
 		}
+	}
+	if a.text != "" {
+		return "", errors.New(a.text)
 	}
 	return "", errors.New(`Post "https://api.github.com/graphql": context deadline exceeded`)
 }
@@ -774,6 +789,55 @@ func TestAmbiguousMutationKeepsTheRequestLiveInsideItsWindow(t *testing.T) {
 			t.Fatalf("the recovery's record: %v", kinds(entries, 1))
 		}
 	})
+	t.Run("an unknown GraphQL wording is ambiguous and the read-back runs", func(t *testing.T) {
+		// Codex's re-pass on #903 (1): definite only on an explicit refusal
+		f, id, old, req := strictBound(t)
+		f.edit(func(s *fakeState) { s.AsyncUpdate = []string{"1"} })
+		f.train.Forge = &ambiguousForge{Forge: f.gh, perform: true, text: "gh api graphql: exit status 1: GraphQL: Internal server error (updatePullRequestBranch)"}
+		res, err := f.train.Run(context.Background(), req)
+		if err != nil || res.PRs[0].Status != "merged" || boundHead(t, f, id) != res.PRs[0].Head {
+			t.Fatalf("the unknown wording retired the request: %v %+v", err, res.PRs)
+		}
+		entries, _ := f.train.Audit.Read()
+		if !slices.ContainsFunc(entries, func(e Entry) bool { return e.Kind == "update_ambiguous" && e.PR == 1 && e.Head == old }) ||
+			slices.ContainsFunc(entries, func(e Entry) bool { return e.Kind == "update_failed" }) {
+			t.Fatalf("the journal: %v", kinds(entries, 1))
+		}
+	})
+	// the window's endpoints (Codex's re-pass on #903 (4)): the request's
+	// own second and the last second of the window are inside; one second
+	// outside each end is not
+	for name, c := range map[string]struct {
+		offset    time.Duration
+		recovered bool
+		why       string
+	}{
+		"the request's own second":      {0, true, ""},
+		"one second before the request": {-time.Second, false, "no force push in the journaled request's window"},
+		"the window's last second":      {DefaultUpdateWait + UpdateWindowSlack, true, ""},
+		"one second past the window":    {DefaultUpdateWait + UpdateWindowSlack + time.Second, false, "1 after the window, which ended at"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, id, old, req, requestAt := ambiguousRun(t)
+			pushAt(f, requestAt, c.offset)
+			f.realRun(&req)
+			res, err := f.train.Run(context.Background(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entries, _ := f.train.Audit.Read()
+			if c.recovered {
+				if res.PRs[0].Status != "merged" || boundHead(t, f, id) == old {
+					t.Fatalf("not recovered: %+v (bound %s)", res.PRs, boundHead(t, f, id))
+				}
+				return
+			}
+			rec := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "reconcile" && e.Run == res.Run && e.PR == 1 })
+			if res.PRs[0].Status != "refused" || boundHead(t, f, id) != old || rec < 0 || !strings.Contains(entries[rec].Detail, c.why) {
+				t.Fatalf("recovered outside the window: %+v (bound %s, reconcile %d)", res.PRs, boundHead(t, f, id), rec)
+			}
+		})
+	}
 	t.Run("a push after the window is refused", func(t *testing.T) {
 		f, id, old, req, requestAt := ambiguousRun(t)
 		pushAt(f, requestAt, 200*time.Second) // past 120 s + 16 s
@@ -805,6 +869,8 @@ func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
 		"gh api graphql: exit status 1: gh: Bad Gateway (HTTP 502)":                                                                                 false,
 		"gh api graphql: exit status 1: gh: Internal Server Error (HTTP 500)":                                                                       false,
 		"gh api graphql: exit status 1: GraphQL: Something went wrong while executing your query. Please include `ABCD` when reporting this issue.": false,
+		"gh api graphql: exit status 1: GraphQL: Internal server error (updatePullRequestBranch)":                                                   false,
+		"gh api graphql: exit status 1: GraphQL: a wording this code has never seen (updatePullRequestBranch)":                                      false,
 		"gh api graphql: exit status 1: GraphQL: The request timed out (updatePullRequestBranch)":                                                   false,
 		`gh api graphql: exit status 1: Post "https://api.github.com/graphql": context deadline exceeded`:                                           false,
 		"gh api graphql: exit status 1: error connecting to api.github.com: read: connection reset by peer":                                         false,
@@ -820,4 +886,116 @@ func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
 	if requestWindowEnd("not a time", time.Minute) != "" {
 		t.Error("an unreadable request time has a window")
 	}
+}
+
+// Codex's re-pass on #903 (2): the superseded exclusion is terminal whatever
+// the order: rebase(H), rebind_superseded(H), rebase(H) leaves H out of
+// trainHeads (overlapping proof attempts can journal it so).
+func TestSupersededHeadStaysOutWhateverTheOrder(t *testing.T) {
+	a := AuditFor(t.TempDir())
+	h, other := strings.Repeat("d", 40), strings.Repeat("e", 40)
+	for _, e := range []Entry{
+		{Kind: "rebase", Repository: fixtureRepo, PR: 1, Head: "x", NewHead: h},
+		{Kind: "rebind_superseded", Repository: fixtureRepo, PR: 1, Head: "x", NewHead: h},
+		{Kind: "rebase", Repository: fixtureRepo, PR: 1, Head: "x", NewHead: h},
+		{Kind: "rebase", Repository: fixtureRepo, PR: 1, Head: "x", NewHead: other},
+		{Kind: "rebind_superseded", Repository: fixtureRepo, PR: 2, Head: "x", NewHead: other}, // another PR's
+	} {
+		if err := a.Append(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := a.trainHeads(fixtureRepo, 1)
+	if got[h] || !got[other] {
+		t.Fatalf("trainHeads %v", got)
+	}
+}
+
+// blockingForge's PR read blocks until its context ends.
+type blockingForge struct{ Forge }
+
+func (b blockingForge) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
+	<-ctx.Done()
+	return PRInfo{}, ctx.Err()
+}
+
+// Codex's re-pass on #903 (3): each read of the bounded wait runs under the
+// remaining deadline, so a stalled gh returns within it: a Forge whose PR
+// read blocks until its context ends, under a 300 ms wait on the real
+// clock, ends the run refused unconfirmed well inside a second, nothing
+// bound. The CLI runs the train under RunBound.
+func TestStalledReadReturnsWithinTheBoundedWait(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	f.train.Forge = &updateOnlyBlocking{Forge: f.gh}
+	f.train.UpdateWait = 300 * time.Millisecond
+	start := time.Now()
+	res, err := f.train.Run(context.Background(), req)
+	elapsed := time.Since(start)
+	if err != nil || res.PRs[0].Status != "refused" || res.PRs[0].Refusals[0].Rule != RuleUpdateUnconfirmed || boundHead(t, f, id) != old {
+		t.Fatalf("the stalled read: %v %+v", err, res.PRs)
+	}
+	if elapsed > 3*time.Second {
+		t.Fatalf("the run took %s past a 300 ms wait", elapsed)
+	}
+	if b := RunBound(3); b != 3*(DefaultUpdateWait+DefaultCIWait+10*time.Minute) || RunBound(0) != RunBound(1) {
+		t.Fatalf("RunBound %s", b)
+	}
+}
+
+// updateOnlyBlocking blocks the PR reads that follow the mutation (the
+// read-back), and answers every other read from the fake.
+type updateOnlyBlocking struct {
+	Forge
+	mutated bool
+}
+
+func (u *updateOnlyBlocking) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
+	u.mutated = true
+	return u.Forge.Rebase(ctx, repository, number, expect)
+}
+
+func (u *updateOnlyBlocking) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
+	if u.mutated {
+		<-ctx.Done()
+		return PRInfo{}, ctx.Err()
+	}
+	return u.Forge.PR(ctx, repository, number)
+}
+
+// Codex's re-pass on #903 (4): the cancellation through the production
+// timer path (no Sleep seam): the context is cancelled 100 ms into the
+// first real 1 s backoff, the wait ends there, refused unconfirmed with
+// nothing bound, the run well inside the 3 s wait. Reverted (the select
+// waits the timer out), the run lasts the whole wait.
+func TestCancellationEndsTheProductionSleep(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	f.edit(func(s *fakeState) { s.AsyncRejected = []string{"1"} })
+	f.train.UpdateWait = 3 * time.Second
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	forge := &cancelAfterMutation{Forge: f.gh, cancel: cancel}
+	f.train.Forge = forge
+	res, err := f.train.Run(ctx, req)
+	elapsed := time.Since(forge.mutatedAt)
+	if err != nil || res.PRs[0].Status != "refused" || res.PRs[0].Refusals[0].Rule != RuleUpdateUnconfirmed || boundHead(t, f, id) != old {
+		t.Fatalf("the cancelled wait: %v %+v", err, res.PRs)
+	}
+	if forge.mutatedAt.IsZero() || elapsed > 900*time.Millisecond {
+		t.Fatalf("the cancel did not end the sleep: %s after the mutation", elapsed)
+	}
+}
+
+// cancelAfterMutation cancels the run's context 150 ms after the mutation:
+// inside the first real 1 s backoff of the read-back.
+type cancelAfterMutation struct {
+	Forge
+	cancel    context.CancelFunc
+	mutatedAt time.Time
+}
+
+func (c *cancelAfterMutation) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
+	out, err := c.Forge.Rebase(ctx, repository, number, expect)
+	c.mutatedAt = time.Now()
+	go func() { time.Sleep(150 * time.Millisecond); c.cancel() }()
+	return out, err
 }

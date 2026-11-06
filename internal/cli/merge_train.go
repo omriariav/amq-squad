@@ -137,7 +137,11 @@ func runMergeTrain(args []string) error {
 		t.ReleaseGates, t.Root = &gs, sel.Root // the tag and release drift check, every run
 		t.VerifyGate = releaseGateVerifier(sel)
 	}
-	ctx := context.Background()
+	// the run is bounded (Codex's re-pass on #903): a gh that stalls ends
+	// the run instead of hanging it; the train's own update wait and CI
+	// wait sit inside this bound
+	ctx, cancel := context.WithTimeout(context.Background(), mergetrain.RunBound(len(req.PRs)))
+	defer cancel()
 	if !*dry {
 		attachMergeGates(ctx, t, sel)
 	}
