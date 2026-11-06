@@ -10,7 +10,14 @@ next release). Declared files only: `internal/scheduler/`,
 `internal/uninstall/`, `pi/extensions/lib/words.ts`, `pi/test/`,
 `docs/v3-spike/320-0c-quarantine/`. Four code commits (`33987fed`
 seatcommit, `5ab002d3` scheduler and schedproc, `417a977e` cli, `7ca9da50`
-uninstall and words), then this note.
+uninstall and words), then this note; then `88df5bad`, Codex's pass on
+#904, and `8017ffea`, the plan reviewer's rulings on that batch (the
+section "Codex's pass on #904" below; the rows they added and their revert
+runs are in their own lists). The helper move of `8017ffea` is between two
+declared packages (`internal/schedproc/slots.go` to `internal/seatcommit/
+baseshadow.go`), so the declared set is unchanged; the screen fix of the
+second phase (below, "Gates") will widen it to `pi/extensions/lib/screen.ts`
+and its test.
 
 ## Why
 
@@ -76,13 +83,17 @@ a send). The scheduler's apply step (`recoverDecision`) checks the shape,
 runs `Recovery.Apply` (`seatcommit.RecoverLedger` with the launch's record
 of the grant, the target `scheduler run` computed at its start), appends
 one `ledger_recovered` line naming the lead, the seat, the quarantined seq,
-the slot, the new seq, the carried entries, the base and the reason, and
-calls `Scheduler.LedgerRecovered`, which at the next tick drops the hold
-and returns every task the alarm blocked `ledger_tampered` to pending
-(`task_reset`, "the commits ledger of seat H was recovered by the lead").
-A clear is not the recovery: `ledger_tampered` is not in
-`ClearableWarnings` (refused `clear_not_a_warning`, as before), and no
-clear touches `s.tampered`.
+the slot, the new seq, the carried entries, the base and the reason. The
+release is the scheduler's own reconciliation, every tick, against the
+seat's sealed ledger (Codex's P2 on #904, below): the preparer reads the
+recovery record the ledger carries (`RecoveryReader`, `CleanSeats` through
+`seatcommit.RecoveryOf`, no quarantine on a refusal), and a hold whose slot
+the record names, or whose seq it is at or past, is released: every task
+the alarm blocked `ledger_tampered` returns to pending (`task_reset`, "the
+commits ledger of seat H was recovered by the lead"), then the hold goes
+and `ledger_hold_released` is logged. A clear is not the recovery:
+`ledger_tampered` is not in `ClearableWarnings` (refused
+`clear_not_a_warning`, as before), and no clear touches `s.tampered`.
 
 `RecoverLedger`, under the seat's ledger lock: the document on disk must
 be tampered (one that verifies is `recover_not_tampered`; one absent with
@@ -127,8 +138,10 @@ credential helper for https, as the push uses it) and `merge-base
 --is-ancestor` against that tip in the seat repository
 (`recover_entry_unpushed`; a launch with no push URL carries nothing); and
 `<commit>^{tree}` must equal the quarantined entry's tree
-(`recover_entry_tree_mismatch`). One entry that fails refuses the whole
-recovery and nothing is written. A carried entry keeps the quarantined
+(`recover_entry_tree_mismatch`). These checks run in the harness's own git
+directory (the per-step shadow, as the push does; Codex's P1 below), and
+the one transport call is bounded (Codex's P2 below). One entry that fails
+refuses the whole recovery and nothing is written. A carried entry keeps the quarantined
 record's fields, is marked `Pushed` and `Note: "carried from quarantine seq
 N"` (a new `omitempty` field of `LedgerCommit`, so a ledger sealed before
 it still verifies), and the recovery record lists it.
@@ -188,6 +201,111 @@ lead-routed block shows in the tasks block, and this one does too, with
 the words above. The lead sees it there, and the seat's stop line in the
 seats block says the same.
 
+## Codex's pass on #904 (`88df5bad`)
+
+Codex read `1107dabe` statically (its sandbox could not build). Each item,
+and what changed:
+
+- **P1, the carry check through the seat's git config.** `carryEntries`
+  ran `ls-remote` through `seatRepo` (`GIT_DIR` = the seat repository's
+  common dir), whose config the seat controls; unsetting filter drivers
+  does not disable `url.*.insteadOf`, `core.sshCommand` or transport
+  settings, so a planted rewrite could redirect the launch's push URL to a
+  repository holding an unpushed commit (which then passed), and the SSH
+  config could run seat-chosen commands in the scheduler's process. The
+  plan reviewer's ruling: no new hardening; the merged one exactly, the
+  pair the launch's base fetch uses (`baseTip`, 3.0.2 t22): a shadow git
+  directory of the harness's own on the repository's object store (none of
+  the shared repository's config, remotes or url rewrites read) and
+  `seatcommit.FetchCredentials` (the pinned gh as the only credential
+  helper for https, or anonymous). `seatcommit` cannot import `schedproc`,
+  so the helper moved down (`baseGit`, `baseShadow`, `newBaseShadow` of
+  `slots.go` are `seatcommit.BaseGit`, `BaseShadow`, `NewBaseShadow` in
+  `baseshadow.go`; `moveWorktree` takes the git as its first argument) and
+  both callers use it; the launch's fetch is unchanged in what it does.
+  `carryEntries` makes the shadow on the seat repository's common dir and
+  runs every check there (`ls-remote` with the fetch's credentials;
+  `cat-file`, `merge-base`, `rev-parse` on the seat's objects through
+  `GIT_OBJECT_DIRECTORY`). The base observation and the evidence counter
+  stay on `seatRepo` (no transport; refs the seat repository holds). Row:
+  `url.<evil>.insteadOf` of the origin and a `core.sshCommand` with a
+  marker planted in the seat repository; the seat's own `ls-remote` follows
+  the redirect and an ssh URL runs the planted command (both shown); the
+  recovery refuses the unpushed entry, carries the real one, and the marker
+  never appears.
+- **P2, the unbounded transport.** `exec.Command(...).Run()` had no bound
+  while the decision server clears its deadline before the apply step, so
+  an unreachable origin held the ledger lock and the handler for as long as
+  git waited. `BaseGit.RunBounded` runs one git call under a context in
+  its own process group (`ownGroup`, the verifier's), killed as a group on
+  expiry (`cmd.Cancel` through `killGroup`), `WaitDelay` the verifier's,
+  the error naming the bound; the recovery's one network call (the
+  `ls-remote`, once per distinct carried branch, none with no carry) runs
+  under `RecoverTransportTimeout` (30 s, a variable the row shortens), and
+  a transport failure refuses before anything is written, the ledger lock
+  released with the refusal. The launch's fetch keeps `BaseGit.Run`
+  (unbounded, `context.Background`), as merged: that gap predates rc.1 and
+  goes to the 3.2.x list; the bounded runner is in the shared helper for
+  that small PR. Row: a stalled ssh plumbing ends in
+  `recover_entry_unpushed` ("(bound 500ms) ... did not answer within its
+  bound; killed") within the bound, and the next recovery takes the lock at
+  once and completes.
+- **P2, the lost completion.** The release was a message
+  (`LedgerRecovered`) consumed by the next tick: a failed decision append
+  replied a refusal with the chain written, a retry refused
+  `recover_not_tampered`, a crash before the state write left the restored
+  hold with no message, and the tick deleted each hold before resetting
+  its tasks, so a reset error lost the batch. Now the sealed ledger's
+  `LedgerRecovery` is the source of truth: every tick, `applyRecoveries`
+  asks the preparer what recovery each held seat's ledger records
+  (`RecoveryReader.LedgerRecovery`, read without a quarantine) and releases
+  a hold the record covers (`covers`: the hold's slot path, or a seq at or
+  past the hold's numeric seq; a hold of an unknown seq by its slot only),
+  resetting first and deleting after; a reset that fails returns the error
+  and keeps the hold for the next tick (a task already returned is
+  skipped). `RecoverLedger` decided again on a recovered ledger whose
+  record names the same slot answers as made (`AlreadyRecovered`, the
+  record's seqs and digests, the carried entries by their note) and writes
+  nothing; the apply step records that line ("had recovered ... the
+  decision sent again") and replies OK; a failed append is
+  `recover_unrecorded` with the detail saying the chain is written and the
+  seat releases from it. `Scheduler.LedgerRecovered` is gone (one path).
+  Rows: the append fails, the tick releases anyway, the retry answers OK
+  and records; the crash before the state write (the restored hold
+  released on the new incarnation's first tick, the state file cleared);
+  the retry in seatcommit; two seats held and one recovered across the
+  state file and a restart (the other never prepared).
+- **P2, the suppression per seat.** `prepareFails` was keyed by seat and
+  remembered the last task, so two pending tasks alternating on one
+  failing seat reset each other and logged two lines a tick. Keyed per
+  task and seat (`prepareKey`), the task's record change and the reason
+  in the value; a passing prepare clears the seat's keys. Rows: two tasks,
+  one line and one count line each over 200 ticks; the same seat passing
+  (the task dispatched and released) then failing on the same task is
+  logged again.
+- **P3, the record parser.** `TAMPER_DETAIL` required `seat H:` while the
+  write-time detail starts `the commits ledger refused the write: commit
+  ledger H:`, so it fell back to a 200-character excerpt that cut the
+  path, and the row hid it with a synthetic prefix. The regex reads both
+  forms (`(?:seat|commit ledger) (\S+):`), and the row uses Go's own
+  write-time text.
+- **P2, the rows** named above, in the list below; B4's reset on the same
+  seat replaces the seat switch.
+- **P3, the note:** the older-reader paragraph in the residuals, and the
+  compatibility row: a 3.1.2-shaped reader (decode without `Recovered` and
+  the carried entries' `Note`, re-encode, verify) refuses a recovered
+  ledger with the tamper reason (`the tag of commits.<h> link <N> fails`),
+  this binary's reader verifies it; the expected behaviour until 0e lands.
+- **The "waiting on you" gap, stated sharply (Codex, the reviewer's
+  changed ruling):** the screen derives that section only from open gates,
+  so it can say "Nothing is waiting on you" while a lead-routed
+  `ledger_tampered` block exists; the tasks block and the seat stop line
+  carry the block. A screen that says nothing waits while a block is open
+  is false, and no note excuses it: the fix goes in this PR as a stated
+  widening to `pi/extensions/lib/screen.ts` and its test, in a second
+  phase after t102 (the seat's screen task, which also changes
+  `screen.ts`) merges on v3 (the plan in "Gates").
+
 ## The quarantine layout read
 
 A slot is `<root>/extensions/amq-squad/quarantine/commits.<handle>.seq<N>[.k]/`
@@ -216,6 +334,15 @@ CLI.
 | B7 | `Run([]string{"version"}, "3.2.0-test.7")` prints `amq-squad 3.2.0-test.7` and sets `seatcommit.BinaryVersion`; a quarantine made after it carries `binary: 3.2.0-test.7`. | `internal/cli` `TestSidecarCarriesTheVersionTheCLIPrints` |
 | B8 | The dry run lists the quarantine directory in the sealed ledgers group beside the commits ledger with its note, not under the session state; `--write` alone keeps both; `--purge` removes both. | `internal/uninstall` `TestQuarantineIsListedAndRemovedWithTheCommitsLedger` |
 | B9 | The screen's seat stop line for a tamper prepare failure is the tamper words; "relaunch the roster" does not appear; the record below the rule names the path; every other prepare failure keeps its remedy; the count line reads; the typed block reads with the same words in the tasks block with `T: seat H, quarantined at <path>` below the rule, from the block's detail (and from the commit step's write-time detail). | `pi/test/recovery.test.ts` (two tests) |
+| P1 | A `url.<evil>.insteadOf` of the origin and a `core.sshCommand` with a marker in the seat's config, the task branch at an unpushed commit in `evil`: the seat's own `ls-remote` answers the unpushed commit and an ssh URL runs the planted command (the marker appears; removed); the recovery's check refuses (`recover_entry_unpushed`, "is not on origin's <branch>"), nothing written, the marker absent; the real entry still carries, the marker still absent. | `internal/seatcommit` `TestCarryCheckIgnoresTheSeatsGitConfig` |
+| P2 bound | `RecoverTransportTimeout` 500 ms, the push URL an ssh host with `GIT_SSH_COMMAND=sh -c 'sleep 60' --`: the carry is refused `recover_entry_unpushed` naming "(bound 500ms)" and "did not answer within its bound; killed" well inside 10 s, nothing written, and the next recovery (no carry) takes the ledger lock at once and completes at seq N+1. | `internal/seatcommit` `TestStalledOriginEndsTheRecoveryWithinTheBound` |
+| P3 compat | A recovered ledger with a carried entry: this binary's decode verifies; the same bytes decoded as a 3.1.2 reader does (no `Recovered`, no `Note`) do not, and `sealchain.Check` on that decode is `ledger_tampered: the tag of commits.<h> link <N> fails`. | `internal/seatcommit` `TestOlderReaderRefusesARecoveredLedgerAsTampered` |
+| P2 retry | A recovery decided again for the same slot is `AlreadyRecovered` with the first result's seqs, slot and body digest, the ledger byte-identical; another slot on the recovered ledger is `recover_not_tampered`. | `internal/seatcommit` `TestRecoveryDecidedAgainIsAnsweredFromTheLedger` |
+| P2 completion | The decision log's path taken by a directory: the apply step replies `recover_unrecorded`, the chain is written; the next ticks release the seat from the ledger (`ledger_hold_released`, `task_reset`, `dispatched`); the log writable again, the decision sent again is OK as already recovered (`AlreadyRecovered`, seqs 1 and 2), the ledger unchanged, one "had recovered" line. | `internal/schedproc` `TestInterruptedRecoveryCompletesFromTheLedger` |
+| P2 restart | The hold in the state file, the chain written, the process gone before any state write: the next incarnation restores the hold and its first tick releases it from the ledger (`ledger_hold_released`, `task_reset`, `dispatched`); the state file no longer holds the seat. An older recovery record (another slot, a lower seq) releases nothing. | `internal/scheduler` `TestRestartedHoldIsReleasedFromTheLedgersRecovery`, `TestRecoveryReleasesTheSeatAndReturnsTheTask` |
+| P2 one seat | Two seats held; one recovered: released alone and granted; the other stays in the state file, is restored by the next incarnation and never prepared (one prepare across the restart). | `internal/scheduler` `TestTwoHeldSeatsOneRecovered` |
+| P2 per task | Two pending tasks on one failing seat over 200 ticks: one `seat_prepare_failed` and one `seat_prepare_suppressed` per task. B4's end: the same seat passes (dispatched, released by the lead) then fails on the same task: logged again, then counted. | `internal/scheduler` `TestTwoTasksOnOneFailingSeatAreEachLoggedOnce`, `TestPrepareFailureIsLoggedOnceThenCounted` |
+| P3 parser | The write-time detail as Go writes it (no `seat H:` prefix) gives the record `T: seat H, quarantined at <path>`, on `tamperRecord` and through `blockWords`. | `pi/test/recovery.test.ts` (the second test) |
 | the verb | `scheduler recover` refuses missing or malformed flags and `--me` before any send; with no launch record it names the missing scheduler; a record with no socket is `scheduler_starting` (exit 15); a send carries the seat, seq, slot, carry and reason as given and prints the reply (the slot, the chain's seqs, each carried entry); the verb writes no ledger, quarantine or seed; a refusal is exit 15 with the code. | `internal/cli` `TestSchedulerRecoverSendsTheDecisionOverTheSocket` |
 
 Rule 18: every row runs under a `t.TempDir` root (the seatcommit fixture's
@@ -230,13 +357,17 @@ version row quarantines a hand-edited ledger with no repository) and leave
 
 ## Revert runs
 
-Each run on the committed tree `7ca9da50`: the line flipped, the row run
-alone, the first failing line verbatim (the temp-dir prefix as printed),
-then `git checkout -- <file>` and the row re-run green. The runner is in
-the job scratch, not committed. A flip is a compiling inverse of the line's
-rule. In the B3c and B6 lines the fixture's 40- and 64-character hex values
-(a link tag, digests, commit ids of the temp repository) are written as
-`<40 hex>` and `<64 hex>`, so this note holds no hex run.
+Each run on the committed tree `7ca9da50` (the first list) or `88df5bad`
+(the second, Codex's rows): the line flipped, the row run alone, the first
+failing line verbatim (the temp-dir prefix as printed), then `git checkout
+-- <file>` and the row re-run green. The runner is in the job scratch, not
+committed. A flip is a compiling inverse of the line's rule (the one-seat
+row's first flip, `covers` made always true, did not fail, since the
+unrecovered seat's ledger answers no record at all and `covers` is never
+asked; the recorded flip is the whole guard). In the B3c, B6, B2 and retry
+lines the fixture's 40- and 64-character hex values (a link tag, digests,
+commit ids of the temp repository) are written as `<40 hex>` and `<64
+hex>`, so this note holds no hex run.
 
 ### B1
 
@@ -558,37 +689,305 @@ scheduler_recover_test.go:49: --me: scheduler recover: no running scheduler for 
 restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.384s`.
 
 
+## Revert runs, Codex's rows (`88df5bad`; the P1 and bound rows re-run on `8017ffea` in the third list after the helper move)
+
+### P1 the carry check in the harness's git
+
+```
+go test -count=1 -run ^TestCarryCheckIgnoresTheSeatsGitConfig$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/recover.go:258`
+```
+	carried, err := carryEntries(o, slot, oldSeq, sh.g)
+```
+to:
+```
+	carried, err := carryEntries(o, slot, oldSeq, repo)
+```
+First failing line (exit 1):
+```
+recover_test.go:355: not a recovery refusal: <nil>
+```
+`--- FAIL: TestCarryCheckIgnoresTheSeatsGitConfig (0.60s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.912s`.
+
+### P2 the bound
+
+```
+go test -count=1 -run ^TestStalledOriginEndsTheRecoveryWithinTheBound$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/recover.go:460`
+```
+	ctx, cancel := context.WithTimeout(context.Background(), RecoverTransportTimeout)
+```
+to:
+```
+	ctx, cancel := context.WithCancel(context.Background())
+```
+First failing line (exit 1):
+```
+recover_test.go:393: the stalled origin: recover_entry_unpushed: origin's seat/s1-t1 cannot be read: git --heads: exit status 128: fatal: Could not read from remote repository.
+```
+`--- FAIL: TestStalledOriginEndsTheRecoveryWithinTheBound (120.71s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	2.406s`.
+
+### P2 the reconciliation, the scheduler
+
+```
+go test -count=1 -run ^TestRestartedHoldIsReleasedFromTheLedgersRecovery$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:170`
+```
+	reader, ok := s.Preparer.(RecoveryReader)
+	if !ok || len(s.tampered) == 0 {
+```
+to:
+```
+	reader, ok := s.Preparer.(RecoveryReader)
+	if !ok || len(s.tampered) == 0 || true {
+```
+First failing line (exit 1):
+```
+tamper_test.go:356: the restarted scheduler did not release the hold from the ledger: [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason: Stage: ReasonCode:}]
+```
+`--- FAIL: TestRestartedHoldIsReleasedFromTheLedgersRecovery (0.13s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	0.755s`.
+
+### P2 the reconciliation, the process
+
+```
+go test -count=1 -run ^TestInterruptedRecoveryCompletesFromTheLedger$ ./internal/schedproc/
+```
+Reverted `internal/schedproc/prepare.go:83`
+```
+	r, ok := seatcommit.RecoveryOf(c.Root, handle)
+	return r.Seq, r.Slot, ok
+```
+to:
+```
+	r, ok := seatcommit.RecoveryOf(c.Root, handle)
+	return r.Seq, r.Slot, ok && false
+```
+First failing line (exit 1):
+```
+recover_test.go:333: the hold was not released from the ledger: []
+```
+`--- FAIL: TestInterruptedRecoveryCompletesFromTheLedger (0.90s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	1.331s`.
+
+### P2 the retry
+
+```
+go test -count=1 -run ^TestRecoveryDecidedAgainIsAnsweredFromTheLedger$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/recover.go:185`
+```
+	case rerr == nil && live.Recovered != nil && live.Recovered.Slot == slotPath:
+```
+to:
+```
+	case rerr == nil && live.Recovered != nil && live.Recovered.Slot == slotPath && false:
+```
+First failing line (exit 1):
+```
+recover_test.go:427: the retry: recover_not_tampered: the commits ledger of seat s1 verifies; there is nothing to recover {Handle: AlreadyRecovered:false Slot: OldSeq:0 NewSeq:0 Prev: BodySHA256: HeadSHA256: Base: Carried:[]}
+```
+`--- FAIL: TestRecoveryDecidedAgainIsAnsweredFromTheLedger (0.97s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.885s`.
+
+### P2 one recovery, one seat
+
+```
+go test -count=1 -run ^TestTwoHeldSeatsOneRecovered$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:182`
+```
+		if !ok || !tm.covers(seq, slot) {
+			continue
+		}
+```
+to:
+```
+		if false && ok {
+			continue
+		}
+```
+First failing line (exit 1):
+```
+tamper_test.go:379: both seats were not held once each: map[seat-a:3 seat-b:3] blocked blocked
+```
+`--- FAIL: TestTwoHeldSeatsOneRecovered (0.25s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	0.408s`.
+
+### P2 suppression per task
+
+```
+go test -count=1 -run ^TestTwoTasksOnOneFailingSeatAreEachLoggedOnce$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:85`
+```
+func prepareKey(handle, taskID string) string { return handle + "\x00" + taskID }
+```
+to:
+```
+func prepareKey(handle, taskID string) string { return handle + "\x00" }
+```
+First failing line (exit 1):
+```
+tamper_test.go:321: task t1: 1 failed lines and 0 count lines over 200 ticks, want 1 and 1
+```
+`--- FAIL: TestTwoTasksOnOneFailingSeatAreEachLoggedOnce (0.12s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	0.348s`.
+
+### P3 the parser
+
+```
+cd pi && node --test --test-reporter=spec test/recovery.test.ts
+```
+Reverted `pi/extensions/lib/words.ts:344`
+```
+const TAMPER_DETAIL = /(?:seat|commit ledger) (\S+):.*?quarantined at ([^\s;]+)/;
+```
+to:
+```
+const TAMPER_DETAIL = /seat (\S+):.*?quarantined at ([^\s;]+)/;
+```
+First failing line (exit 1):
+```
+✖ B9: the typed block reads with the same words, the seat and the path on its record line (0.653291ms)
+```
+`✖ B9: the typed block reads with the same words, the seat and the path on its record line (0.653291ms); ℹ fail 1`
+restored and re-run (exit 0): `ℹ pass 2; ℹ fail 0`.
+
+## Revert runs, the reviewer's rulings (`8017ffea`)
+
+The bound's flip (no deadline) fails on the refusal's text: the ssh stand-in slept its 60 s and git then reported the unreadable remote, so the refusal came, late and without the bound's words.
+
+### P1 the carry check in the harness's shadow
+
+```
+go test -count=1 -run ^TestCarryCheckIgnoresTheSeatsGitConfig$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/recover.go:406`
+```
+	fenv := append(append([]string(nil), sh.Env...), credEnv...)
+```
+to:
+```
+	fenv := append([]string{"GIT_DIR=" + common}, credEnv...) // the seat's git directory and its config
+```
+First failing line (exit 1):
+```
+recover_test.go:370: not a recovery refusal: <nil>
+```
+`--- FAIL: TestCarryCheckIgnoresTheSeatsGitConfig (6.36s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	7.112s`.
+
+### P2 the bound
+
+```
+go test -count=1 -run ^TestStalledOriginEndsTheRecoveryWithinTheBound$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/recover.go:425`
+```
+			ctx, cancel := context.WithTimeout(context.Background(), RecoverTransportTimeout)
+```
+to:
+```
+			ctx, cancel := context.WithCancel(context.Background())
+```
+First failing line (exit 1):
+```
+recover_test.go:415: the stalled origin: recover_entry_unpushed: origin's seat/s1-t1 cannot be read (bound 500ms): git ls-remote: exit status 128: fatal: Could not read from remote repository.
+```
+`--- FAIL: TestStalledOriginEndsTheRecoveryWithinTheBound (123.74s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	2.044s`.
+
+### P3 the compatibility row
+
+```
+go test -count=1 -run ^TestOlderReaderRefusesARecoveredLedgerAsTampered$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/ledger.go:77`
+```
+	Recovered *LedgerRecovery `json:"recovered,omitempty"`
+```
+to:
+```
+	Recovered *LedgerRecovery `json:"-"`
+```
+First failing line (exit 1):
+```
+recover_test.go:462: this binary's reader: <nil> <nil>
+```
+`--- FAIL: TestOlderReaderRefusesARecoveredLedgerAsTampered (1.26s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.887s`.
+
 ## Gates
 
-On `7ca9da50` (the four code commits; this note is the only change
-after it), each exit 0, from the worktree root:
+The PR lands in two phases (the plan reviewer's changed ruling on the
+"waiting on you" gap): phase one is everything above, reported on the
+head below; phase two, after t102's PR (the seat's screen task, which also
+changes `screen.ts`) merges on v3, merges `origin/v3` into this branch by
+hand (never a rebase), re-runs these gates, then adds one commit widening
+the declared set to `pi/extensions/lib/screen.ts` and its test: the
+"waiting on you" section derived from open gates plus lead-routed blocks,
+the tamper block listed there with the rule-7 words, "Nothing is waiting
+on you" only when both are empty; its row (a tamper block with no gates
+shows under "waiting on you", never the "nothing" line) and revert run go
+in this note, and the gates run again on that head.
 
-- `go build ./... && go vet ./...`: exit 0.
-- `go test -count=1 ./internal/scheduler/ ./internal/schedproc/
-  ./internal/seatcommit/ ./internal/cli/ ./internal/uninstall/`: exit 0,
-  five `ok`.
-- `NPM_FLAGS=--offline make ci`: exit 0, with the job scratch's PyYAML
-  venv first on PATH (`PATH=<job tmp>/pyvenv/bin:$PATH`, as the 0c-A note
-  ran it; no network, nothing installed outside the scratch). It ran
-  fmt-check, `go vet`, `go test -timeout 20m ./...` (70 `ok`, no `FAIL`),
-  the README and docs html checks, skills-check, skill-routing-check,
-  skill-command-check, skill-invocation-check, release-validator-test,
-  go-files-scope-test, claude-hooks-test and pi-test: `cd pi && npm ci
-  --ignore-scripts --offline && npm test`, tail `ℹ tests 118`, `ℹ pass
-  117`, `ℹ fail 0`, `ℹ skipped 1` (the staged-runtime row, local-only).
-  No timing row stopped it; it ran once.
-- `go run ./scripts/redact-evidence -check docs/v3-spike/320-0c-quarantine/`:
-  exit 0 (on the tree with this note).
-- `GOOS=windows go build ./internal/seatcommit/`: exit 0 (the slot read
-  goes through 0c-A's path-based version off unix).
+Phase one, on `a692ebca` (the merge of `origin/v3` at `d522a066`, #905,
+into `8017ffea`; this note is the only change after it), each from the
+worktree root:
+
+- `go build ./... && go vet ./... && go test -count=1 ./...` (the whole
+  module): exit 0, 56 packages `ok`, no `FAIL`.
+- The pi gate: `cd pi && npm test`: exit 0, `ℹ tests 118`, `ℹ pass 117`,
+  `ℹ fail 0`, `ℹ skipped 1` (the staged-runtime row, local-only);
+  `cd pi && node scripts/lint.mjs`: exit 0.
+- `NPM_FLAGS=--offline make ci`: exit 0 (fmt-check included), with the job
+  scratch's PyYAML venv first on PATH (`PATH=<job tmp>/pyvenv/bin:$PATH`,
+  as the 0c-A note ran it; no network, nothing installed outside the
+  scratch): fmt-check, `go vet`, `go test -timeout 20m ./...` (70 `ok`,
+  no `FAIL`), the README and docs html checks, skills-check,
+  skill-routing-check, skill-command-check, skill-invocation-check,
+  release-validator-test, go-files-scope-test, claude-hooks-test and
+  pi-test (the same four pi counts).
+- Beside the three: `go test -count=1 ./internal/scheduler/
+  ./internal/schedproc/ ./internal/seatcommit/ ./internal/cli/
+  ./internal/uninstall/`: exit 0, five `ok`; `GOOS=windows go build
+  ./internal/seatcommit/`: exit 0; `go run ./scripts/redact-evidence
+  -check docs/v3-spike/320-0c-quarantine/`: exit 0.
+
+The same gates ran exit 0 on `8017ffea` before the merge (the whole-module
+test through `make ci`; the five packages, the windows build and the
+redact check on their own). One earlier `make ci` on `88df5bad`, run while
+the helper move was being edited in the same worktree and beside a second
+`go test` run, stopped on `internal/seatlaunch`
+`TestPiSeatPlansThroughTheUpstreamAdapter` (`outcome unsupported
+(launcher_not_available)`, a row outside this task's files that asks the
+local AMQ's pi adapter); the run on `8017ffea` and the one on `a692ebca`
+passed it, and no run was repeated beyond that.
+
+The first gates, on `7ca9da50` (the four code commits), were: build and
+vet exit 0; the five packages exit 0; `make ci` offline exit 0 (70 `ok`,
+`ℹ tests 118`, `ℹ pass 117`, `ℹ fail 0`, `ℹ skipped 1`); the redact check
+exit 0; the windows build exit 0.
 
 ## Residual risk and what the brief leaves to later
 
-- The screen's "waiting on you" block is open gates (`screen.ts`, outside
-  this task's set); the typed block shows in the tasks block with the
-  rule-7 words and the seat stop line in the seats block says the same.
-  Moving lead-routed blocks under "waiting on you" is a screen change for a
-  screen brief.
+- The screen's "waiting on you" block is derived only from open gates
+  (`screen.ts`), so it can say "Nothing is waiting on you" while a
+  lead-routed `ledger_tampered` block exists; the tasks block and the seat
+  stop line carry the block. The fix (the section from open gates plus
+  lead-routed blocks, the tamper block listed there with the rule-7 words,
+  the "nothing" line only when both are empty) is this PR's second phase,
+  after t102 merges (the plan in "Gates").
+- The network: `ls-remote` is the only network operation the recovery
+  adds, once per distinct carried branch, none with no carry, under
+  `RecoverTransportTimeout`; a transport failure refuses before anything
+  is written and releases the lock.
 - The commit step's read-time refusal (`tamperedRefusal`, the start of the
   step and the exit check) still routes `ledger_tampered` to the owner with
   its 3.1 words ("the owner inspects the commits ledger and the evidence
@@ -608,6 +1007,15 @@ after it), each exit 0, from the worktree root:
   a same-uid process that moves the worktree HEAD (the recovered base is
   the observed HEAD; the quarantined base, rest, lease, target and
   `gh_path` are never carried).
+- What an older reader does (Codex's P3 on #904): a 3.1.2 reader of a
+  recovered ledger refuses it as `ledger_tampered`. Its decode drops
+  `recovered` and the carried entries' `note` (fields it does not have), so
+  the body it re-encodes for the tag differs from the one sealed, and the
+  tag fails; continuing the chain at N+1 gives no backward readability
+  either. This is the rc.2 rule (0e, before the release that carries
+  0c-B): a ledger a newer amq-squad wrote is that distinct refusal, not a
+  tamper; until then a downgrade reads a recovered seat as tampered, with
+  its evidence kept (0c-A) and this recovery the way back.
 - The evidence refs of discards the quarantined body recorded are not
   carried (the discard records are untrusted); the refs stay in the seat
   repository under `refs/amq-squad/evidence/<seat>/...` and the counter
