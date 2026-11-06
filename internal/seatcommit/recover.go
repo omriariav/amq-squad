@@ -302,8 +302,12 @@ func recordVerified(o RecoverOptions, live Ledger, slotPath string) (RecoverResu
 	if err != nil {
 		return out, err
 	}
-	if live.Seal == nil || live.Seal.Seq < oldSeq {
-		return out, refuseRecover(RecoverNotTampered, "the commits ledger of seat %s verifies at link %d, behind the slot's seq %d; nothing to record", o.Handle, live.Seal.Seq, oldSeq)
+	at := 0 // a verifying ledger is sealed; the refusal never reads a nil seal
+	if live.Seal != nil {
+		at = live.Seal.Seq
+	}
+	if at < oldSeq {
+		return out, refuseRecover(RecoverNotTampered, "the commits ledger of seat %s verifies at link %d, behind the slot's seq %d; nothing to record", o.Handle, at, oldSeq)
 	}
 	if len(o.Carry) > 0 {
 		return out, refuseRecover(RecoverEntryUnknown, "the commits ledger of seat %s verifies and its entries stand; a verified recovery carries nothing", o.Handle)
