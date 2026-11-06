@@ -24,7 +24,8 @@ timeout row's child pid); then `c27ad8fc`, the verified recovery's
 that name below), then `af1a6124`, the note; then `ad3330e0`, the plan
 reviewer's ruling on `af1a6124` (the section "The plan reviewer on
 af1a6124"), and `bd683f28`, its row for a hold on an earlier slot; then
-this note. The helper move of `8017ffea` is between
+`ede2226c`, the note; then `e1fc443c`, the masked key's row the reviewer
+asked for; then this note. The helper move of `8017ffea` is between
 two declared packages (`internal/schedproc/slots.go` to
 `internal/seatcommit/baseshadow.go`), so it left the declared set
 unchanged. `9de43a6c` widens it by two files, `internal/task/reset_if.go`
@@ -448,8 +449,11 @@ gates below are the run evidence) and found three P2 and one P3.
   answers `AlreadyRecovered` and writes nothing new). The residual: a
   refused body that does not decode gives no baseline, and the seq path
   is then as before; such a body has no readable record to replay either.
-  (Superseded in part by the plan reviewer's ruling, the next section:
-  the seq path is gone, so a replay needs no baseline to be refused.)
+  (Closed by the plan reviewer's ruling, the next section: the seq path
+  is gone, and a record that predates the alarm cannot name a slot the
+  alarm created, so a refused body with no baseline, undecodable or
+  stripped of its record, replays nothing; the one exception, a slot the
+  quarantine reuses for an identical refusal, is in that section.)
 - **P2-2, temp names defeat the suppression.** `logOnce` compared the
   whole error text, so a persistent disk-full during `CleanSeat` that
   names a fresh `amq-squad-shadow-<random>` (or an atomic write's temp)
@@ -519,6 +523,23 @@ The reviewer kept P2-2 and P3 as built and tightened P2-1 and P2-3.
   writer (the commit step's refusal words it differently), is left as it
   is and the hold is released. One row's hand-made block named a slot
   (`/q`) the hold never had; it now uses the hold's own detail.
+- **The baseline can only withhold a release.** It is decoded from the
+  refused bytes without verification (the reviewer accepted this): a
+  forged or stale baseline can make `covers` refuse a record, never
+  accept one, since `covers` checks the baseline only to say no, and the
+  release still needs the exact slot (or, with no slot, the verb's sealed
+  decision). The worst a wrong baseline does is keep a seat held until
+  the lead decides again.
+- **The masked suppression key (P2-2), accepted.** The reviewer accepted
+  the reason with its paths and digit runs masked, in place of a fixed
+  code, with a row stating the trade-off (`e1fc443c`): two failures whose
+  texts differ only in a temp file's name log one line, and one that
+  differs in words logs a second. The trade-off, as built: a fixed code
+  per kind would also merge failures that say different things (a disk
+  full, then a permission refusal), and the lead would see the first one
+  only; the masked text keeps those apart at the cost of merging two
+  failures that differ only in a path or a number, which are then
+  counted, not shown (the full text of the first stays in its line).
 - **Where the baseline still decides.** Under slot-only matching the
   baseline refuses a record that names the hold's own slot and was
   already in the ledger at the alarm. On real files I found no path to
@@ -590,6 +611,7 @@ CLI.
 | child dead | The timeout row's stand-in writes its pid; after the bound's refusal the pid is dead (signal 0, polled up to 5 s), beside the refusal's text, the elapsed time and the lock taken by the next recovery. | `internal/seatcommit` `TestStalledOriginEndsTheRecoveryWithinTheBound` (unix: `processAlive` in `recover_unix_test.go`) |
 | P2-1 baseline | A hold on slot seq1 whose alarm carries, as its baseline, a record naming that same slot (link 4; an input built by hand, "The plan reviewer on af1a6124"); the reader answers that same record: 20 ticks release nothing; the state file keeps the baseline; a restarted scheduler restored from it releases nothing over 5 ticks and the task stays blocked; a new record (the lead's decision after the alarm) releases the hold and resets the task. | `internal/scheduler` `TestTheRecoveryPresentAtTheAlarmDoesNotReleaseIt` |
 | P2-1 the alarm's baseline | Real files: the lead's verified decision recorded (link 2); the head's seq changed to 1; `CleanSeats.PrepareSeat` refuses with `LedgerTamperedError` at seq 1 whose `Baseline` is the ledger's record; the head put back, `LedgerRecovery` answers a mark equal to the baseline. | `internal/schedproc` `TestThePrepareAlarmCarriesTheLedgersRecordAsTheBaseline` |
+| P2-2 the masked key | Three ticks: a failure naming `amq-squad-shadow-4127`, the same naming `amq-squad-shadow-90355`, then one that says `permission denied`: two `seat_prepare_failed` lines; `reasonIdentity` equates the first pair and keeps the words apart. | `internal/scheduler` `TestReasonsDifferingOnlyInATempNameLogOnce` |
 | P2-2 temp names | A prepare failure naming a fresh `amq-squad-shadow-<n>` and byte count each tick for 30 ticks: one `seat_prepare_failed` (with the full text) and one `seat_prepare_suppressed`; a failure that says something else (`permission denied`) is logged again. | `internal/scheduler` `TestAFailureNamingAFreshTempFileIsLoggedOnce` |
 | P2-3 the conditional reset | Between the release's read and its reset the task is reset and blocked again (`lead_hold`): the new block stays with its reason, no `task_reset`, no dispatch, no failure line, the hold released. The store: `ResetIfBlocked` refuses another reason, a pending task (`ErrBlockChanged`) and an unknown id (`ErrNotFound`), and resets its own reason with the block's fields cleared. | `internal/scheduler` `TestARecoveryNeverClearsABlockRaisedAfterItsRead`; `internal/task` `TestResetIfBlockedResetsOnlyItsReason` |
 | P3 the retry's link | The transient alarm at seq 4, a second commit step (live link 7), the verified decision writes link 8; its retry is `AlreadyRecovered`, `Verified`, link 8; the record's `Link` is 8; then the head's seq changed to 1: the quarantine's `Prior` is that record (seq, slot, link, time), and the head put back, `RecoveryOf` answers it. | `internal/seatcommit` `TestAVerifiedRecoveryRetriedReportsItsLink` |
@@ -1706,6 +1728,26 @@ recover_test.go:709: the decision for X after X.2's recovery: recover_not_tamper
 `--- FAIL: TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery (4.59s); FAIL`
 restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	4.184s`.
 
+### the masked key's row (`e1fc443c`)
+
+```
+go test -count=1 -run ^TestReasonsDifferingOnlyInATempNameLogOnce$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:124`
+```
+		t.UpdatedAt.UTC().Format(time.RFC3339Nano), reasonIdentity(err.Error()), log)
+```
+to:
+```
+		t.UpdatedAt.UTC().Format(time.RFC3339Nano), err.Error(), log)
+```
+First failing line (exit 1):
+```
+tamper_test.go:836: 3 seat_prepare_failed lines, want 2 (the temp name alone is one failure, the words another): [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason: Stage: ReasonCode:} ...]
+```
+`--- FAIL: TestReasonsDifferingOnlyInATempNameLogOnce (0.02s); FAIL`
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	0.621s`.
+
 ### The re-pass's reverts, run again on `ad3330e0`
 
 The revert runs of "Codex's re-pass on b250b951" above, run again on
@@ -1738,13 +1780,39 @@ on you" only when both are empty; its row (a tamper block with no gates
 shows under "waiting on you", never the "nothing" line) and revert run go
 in this note, and the gates run again on that head.
 
-Phase one, on `bd683f28` (the plan reviewer's ruling on `af1a6124`:
-`ad3330e0`, `bd683f28`; this note is the only change after it), each from
+Phase one, on `e1fc443c` (the masked key's row after `ede2226c`; this
+note is the only change after it), each from the worktree root. The
+whole-module test, `npm test` and `make ci` ran under the host's gate lock
+(`<job tmp>/gate-lock.sh <label> -- <command>`, the plan reviewer's rule,
+widened to `npm test`), one at a time, each printing the head
+(`git rev-parse --short HEAD`: `e1fc443c`) inside the lock:
+
+- `gate-lock.sh 904-gates -- sh -c 'go build ./... && go vet ./... && go
+  test -count=1 ./...'` (the whole module): exit 0, 56 packages `ok`, no
+  `FAIL` (the lock taken after 640 s of waiting).
+- `gate-lock.sh 904-pi -- sh -c 'cd pi && npm test'`: exit 0, `ℹ tests
+  118`, `ℹ pass 117`, `ℹ fail 0`, `ℹ skipped 1`; `cd pi && node
+  scripts/lint.mjs`: exit 0.
+- `gate-lock.sh 904-ci -- sh -c 'PATH=<job tmp>/pyvenv/bin:$PATH
+  NPM_FLAGS=--offline make ci'`: exit 0, 70 `ok` (50 from the cache of
+  the whole-module run), no `FAIL`, the same four pi counts.
+- The format gate, Go 1.26's gofmt first on PATH, `make fmt-check`: exit
+  0, nothing named.
+- `GOOS=windows go build ./internal/seatcommit/`: exit 0;
+  `go run ./scripts/redact-evidence -check docs/v3-spike/320-0c-quarantine/`:
+  exit 0 (on this note).
+
+Every gate passed on its first run here, none repeated.
+
+Before that, phase one on `bd683f28` (the plan reviewer's ruling on `af1a6124`:
+`ad3330e0`, `bd683f28`; the note `ede2226c` the only change after it), each from
 the worktree root. The whole-module test and `make ci` ran under the
 host's gate lock (`<job tmp>/gate-lock.sh <label> -- <command>`, one heavy
 gate at a time across the agents on this host, the plan reviewer's rule);
 each printed the head (`git rev-parse --short HEAD`: `bd683f28`) inside
-the lock.
+the lock. `npm test` did not, yet: the rule was widened to it after these
+runs, and its first run's R53 stop below is the case the widening names
+(another agent's suite running at the same time).
 
 - `gate-lock.sh 904-gates -- sh -c 'go build ./... && go vet ./... && go
   test -count=1 ./...'` (the whole module): exit 0, 56 packages `ok`, no
@@ -1773,7 +1841,11 @@ the lock.
 
 Before that, phase one on `8eeeaf24` (Codex's re-pass on `b250b951`: `9de43a6c`,
 `8eeeaf24`; this note is the only change after it), each from the
-worktree root, one at a time:
+worktree root, one at a time. These ran before the gate-lock rule reached
+this task: none of them ran under `gate-lock.sh`, so the whole-module run
+whose `internal/buzz` row hung shared the host with other agents'
+whole-module gates (the load average of 10.8 below), the condition the
+rule was made for.
 
 - `go build ./... && go vet ./... && go test -count=1 ./...` (the whole
   module): the first run exit 1, on one row outside this PR's files:
