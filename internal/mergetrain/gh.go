@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // GH is the Forge over the owner's gh CLI: the train runs under the owner's
@@ -60,6 +61,11 @@ func (g *GH) exec(ctx context.Context, args []string) ([]byte, string, error) {
 	if g.Env != nil {
 		cmd.Env = g.Env
 	}
+	// a gh killed at the context's deadline may leave a child holding its
+	// pipes (a credential helper, a pager); Output then returns after
+	// WaitDelay instead of waiting for the child (the run's bound, Codex's
+	// re-pass on #903)
+	cmd.WaitDelay = 2 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

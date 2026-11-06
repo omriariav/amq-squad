@@ -230,7 +230,7 @@ func TestMergeTrainRunEndsAtItsBoundInWords(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := t.TempDir()
 	gh := filepath.Join(dir, "gh")
-	if err := os.WriteFile(gh, []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\nsleep 30 &\nwait\n"), 0o755); err != nil { // a child holds the pipes past the kill, as a helper of gh's would
 		t.Fatal(err)
 	}
 	reqPath := filepath.Join(dir, "req.json")
