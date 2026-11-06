@@ -21,7 +21,9 @@ import (
 // refusedRebind runs the lead's re-bind old -> moved through a Binder that
 // advances the binding right before the conditional write (a concurrent
 // train run's stand-in), so the real operation is refused and journals
-// rebase(old -> moved), rebind(old -> moved), rebind_superseded(moved).
+// rebase(old -> moved), rebind(old -> moved), then in the write's critical
+// section rebind_readmitted(moved) and its undo, rebind_superseded(moved)
+// with the reason rebind_failed (the plan reviewer's ruling on the order).
 // The binding is then put back at old, as the seat's commit step would.
 func refusedRebind(t *testing.T, f *fixture, id, old, moved string) {
 	t.Helper()
@@ -40,10 +42,16 @@ func refusedRebind(t *testing.T, f *fixture, id, old, moved string) {
 		if e.PR == 1 && e.Head == old && e.NewHead == moved && (run == "" || e.Run == run) {
 			run = e.Run
 			got = append(got, e.Kind)
+			if e.Kind == "rebind_superseded" && !strings.HasPrefix(e.Detail, "rebind_failed: the binding moved while the re-bind was proved") {
+				t.Fatalf("the undo entry's reason: %q", e.Detail)
+			}
 		}
 	}
-	if !slices.Equal(got, []string{"rebase", "rebind", "rebind_superseded"}) {
-		t.Fatalf("the refused re-bind journaled %v, want rebase, rebind, rebind_superseded under one run", got)
+	if !slices.Equal(got, []string{"rebase", "rebind", "rebind_readmitted", "rebind_superseded"}) {
+		t.Fatalf("the refused re-bind journaled %v, want rebase, rebind, rebind_readmitted, rebind_superseded under one run", got)
+	}
+	if headAdmitted(after, fixtureRepo, 1, moved) {
+		t.Fatal("the refused re-bind left the head admitted")
 	}
 	if _, err := s.BindPR(id, fixtureRepo, 1, old, time.Now()); err != nil {
 		t.Fatal(err)
@@ -51,7 +59,8 @@ func refusedRebind(t *testing.T, f *fixture, id, old, moved string) {
 }
 
 // Codex's sequence (reconcileRebinds): rebase(old -> H), rebind(old -> H),
-// rebind_superseded(H), as the real refused re-bind journals them, with the
+// rebind_superseded(H), as the real refused re-bind journals them (with
+// its readmission before the undo, since the reviewer's ruling), with the
 // task bound at old and the PR's head H. The replay finds the rebind entry
 // for the bound head with the server at H, and the admission check leaves
 // H unbound: the binding stays at old, a reconcile entry names the verb,
@@ -368,6 +377,135 @@ func TestBindingFirstThenSupersedeIsExcludedNextRun(t *testing.T) {
 	}
 	if boundHead(t, f, id) != moved || f.train.Audit.trainHeads(fixtureRepo, 1)[moved] {
 		t.Fatalf("bound %s, trainHeads %v", boundHead(t, f, id), f.train.Audit.trainHeads(fixtureRepo, 1))
+	}
+	f.realRun(&req)
+	res, err := f.train.Run(context.Background(), req)
+	if err != nil || res.PRs[0].Status != "refused" || !slices.ContainsFunc(res.PRs[0].Refusals, func(r Refusal) bool { return r.Rule == RuleForcePush }) {
+		t.Fatalf("the superseded head was taken for the train's own: %v %+v", err, res.PRs)
+	}
+}
+
+// failingBindFrom fails the verb's conditional write with a store error.
+type failingBindFrom struct{ StoreBinder }
+
+func (failingBindFrom) BindPRFrom(string, string, int, string, string) error {
+	return errors.New("disk full")
+}
+
+// panickingBindFrom stands in for a crash between the readmission and the
+// write: the conditional write panics.
+type panickingBindFrom struct{ StoreBinder }
+
+func (panickingBindFrom) BindPRFrom(string, string, int, string, string) error {
+	panic("the process died between the readmission and the binding write")
+}
+
+// The plan reviewer's ruling on the verb's critical section: the
+// readmission is journaled before the write, and a write that fails (a
+// store error here; the moved binding is refusedRebind's) is undone in the
+// same section by rebind_superseded(H) with the reason rebind_failed. A
+// failed bind ends with H not admitted and unbound, the refusal in words.
+// Reverted (no undo append), H stays admitted.
+func TestFailedRebindWriteLeavesTheHeadNotAdmitted(t *testing.T) {
+	f, id, old, _ := strictBound(t)
+	_, moved := moveBranch(f, "pr1", nil, true)
+	s := f.tasks()
+	_, err := Rebind(context.Background(), RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: failingBindFrom{StoreBinder{Store: s}}, PR: 1, From: old, To: moved, Lead: "lead"})
+	var refusal *RebindRefusal
+	if !errors.As(err, &refusal) || refusal.Code != "binding_failed" || !strings.Contains(refusal.Detail, "the binding could not be written: disk full; nothing is bound") {
+		t.Fatalf("the failed write's refusal: %v", err)
+	}
+	entries, _ := f.train.Audit.Read()
+	ri := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "rebind_readmitted" && e.NewHead == moved })
+	si := slices.IndexFunc(entries, func(e Entry) bool {
+		return e.Kind == "rebind_superseded" && e.NewHead == moved && strings.HasPrefix(e.Detail, "rebind_failed: the binding could not be written: disk full")
+	})
+	if headAdmitted(entries, fixtureRepo, 1, moved) || ri < 0 || si < ri || boundHead(t, f, id) != old {
+		t.Fatalf("a failed bind left H admitted or bound: admitted %v, readmitted %d, superseded %d, bound %s", headAdmitted(entries, fixtureRepo, 1, moved), ri, si, boundHead(t, f, id))
+	}
+}
+
+// The crash between the readmission and the write (the ruling: accepted):
+// H is admitted and unbound, and the verb run again binds it.
+func TestCrashBetweenReadmissionAndBindIsRepairedByTheVerb(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	_, moved := moveBranch(f, "pr1", nil, true)
+	s := f.tasks()
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("the bind seam did not panic")
+			}
+		}()
+		_, _ = Rebind(context.Background(), RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: panickingBindFrom{StoreBinder{Store: s}}, PR: 1, From: old, To: moved, Lead: "lead"})
+	}()
+	entries, _ := f.train.Audit.Read()
+	if !headAdmitted(entries, fixtureRepo, 1, moved) || boundHead(t, f, id) != old ||
+		!slices.ContainsFunc(entries, func(e Entry) bool { return e.Kind == "rebind_readmitted" && e.NewHead == moved }) {
+		t.Fatalf("the crash state: admitted %v, bound %s, %v", headAdmitted(entries, fixtureRepo, 1, moved), boundHead(t, f, id), kinds(entries, 1))
+	}
+	if _, err := f.train.Audit.Read(); err != nil { // the lock was released by the panic's unwinding
+		t.Fatal(err)
+	}
+	if _, err := Rebind(context.Background(), RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: StoreBinder{Store: s}, PR: 1, From: old, To: moved, Lead: "lead"}); err != nil || boundHead(t, f, id) != moved {
+		t.Fatalf("the verb run again did not bind H: %v (bound %s)", err, boundHead(t, f, id))
+	}
+	f.realRun(&req)
+	if res, err := f.train.Run(context.Background(), req); err != nil || res.PRs[0].Status != "merged" {
+		t.Fatalf("the re-bound head did not land: %v %+v", err, res.PRs)
+	}
+}
+
+// racingBindFrom starts a supersede of the head while the verb's write is
+// held open inside the critical section, and records whether it landed
+// before the write returned.
+type racingBindFrom struct {
+	StoreBinder
+	a                Audit
+	old, head        string
+	appended, waited chan error
+}
+
+func (b *racingBindFrom) BindPRFrom(taskID, repository string, pr int, from, head string) error {
+	go func() {
+		b.appended <- b.a.Append(Entry{Run: "mt-rebind-racing", Kind: "rebind_superseded", Repository: repository, Base: "main", PR: pr, Head: b.old, NewHead: b.head, Detail: "a supersede racing the verb"})
+	}()
+	time.Sleep(200 * time.Millisecond)
+	select {
+	case err := <-b.appended:
+		b.waited <- fmt.Errorf("the supersede landed between the readmission and the binding write: %v", err)
+		b.appended <- err
+	default:
+		b.waited <- nil
+	}
+	return b.StoreBinder.BindPRFrom(taskID, repository, pr, from, head)
+}
+
+// A supersede appender racing the verb cannot land between its readmission
+// and its write: started during the write, it lands after the section, so
+// it is the head's latest terminal entry (the head bound and not admitted,
+// for the next real run to refuse on force_push). Reverted (the
+// readmission appended after the lock), the readmission lands after the
+// supersede and overrides it.
+func TestSupersedeCannotLandBetweenReadmissionAndBind(t *testing.T) {
+	f, id, old, req := strictBound(t)
+	_, moved := moveBranch(f, "pr1", nil, true)
+	s := f.tasks()
+	b := &racingBindFrom{StoreBinder: StoreBinder{Store: s}, a: f.train.Audit, old: old, head: moved, appended: make(chan error, 1), waited: make(chan error, 1)}
+	if _, err := Rebind(context.Background(), RebindInput{Forge: f.gh, Audit: f.train.Audit, Tasks: s, Binder: b, PR: 1, From: old, To: moved, Lead: "lead"}); err != nil {
+		t.Fatalf("the verb: %v", err)
+	}
+	if err := <-b.waited; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-b.appended; err != nil {
+		t.Fatal(err)
+	}
+	entries, _ := f.train.Audit.Read()
+	ri := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "rebind_readmitted" && e.NewHead == moved })
+	si := slices.IndexFunc(entries, func(e Entry) bool { return e.Kind == "rebind_superseded" && e.Run == "mt-rebind-racing" })
+	if ri < 0 || si < ri || headAdmitted(entries, fixtureRepo, 1, moved) || boundHead(t, f, id) != moved {
+		t.Fatalf("the racing supersede: readmitted %d, superseded %d, admitted %v, bound %s", ri, si, headAdmitted(entries, fixtureRepo, 1, moved), boundHead(t, f, id))
 	}
 	f.realRun(&req)
 	res, err := f.train.Run(context.Background(), req)

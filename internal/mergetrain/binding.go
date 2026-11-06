@@ -130,9 +130,12 @@ var ErrHeadSuperseded = errors.New("head superseded by a lead re-bind decision")
 // bindWrite is one binding write: the task's binding of PR moves from the
 // bound head From to To. Conditional makes it hold only while the task is
 // still bound at From (BindPRFrom, the lead's verb). Readmit is that verb,
-// the one re-admission of a superseded head; Readmitted, when set, builds
-// the verb's rebind_readmitted entry from whether the head was admitted,
-// and bindAdmitted appends it in the same critical section as the write.
+// the one re-admission of a superseded head. Readmitted, when set, builds
+// the verb's rebind_readmitted entry from whether the head was admitted;
+// Undo, when set, builds the entry that undoes it when the write fails
+// (the verb's rebind_superseded with the reason rebind_failed). Both are
+// built by the caller (rebind.go) and appended by bindAdmitted inside the
+// write's critical section.
 type bindWrite struct {
 	Task, Repository string
 	PR               int
@@ -140,6 +143,7 @@ type bindWrite struct {
 	Conditional      bool
 	Readmit          bool
 	Readmitted       func(admitted bool) Entry
+	Undo             func(err error) Entry
 }
 
 // bindAdmitted is the only writer of a task's PR binding (Codex's fourth
@@ -149,7 +153,10 @@ type bindWrite struct {
 // (Audit.AuditLockPath, `<audit.jsonl>.lock`, the exclusive flock every
 // Append takes, so every writer of rebind_superseded and rebind_readmitted
 // takes it too): the fresh read of the journal, headAdmitted on that read,
-// the binding write and, for the lead's verb, its rebind_readmitted entry.
+// for the lead's verb its rebind_readmitted entry (journaled before the
+// write, as update_requested before the update), the binding write, and,
+// when the write fails, the verb's undo entry (a terminal
+// rebind_superseded, so the journal shows the head not admitted).
 // The two orders serialize: a supersede appended first is seen by the
 // fresh read and the write is refused; one appended after a binding write
 // lands in the journal after it, so trainHeads and every later admission
@@ -157,8 +164,8 @@ type bindWrite struct {
 // not admitted (admitted false). Otherwise a superseded head is refused:
 // no binding is written, record (when set) gets a reconcile entry naming
 // the lead's merge-train rebind verb once the lock is released, and the
-// error is ErrHeadSuperseded. A binding written whose readmitted entry
-// could not be appended returns an error wrapping errReadmittedNotWritten.
+// error is ErrHeadSuperseded. A readmission that could not be appended
+// writes no binding and returns an error wrapping errReadmittedNotWritten.
 func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (admitted bool, err error) {
 	err = a.locked(func() error {
 		journal, err := a.Read()
@@ -169,18 +176,22 @@ func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (adm
 		if !admitted && !w.Readmit {
 			return ErrHeadSuperseded
 		}
+		if w.Readmitted != nil {
+			if aerr := a.appendLocked(w.Readmitted(admitted)); aerr != nil {
+				return fmt.Errorf("%w: %v", errReadmittedNotWritten, aerr)
+			}
+		}
 		if w.Conditional {
 			err = b.BindPRFrom(w.Task, w.Repository, w.PR, w.From, w.To)
 		} else {
 			err = b.BindPR(w.Task, w.Repository, w.PR, w.To)
 		}
-		if err != nil || w.Readmitted == nil {
-			return err
+		if err != nil && w.Undo != nil {
+			if uerr := a.appendLocked(w.Undo(err)); uerr != nil {
+				return errors.Join(err, fmt.Errorf("the undo entry was not written: %w", uerr))
+			}
 		}
-		if aerr := a.appendLocked(w.Readmitted(admitted)); aerr != nil {
-			return fmt.Errorf("%w: %v", errReadmittedNotWritten, aerr)
-		}
-		return nil
+		return err
 	})
 	if errors.Is(err, ErrHeadSuperseded) && record != nil {
 		if rerr := record(Entry{Kind: "reconcile", PR: w.PR, Task: w.Task, Head: w.From, NewHead: w.To,
@@ -191,8 +202,8 @@ func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (adm
 	return admitted, err
 }
 
-// errReadmittedNotWritten: the binding is written and the verb's
-// rebind_readmitted entry could not be appended.
+// errReadmittedNotWritten: the verb's rebind_readmitted entry could not be
+// appended, so no binding was written.
 var errReadmittedNotWritten = errors.New("the readmission entry was not written")
 
 // Binder writes a task's PR binding. Its BindPR and BindPRFrom are called

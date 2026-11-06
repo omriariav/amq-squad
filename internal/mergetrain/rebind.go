@@ -136,25 +136,25 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 	if err := write(Entry{Kind: "rebind", PR: in.PR, Task: tk.ID, Head: in.From, NewHead: in.To, Detail: "patch-id: " + proof.OldID + "\nfirst parent: " + proof.Parent + "\n" + detail}); err != nil {
 		return RebindResult{}, &RebindRefusal{Code: RefusedRebindFailed, Detail: "audit log: " + err.Error()}
 	}
-	// The write goes through the one admission (bindAdmitted, under the
-	// journal lock, on a fresh read of the journal): this verb is the
-	// re-admission, so a superseded head is bound here, and whether it had
-	// been superseded words the readmission entry. The
-	// write holds only while the binding is still at From, checked under
-	// the store's lock (Codex on #903): a train run that advanced the
-	// binding since the snapshot above keeps its head and its merge fact.
-	// The two entries above stay journaled; reconcileRebinds applies a
-	// rebind entry only to a task still bound at its Head, so they bind
-	// nothing later.
-	//
-	// The re-admission (the plan reviewer on #903): a head a superseded
-	// re-bind had taken out of trainHeads comes back only through this
-	// verb's applied binding, recorded as the terminal rebind_readmitted
-	// entry under this run, appended in the binding write's own critical
-	// section under the journal lock, so no supersede can fall between the
-	// binding and its readmission; headAdmitted reads the latest terminal
-	// entry of a head. The binding is written even when the append fails,
-	// so that is reported in the result's words, not as a refusal.
+	// The write goes through the one admission (bindAdmitted): one critical
+	// section under the journal lock (Audit.AuditLockPath) on a fresh read
+	// of the journal. This verb is the re-admission, so a superseded head
+	// is bound here, and whether it had been superseded words the
+	// readmission. The plan reviewer's ruling on the order inside the
+	// section: the terminal rebind_readmitted entry first (the journal
+	// before the mutation, as update_requested before the update), then the
+	// conditional write, which holds only while the binding is still at
+	// From, checked under the store's lock (Codex on #903): a train run
+	// that advanced the binding since the snapshot above keeps its head and
+	// its merge fact. A write that fails there (the binding moved, or a
+	// store error) is undone in the same section by a terminal
+	// rebind_superseded entry with the reason rebind_failed, so the journal
+	// shows the head not admitted. A crash between the readmission and the
+	// write leaves the head admitted and unbound: the lead asked for it,
+	// nothing binds it but bindAdmitted, and the verb run again binds it.
+	// The rebase and rebind entries above stay journaled either way;
+	// reconcileRebinds applies a rebind entry only to a task still bound at
+	// its Head, through bindAdmitted.
 	readmitted := func(admitted bool) Entry {
 		readmission := "the lead's re-bind bound this head; it is the train's own"
 		if !admitted {
@@ -162,27 +162,29 @@ func Rebind(ctx context.Context, in RebindInput) (RebindResult, error) {
 		}
 		return Entry{Kind: "rebind_readmitted", Run: res.Run, Repository: repository, Base: cur.BaseRef, PR: in.PR, Task: tk.ID, Head: in.From, NewHead: in.To, Detail: readmission}
 	}
-	_, err = bindAdmitted(in.Audit, in.Binder, nil, bindWrite{Task: tk.ID, Repository: repository, PR: in.PR, From: in.From, To: in.To, Conditional: true, Readmit: true, Readmitted: readmitted})
-	if errors.Is(err, errReadmittedNotWritten) {
-		res.Push += " (" + err.Error() + ")"
-		return res, nil
+	undo := func(err error) Entry {
+		return Entry{Kind: "rebind_superseded", Run: res.Run, Repository: repository, Base: cur.BaseRef, PR: in.PR, Task: tk.ID, Head: in.From, NewHead: in.To, Detail: "rebind_failed: " + bindFailure(err)}
 	}
-	if err != nil {
-		if errors.Is(err, task.ErrPRBindingMismatch) {
-			// The terminal entry (the plan reviewer on #903): the rebase
-			// entry above would otherwise keep the named head in trainHeads,
-			// and a later run would take a push of exactly that head for the
-			// train's own; headAdmitted refuses a head whose latest terminal
-			// entry is this one, on every path that trusts or binds it.
-			why := fmt.Sprintf("the binding moved while the re-bind was proved: %v; nothing is bound", err)
-			if aerr := write(Entry{Kind: "rebind_superseded", PR: in.PR, Task: tk.ID, Head: in.From, NewHead: in.To, Detail: why}); aerr != nil {
-				return RebindResult{}, &RebindRefusal{Code: RefusedRebindFailed, Detail: why + "; and the audit log refused the superseded entry: " + aerr.Error()}
-			}
-			return RebindResult{}, &RebindRefusal{Code: RefusedRebindHead, Detail: why + " (the proof's entries and the superseded entry are journaled under run " + res.Run + ")"}
-		}
-		return RebindResult{}, &RebindRefusal{Code: "binding_failed", Detail: fmt.Sprintf("task %s to %s: %v", tk.ID, short(in.To), err)}
+	_, err = bindAdmitted(in.Audit, in.Binder, nil, bindWrite{Task: tk.ID, Repository: repository, PR: in.PR, From: in.From, To: in.To, Conditional: true, Readmit: true, Readmitted: readmitted, Undo: undo})
+	switch {
+	case err == nil:
+	case errors.Is(err, errReadmittedNotWritten):
+		return RebindResult{}, &RebindRefusal{Code: RefusedRebindFailed, Detail: err.Error() + "; nothing is bound"}
+	case errors.Is(err, task.ErrPRBindingMismatch):
+		return RebindResult{}, &RebindRefusal{Code: RefusedRebindHead, Detail: bindFailure(err) + " (the proof's entries, the readmission and the superseded entry are journaled under run " + res.Run + ")"}
+	default:
+		return RebindResult{}, &RebindRefusal{Code: "binding_failed", Detail: fmt.Sprintf("task %s to %s: %s", tk.ID, short(in.To), bindFailure(err))}
 	}
 	return res, nil
+}
+
+// bindFailure is a failed re-bind write in words, for the refusal and for
+// the undo entry's reason.
+func bindFailure(err error) string {
+	if errors.Is(err, task.ErrPRBindingMismatch) {
+		return fmt.Sprintf("the binding moved while the re-bind was proved: %v; nothing is bound", err)
+	}
+	return fmt.Sprintf("the binding could not be written: %v; nothing is bound", err)
 }
 
 // journaledBases are the base tips the train pinned when it worked on the PR
