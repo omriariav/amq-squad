@@ -2179,6 +2179,22 @@ on you" only when both are empty; its row (a tamper block with no gates
 shows under "waiting on you", never the "nothing" line) and revert run go
 in this note, and the gates run again on that head.
 
+On `254f2c2c` (the plan reviewer's gate rule: `make ci` runs fmt-check,
+vet and the Go tests over every package, so it reads the changed
+`tamper_test.go`), from the worktree root:
+
+- `gate-lock.sh 904-ci-r2 -- sh -c 'PATH=<job tmp>/pyvenv/bin:$PATH
+  NPM_FLAGS=--offline make ci'` (printing `254f2c2c` inside the lock):
+  exit 0, 70 `ok` (50 from the cache), no `FAIL`, `internal/scheduler`
+  run fresh (25.4 s), `ℹ tests 119`, `ℹ pass 118`, `ℹ fail 0`, `ℹ skipped
+  1`.
+- `PATH=<GOMODCACHE>/golang.org/toolchain@v0.0.1-go1.26.10.darwin-arm64/bin:$PATH
+  make fmt-check`: exit 0.
+- `npm test` and `GOOS=windows go build ./internal/seatcommit/` stand from
+  `28051cd6` (below): `28051cd6..254f2c2c` touches only
+  `internal/scheduler/tamper_test.go` and this note (`git diff
+  --name-only`), no `.ts` file and nothing in `internal/seatcommit`.
+
 On `c83e6ef3` (one test row after `5d2a576a`; this note the only change
 after it), the gates the lead named for a row and a note:
 `go test -count=1 ./internal/scheduler/`: exit 0; `gate-lock.sh 904-gates
