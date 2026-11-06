@@ -27,7 +27,10 @@ af1a6124"), and `bd683f28`, its row for a hold on an earlier slot; then
 `ede2226c`, the note; then `e1fc443c`, the masked key's row the reviewer
 asked for; then `c267382d` and `f1edd375`, the notes on it; then
 `1cd21fa1`, the baseline removed (the plan reviewer on `f1edd375`, the
-section "The baseline removed"); then this note. The helper move of `8017ffea` is between
+section "The baseline removed"), and `c5754be4`, its note; then
+`28051cd6`, the alarm id and the decision by alarm (the plan reviewer's
+ruling on Codex's delta pass on `c267382d`, the section "The alarm id");
+then this note. The helper move of `8017ffea` is between
 two declared packages (`internal/schedproc/slots.go` to
 `internal/seatcommit/baseshadow.go`), so it left the declared set
 unchanged. `9de43a6c` widens it by two files, `internal/task/reset_if.go`
@@ -519,6 +522,17 @@ The reviewer kept P2-2 and P3 as built and tightened P2-1 and P2-3.
   again. A hold with a slot ignores the message (its slot answers it).
   The lead needs a slot to name: a later refused read of the document
   quarantines it (0c-A), and the lead recovers from that slot.
+  (Superseded by `28051cd6`, "The alarm id". Two statements here were
+  wrong, as Codex's delta pass on `c267382d` found: a refusal that
+  quarantined nothing and a ledger that verifies again leave no slot to
+  name, and the verified mode needs one (`recover.go:300`), so such a
+  hold stranded; and the apply step answered `recover_unrecorded` before
+  it told the scheduler (`schedproc/recover.go:149` returned before
+  `:155`), so its "the scheduler releases the seat at its next tick" was
+  false for a hold with no slot. `LeadRecovered` and `Decided` are gone;
+  the decision by alarm is sealed into the ledger, which the next tick
+  reads, so `recover_unrecorded` now releases at the next tick for every
+  hold.)
 - **The release resets only the hold's own block.** `ResetIfBlocked`
   takes a match that runs inside the one store mutation; the scheduler's
   (`LedgerTamper.names`) accepts only a `ledger_tampered` block whose
@@ -567,12 +581,16 @@ The reviewer kept P2-2 and P3 as built and tightened P2-1 and P2-3.
   changed again after the alarm (a later refused read quarantined it in
   another slot), the recovery must name the later slot (the decision is
   refused for a slot whose bytes are not the live document's), and the
-  hold on the first slot is not answered by it. It is not a dead end:
-  that recovery makes the document verify, and the verb sent for the
-  first slot then takes the verified mode (`recordVerified`: the slot
-  exists, the live chain is at or past its seq), whose record names the
-  first slot and releases the hold (`bd683f28`'s row drives the pair on
-  real files). Listed in "Residual risk".
+  hold on the first slot is not answered by it. That recovery makes the
+  document verify, and the verb sent for the first slot takes the
+  verified mode only when the chain is at or past the first slot's seq
+  (`recordVerified`, `recover.go:316`); `bd683f28`'s row is that case
+  (both slots at seq 1). The claim that this always answers the hold was
+  wrong (Codex's delta pass on `c267382d`): when the later slot is at a
+  lower seq (the head lowered), its recovery puts the chain behind the
+  first slot's seq and the verified mode refuses it. The hold is then
+  released by the decision by alarm (`28051cd6`, "The alarm id"), which
+  needs no slot and no seq ordering.
 
 ## The baseline removed (`1cd21fa1`, the plan reviewer on `f1edd375`)
 
@@ -628,6 +646,78 @@ code kept alive only by a test, `1cd21fa1` removes it.
   `TestAVerifiedRecoveryRetriedReportsItsLink`. No revert run for a
   removal.
 
+## The alarm id (`28051cd6`, the plan reviewer's ruling on Codex's delta pass on `c267382d`)
+
+Codex's delta pass on `c267382d` found three P2, each a hold the
+exact-slot rule could not release or released wrongly: (1) a transient
+read refusal whose quarantine copy failed gives a hold with no slot, and
+once the ledger verifies no slot ever appears, while the verified mode
+needs one (`recover.go:300`); (2) a hold on slot X at seq 150, the head
+then lowered to seq 1 (slot Y): X is refused while the live document is
+Y's, Y's recovery seals link 2, and X's verified recovery is refused
+because 2 < 150 (`recover.go:316`), so X stays held; (3) a late
+`LeadRecovered` attached itself to whatever no-slot hold the seat had at
+the next tick (`tamper.go:227`). The reviewer accepted a durable alarm id
+per hold as the root fix, with six conditions; as built:
+
+1. **The id.** Eight hex characters from the system's random source
+   (`newAlarmID`, `crypto/rand`), never a counter, so it is unique across
+   restarts; kept in the state file with the hold (`LedgerTamper.Alarm`)
+   and restored with it.
+2. **Shown to the lead.** The block's detail carries it (`seat H:
+   quarantined at PATH (seq N; alarm ID): ...`, or `could not be
+   quarantined (seq N; alarm ID)`), so the stop line and the screen's
+   seats and tasks blocks read: "seat H's commit record failed its check
+   (alarm ID); after investigating, the lead runs amq-squad scheduler
+   recover --seat H --alarm ID" (`words.ts` `tamperAlarm`, the
+   `ledger_tampered` block words, and `decisionWords` reading the
+   decision's detail; `screen.ts` unchanged).
+3. **The decision by alarm.** `scheduler recover --seat H --alarm ID
+   --reason R` goes through the decision socket with the lead-pane proof,
+   as the verb does. The apply step refuses it `recover_alarm_not_held`
+   unless the seat is held by that alarm now (`Scheduler.HeldAlarm`, the
+   tick's holds published under the scheduler's lock), and the ledger
+   half refuses it `recover_alarm_unverified` unless the ledger verifies
+   now (`seatcommit.recordAlarm`). It carries nothing, names no slot and
+   no seq, and seals the next link of the same body with the record
+   naming the alarm (`LedgerRecovery.Alarm`, `Verified`, `Link`); the
+   decision line names it ("the lead L released alarm ID of seat H by
+   decision ..."). Sent again it is answered from the ledger.
+4. **The release names the alarm; no notification.** `covers` releases a
+   hold on a record that names its alarm, or its exact slot; a decision
+   by alarm for any other alarm answers nothing. The release line ends
+   "alarm ID is released and the seat is grantable again", for the slot
+   release too. `LeadRecovered` and `Decided` are removed rather than
+   given the id: with the alarm in the sealed record the ledger alone
+   names the released hold, so the release stays a reconciliation (the
+   design since Codex's P2 on #904) and no notification exists to go
+   stale. The stale case is refused where it can still arise, at the
+   socket: a decision naming an alarm the seat is not held by now is
+   `recover_alarm_not_held`, answered to the lead (no tick line is
+   needed). The reviewer's condition named the notification; this
+   removal is put to them.
+5. **Rows**, each with a revert run below: the no-slot hold released by
+   its alarm after the ledger verifies (and across a restart); the
+   lower-seq slot recovered by its own slot while X releases only by its
+   alarm (the scheduler, and the ledger half on real files); the late
+   decision for an earlier alarm refused; the decision by alarm refused on
+   a ledger that does not verify, and for a wrong or released id.
+6. **The note's errors**, corrected where they stand: the two-decision
+   claim ("The plan reviewer on af1a6124" and "Residual risk"), "the
+   next tick releases" for a hold with no slot (the same section), and
+   the "P2 retry" row (`recover_not_tampered` is for a slot that does not
+   exist; an existing slot the chain is at or past takes the verified
+   mode). The comment above `applyRecoveries` (`tamper.go:213-216`) no
+   longer describes a seq release, nor does the package comment.
+
+The release's reset now matches the hold by its alarm (`names`: a
+`ledger_tampered` block whose detail names `; alarm ID)`), so a tamper
+block of another alarm stays (`TestARecoveryKeepsATamperBlockOfAnotherSlot`,
+whose other block now names another alarm). A hold an earlier build of
+this branch wrote without an id gets one when it is restored; its blocks
+name none, so their tasks are reset by the lead by hand (no released
+version wrote such a hold).
+
 ## The quarantine layout read
 
 A slot is `<root>/extensions/amq-squad/quarantine/commits.<handle>.seq<N>[.k]/`
@@ -659,7 +749,7 @@ CLI.
 | P1 | A `url.<evil>.insteadOf` of the origin and a `core.sshCommand` with a marker in the seat's config, the task branch at an unpushed commit in `evil`: the seat's own `ls-remote` answers the unpushed commit and an ssh URL runs the planted command (the marker appears; removed); the recovery's check refuses (`recover_entry_unpushed`, "is not on origin's <branch>"), nothing written, the marker absent; the real entry still carries, the marker still absent. | `internal/seatcommit` `TestCarryCheckIgnoresTheSeatsGitConfig` |
 | P2 bound | `RecoverTransportTimeout` 500 ms, the push URL an ssh host with `GIT_SSH_COMMAND=sh -c 'sleep 60' --`: the carry is refused `recover_entry_unpushed` naming "(bound 500ms)" and "did not answer within its bound; killed" well inside 10 s, nothing written, and the next recovery (no carry) takes the ledger lock at once and completes at seq N+1. | `internal/seatcommit` `TestStalledOriginEndsTheRecoveryWithinTheBound` |
 | P3 compat | A recovered ledger with a carried entry: this binary's decode verifies; the same bytes decoded as a 3.1.2 reader does (no `Recovered`, no `Note`) do not, and `sealchain.Check` on that decode is `ledger_tampered: the tag of commits.<h> link <N> fails`. | `internal/seatcommit` `TestOlderReaderRefusesARecoveredLedgerAsTampered` |
-| P2 retry | A recovery decided again for the same slot is `AlreadyRecovered` with the first result's seqs, slot and body digest, the ledger byte-identical; another slot on the recovered ledger is `recover_not_tampered`. | `internal/seatcommit` `TestRecoveryDecidedAgainIsAnsweredFromTheLedger` |
+| P2 retry | A recovery decided again for the same slot is `AlreadyRecovered` with the first result's seqs, slot and body digest, the ledger byte-identical; a slot that does not exist, on the recovered ledger, is `recover_not_tampered` (an existing slot the chain is at or past would take the verified mode instead, `recordVerified`; an earlier version of this row said every other slot is refused). | `internal/seatcommit` `TestRecoveryDecidedAgainIsAnsweredFromTheLedger` |
 | P2 completion | The decision log's path taken by a directory: the apply step replies `recover_unrecorded`, the chain is written; the next ticks release the seat from the ledger (`ledger_hold_released`, `task_reset`, `dispatched`); the log writable again, the decision sent again is OK as already recovered (`AlreadyRecovered`, seqs 1 and 2), the ledger unchanged, one "had recovered" line. | `internal/schedproc` `TestInterruptedRecoveryCompletesFromTheLedger` |
 | P2 restart | The hold in the state file, the chain written, the process gone before any state write: the next incarnation restores the hold and its first tick releases it from the ledger (`ledger_hold_released`, `task_reset`, `dispatched`); the state file no longer holds the seat. An older recovery record (another slot, a lower seq) releases nothing. | `internal/scheduler` `TestRestartedHoldIsReleasedFromTheLedgersRecovery`, `TestRecoveryReleasesTheSeatAndReturnsTheTask` |
 | P2 one seat | Two seats held; one recovered: released alone and granted; the other stays in the state file, is restored by the next incarnation and never prepared (one prepare across the restart). | `internal/scheduler` `TestTwoHeldSeatsOneRecovered` |
@@ -677,8 +767,13 @@ CLI.
 | P3 the retry's link | The transient alarm at seq 4, a second commit step (live link 7), the verified decision writes link 8; its retry is `AlreadyRecovered`, `Verified`, link 8; the record's `Link` is 8. | `internal/seatcommit` `TestAVerifiedRecoveryRetriedReportsItsLink` |
 | replay | The lowered-seq replay: a hold on slot seq1; the ledger answers an older record (seq 3, its slot): 20 ticks and 5 more after a restart release nothing; the record of slot seq1 releases the hold and resets the task. | `internal/scheduler` `TestALoweredSeqReplayDoesNotReleaseTheHold` |
 | another slot | A hold on slot seq150; the ledger records a recovery from slot seq150.2 (the same seq): 10 ticks release nothing, the hold stands, the task stays blocked. | `internal/scheduler` `TestARecoveryForAnotherSlotDoesNotReleaseTheHold` |
-| no slot | A hold with no slot (seq 150); a record at seq 150 for 10 ticks releases nothing; the verb's message for another seat, and one with a link the ledger does not record, release nothing; the message naming the record the ledger answers releases the hold, resets the task and dispatches it. | `internal/scheduler` `TestAHoldWithNoSlotIsReleasedOnlyByTheLeadsVerb` |
-| no slot, the verb | Real files: a hold with no slot restored from a state file, its task blocked with the alarm's detail; a refused read made slot seq1; the document put back: 5 ticks release nothing; the lead's verb on slot 1 (OK), then the ticks release the hold, reset the task and dispatch it. | `internal/schedproc` `TestTheLeadsVerbReleasesAHoldWithNoSlot` |
+| no slot | A hold with no slot (seq 150): its block names its alarm (`; alarm ID)`); a record naming a slot at the hold's seq, and a decision by alarm for another alarm, release nothing over 10 ticks; the state file keeps the alarm and a restarted scheduler publishes it (`HeldAlarm`); the decision by its own alarm releases the hold, resets the task and dispatches it, and the seat is no longer published as held. | `internal/scheduler` `TestAHoldWithNoSlotIsReleasedOnlyByItsAlarm` |
+| lower-seq slot | A hold on slot seq150; the ledger records the recovery of a lower-seq slot (seq1): 10 ticks release nothing; the decision by the hold's alarm releases it, and the release line names the alarm. | `internal/scheduler` `TestALowerSeqSlotLeavesTheHoldToItsAlarm` |
+| late decision | A newer hold (alarm B); the ledger records a decision by an earlier alarm A (landing late): 20 ticks release nothing; B's own decision releases it. | `internal/scheduler` `TestALateDecisionForAnEarlierAlarmDoesNotReleaseANewerHold` |
+| the decision by alarm | Real files through the apply step: a hold with no slot (alarm `3fa9c1d2`), its task blocked with its detail; on the tampered ledger the decision is `recover_alarm_unverified` and the ledger is unchanged; a wrong id is `recover_alarm_not_held` naming the held alarm; the document put back, 5 ticks release nothing; the decision is OK, `Verified`, link 2, the record names the alarm and no slot; the next ticks release, reset and dispatch; the decision line says "released alarm 3fa9c1d2 of seat ..."; the same id once the hold is gone is `recover_alarm_not_held`. | `internal/schedproc` `TestTheAlarmVerbReleasesAHoldWithNoSlot` |
+| the lowered head | Real files: the chain at link N; slot X at seq N; the decision by alarm on the tampered ledger is `recover_alarm_unverified`, nothing written; the head lowered to seq 1, slot Y; X refused while the live document is Y's; Y's recovery at link 2; X refused again, "behind the slot's seq N"; a decision by alarm with a carry is refused; the decision by alarm seals link 3 with the record naming the alarm (no slot, no seq, `Verified`), the body otherwise unchanged; sent again it is `AlreadyRecovered`. | `internal/seatcommit` `TestADecisionByAlarmAnswersAHoldNoSlotCan` |
+| the verb's flags | `scheduler recover --alarm` refuses `--seq`, `--slot`, `--carry`, an id that is not eight hex characters and a missing `--reason` before any send; a send carries the seat, the alarm and the reason only, and the output names the alarm and its link. | `internal/cli` `TestSchedulerRecoverSendsTheDecisionOverTheSocket` |
+| the words | The prepare's detail with `(seq 150; alarm 3fa9c1d2)`: the stop line "seat dev could not be prepared for t7: seat dev's commit record failed its check (alarm 3fa9c1d2); after investigating, the lead runs amq-squad scheduler recover --seat dev --alarm 3fa9c1d2", the same words on the block's line and on the screen's seats and tasks blocks; a hold with no slot reads the same; the write-time refusal names no alarm and keeps its words. | `pi/test/recovery.test.ts` (the third test) |
 | another slot's block | Between the release's read and its reset the task is blocked `ledger_tampered` again for slot seq151 (the alarm's words): that block stays with its detail, no `task_reset`, no dispatch, no failure line, the hold released. The store: a block the caller's match refuses is `ErrBlockChanged` and nothing moves. | `internal/scheduler` `TestARecoveryKeepsATamperBlockOfAnotherSlot`; `internal/task` `TestResetIfBlockedResetsOnlyItsReason` |
 | earlier slot | Slot X refused at seq 1, then X.2 after another edit: the decision for X is refused while the live document is X.2's; the recovery from X.2 continues the chain; the decision for X is then `Verified`, names X, at the link after X.2's; `RecoveryOf` answers X with that link. | `internal/seatcommit` `TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery` |
 | the verb | `scheduler recover` refuses missing or malformed flags and `--me` before any send; with no launch record it names the missing scheduler; a record with no socket is `scheduler_starting` (exit 15); a send carries the seat, seq, slot, carry and reason as given and prints the reply (the slot, the chain's seqs, each carried entry); the verb writes no ledger, quarantine or seed; a refusal is exit 15 with the code. | `internal/cli` `TestSchedulerRecoverSendsTheDecisionOverTheSocket` |
@@ -1850,6 +1945,196 @@ restored exit 0:
 | the retry's mode dropped | `internal/seatcommit/recover.go:199` | `recover_test.go:655: the retry: ... Verified:false ... NewSeq:8 ...` | `ok` 1.251s |
 | the link not written | `internal/seatcommit/recover.go:326` | `recover_test.go:655: the retry: ... NewSeq:5 ...` | `ok` 1.460s |
 
+## Revert runs, the alarm id (`28051cd6`)
+
+Each on `28051cd6`, one at a time, by the same script (the expression
+asserted to occur once, each named row run, the file restored from its
+copy and the rows run again). A decision list in a failing line is cut
+after its first entry; a temp root is `<tmp>`.
+
+### the release by alarm
+
+```
+go test -count=1 -run ^TestAHoldWithNoSlotIsReleasedOnlyByItsAlarm$ ./internal/scheduler/
+go test -count=1 -run ^TestALowerSeqSlotLeavesTheHoldToItsAlarm$ ./internal/scheduler/
+go test -count=1 -run ^TestTheAlarmVerbReleasesAHoldWithNoSlot$ ./internal/schedproc/
+```
+Reverted `internal/scheduler/tamper.go:344`
+```
+	if rec.Alarm != "" {
+		return rec.Alarm == tm.Alarm
+	}
+```
+to:
+```
+	if false && rec.Alarm != "" {
+		return rec.Alarm == tm.Alarm
+	}
+```
+First failing line (exit 1, each):
+```
+tamper_test.go:653: the decision by its alarm did not release the hold: <nil> [{Kind:seat_up TaskID: Seat:seat-a Pool:claude:sonnet:medium Reason: Stage: ReasonCode:}]
+tamper_test.go:686: X's alarm did not release its hold: []
+recover_test.go:449: the decision by alarm did not release the hold: []
+```
+restored and re-run (exit 0): `ok` for each (1.024s, 0.653s, 4.280s).
+
+### only the hold's own alarm
+
+```
+go test -count=1 -run ^TestALateDecisionForAnEarlierAlarmDoesNotReleaseANewerHold$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:345`
+```
+		return rec.Alarm == tm.Alarm
+```
+to:
+```
+		return true
+```
+First failing line (exit 1):
+```
+tamper_test.go:716: an earlier alarm's decision released the newer hold: [{Kind:task_reset TaskID:t1 Seat:seat-a Pool: Reason:the commits ledger of seat seat-a was recovered by the lead; the task returns to pending Stage: ReasonCode:} ...]
+```
+restored and re-run (exit 0): `ok` 0.851s.
+
+### the held-alarm check at the socket
+
+```
+go test -count=1 -run ^TestTheAlarmVerbReleasesAHoldWithNoSlot$ ./internal/schedproc/
+```
+Reverted `internal/schedproc/recover.go:139`
+```
+			if held != req.Alarm {
+```
+to:
+```
+			if false && held != req.Alarm {
+```
+First failing line (exit 1):
+```
+recover_test.go:431: a wrong alarm id: {OK:false Code:recover_alarm_unverified Detail:the commits ledger of seat seat-t1 does not verify now (...) ...}
+```
+restored and re-run (exit 0): `ok` 3.624s.
+
+### the ledger verifies now
+
+```
+go test -count=1 -run ^TestADecisionByAlarmAnswersAHoldNoSlotCan$ ./internal/seatcommit/
+go test -count=1 -run ^TestTheAlarmVerbReleasesAHoldWithNoSlot$ ./internal/schedproc/
+```
+Reverted `internal/seatcommit/recover.go:373`
+```
+	if rerr != nil {
+		return out, refuseRecover(RecoverAlarmUnverified, ...
+```
+to:
+```
+	if false && rerr != nil {
+		return out, refuseRecover(RecoverAlarmUnverified, ...
+```
+First failing line (exit 1, each):
+```
+recover_test.go:727: not a recovery refusal: <nil>
+recover_test.go:425: a decision by alarm on a tampered ledger: {OK:true Code: Detail:seat seat-t1: alarm 3fa9c1d2 released by decision, sealed at link 2; ...}
+```
+restored and re-run (exit 0): `ok` for each (4.295s, 1.850s).
+
+### the alarm kept across a restart
+
+```
+go test -count=1 -run ^TestAHoldWithNoSlotIsReleasedOnlyByItsAlarm$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:370`
+```
+		if tm.Alarm == "" {
+```
+to:
+```
+		if true || tm.Alarm == "" {
+```
+First failing line (exit 1):
+```
+tamper_test.go:645: the restarted hold's alarm: "458c8969" true, want "b74d478d"
+```
+restored and re-run (exit 0): `ok` 0.343s.
+
+### the reset matches the hold's alarm
+
+```
+go test -count=1 -run ^TestARecoveryKeepsATamperBlockOfAnotherSlot$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:357`
+```
+		strings.Contains(t.BlockDetail, "; alarm "+tm.Alarm+")")
+```
+to:
+```
+		true
+```
+First failing line (exit 1):
+```
+tamper_test.go:829: the release touched the other slot's block: [{Kind:task_reset TaskID:t1 Seat:seat-a Pool: Reason:the commits ledger of seat seat-a was recovered by the lead; the task returns to pending Stage: ReasonCode:} ...]
+```
+restored and re-run (exit 0): `ok` 0.399s.
+
+### the words read the alarm
+
+```
+cd pi && node --test test/recovery.test.ts
+```
+Reverted `pi/extensions/lib/words.ts:363`
+```
+	return m ? { seat: m[1], alarm: m[2] } : undefined;
+```
+to:
+```
+	return undefined;
+```
+First failing line (exit 1):
+```
+not ok 3 - the alarm: the stop line and the block name the hold's alarm and the decision by alarm (Expected values to be strictly deep-equal: + undefined - { alarm: '3fa9c1d2', seat: 'dev' })
+```
+restored and re-run (exit 0): `ok 1`, `ok 2`, `ok 3`.
+
+### the stop line reads the decision's detail
+
+```
+cd pi && node --test test/recovery.test.ts
+```
+Reverted `pi/extensions/lib/words.ts:579`
+```
+	const [why, then] = f(code === "ledger_tampered" ? { block_detail: d.reason } : {});
+```
+to:
+```
+	const [why, then] = f({});
+```
+First failing line (exit 1):
+```
+not ok 3 - ... (Expected values to be strictly equal: + "seat dev could not be prepared for t7: the seat's commit record failed its check; the lead investigates before the seat works again" - "seat dev could not be prepared for t7: seat dev's commit record failed its check (alarm 3fa9c1d2); after investigating, the lead runs amq-squad scheduler recover --seat dev --alarm 3fa9c1d2")
+```
+restored and re-run (exit 0): `ok 1`, `ok 2`, `ok 3`.
+
+### the verb's flags
+
+```
+go test -count=1 -run ^TestSchedulerRecoverSendsTheDecisionOverTheSocket$ ./internal/cli/
+```
+Reverted `internal/cli/scheduler_recover.go:44`
+```
+	case byAlarm && (flagWasSet(f.fs, "seq") || flagWasSet(f.fs, "slot") || len(carry) > 0):
+```
+to:
+```
+	case false && byAlarm && (flagWasSet(f.fs, "seq") || flagWasSet(f.fs, "slot") || len(carry) > 0):
+```
+First failing line (exit 1):
+```
+scheduler_recover_test.go:55: alarm and seq: scheduler recover: no running scheduler for <tmp> (the recovery is the scheduler's to write): ...
+```
+restored and re-run (exit 0): `ok` 0.424s.
+
 ## Gates
 
 The PR lands in two phases (the plan reviewer's changed ruling on the
@@ -1864,8 +2149,30 @@ on you" only when both are empty; its row (a tamper block with no gates
 shows under "waiting on you", never the "nothing" line) and revert run go
 in this note, and the gates run again on that head.
 
-Phase one, on `1cd21fa1` (the baseline removed; this note is the only
-change after it), each from the worktree root. The whole-module test,
+Phase one, on `28051cd6` (the alarm id; this note is the only change
+after it), each from the worktree root. The whole-module test, `npm
+test` and `make ci` ran under the gate lock, one after another, each
+printing the head (`28051cd6`) inside the lock:
+
+- `gate-lock.sh 904-gates -- sh -c 'go build ./... && go vet ./... && go
+  test -count=1 ./...'` (the whole module): exit 0, 56 packages `ok`, no
+  `FAIL` (the lock taken after 675 s of waiting).
+- `gate-lock.sh 904-pi -- sh -c 'cd pi && npm test'`: exit 0, `ℹ tests
+  119`, `ℹ pass 118`, `ℹ fail 0`, `ℹ skipped 1` (one test more: the
+  alarm's words); `cd pi && node scripts/lint.mjs`: exit 0.
+- `gate-lock.sh 904-ci -- sh -c 'PATH=<job tmp>/pyvenv/bin:$PATH
+  NPM_FLAGS=--offline make ci'`: exit 0, 70 `ok` (34 from the cache of
+  the whole-module run), no `FAIL`, the same four pi counts.
+- The format gate, Go 1.26's gofmt first on PATH, `make fmt-check`: exit
+  0; `GOOS=windows go build ./internal/seatcommit/`: exit 0;
+  `go run ./scripts/redact-evidence -check docs/v3-spike/320-0c-quarantine/`:
+  exit 0 and `make skill-command-check skill-invocation-check`: exit 0
+  (both on this note).
+
+Every gate passed on its first run, none repeated.
+
+Before that, phase one on `1cd21fa1` (the baseline removed; the note
+`c5754be4` the only change after it), each from the worktree root. The whole-module test,
 `npm test` and `make ci` ran under the gate lock, one after another, each
 printing the head (`1cd21fa1`) inside the lock:
 
@@ -2120,11 +2427,12 @@ exit 0; the windows build exit 0.
   slot".
 - A hold whose document changed again after its alarm is not answered by
   a recovery from the later slot (the recovery must name the slot whose
-  bytes are the live document's); the lead then sends the verb for the
-  hold's own slot too, which the verified mode records. Two decisions
-  where the lead might expect one
-  (`TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery` drives the
-  pair).
+  bytes are the live document's). The lead then releases the hold by its
+  alarm (`scheduler recover --seat H --alarm ID`, on the ledger that now
+  verifies). The verified mode on the hold's own slot does it only when
+  the chain is at or past that slot's seq; an earlier version of this
+  note said it always did, which was wrong for a later slot at a lower
+  seq (Codex's delta pass on `c267382d`).
 - For the 3.2.x list, by name: `internal/buzz` `TestOwnerScriptDryRun`,
   a 5 min wall-clock budget over the owner-script dry run on a local relay
   (`enroll_test.go:447: hung: no signal for "the attach verifies the thread
