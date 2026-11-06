@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
@@ -46,6 +48,12 @@ type AttemptArchiver interface {
 	ArchiveAttempt(handle string, t task.Task, attempt task.Attempt) error
 }
 
+// AttemptCleaner archives and cleans a stopped cancelled attempt after the
+// seat process is confirmed gone.
+type AttemptCleaner interface {
+	CleanAttempt(handle, taskID string, attempt int, outcome string) error
+}
+
 // SeatExitRefusedNotifier is a LeadNotifier that also tells the lead about
 // a refusal at a seat exit (a hint; the decisions log is the record).
 type SeatExitRefusedNotifier interface {
@@ -63,8 +71,9 @@ type AsyncCloser interface {
 // closeExpired is the closing reason of a seat whose claimed lease expired;
 // closeRestart is a seat a previous incarnation left running.
 const (
-	closeExpired = "lease_expired"
-	closeRestart = "scheduler_restart"
+	closeExpired   = "lease_expired"
+	closeRestart   = "scheduler_restart"
+	closeCancelled = "task_cancelled"
 )
 
 // exitItem is one queued exit check. Gone marks a check queued at a
@@ -81,7 +90,15 @@ type exitItem struct {
 	Deferrals int `json:"deferrals,omitempty"`
 	// Attempt is the launch attempt a gone check is for: the request id the
 	// seat joined on (3.0.1 t17). One attempt's gone is checked once.
-	Attempt string `json:"attempt,omitempty"`
+	Attempt     string `json:"attempt,omitempty"`
+	TaskAttempt int    `json:"task_attempt,omitempty"`
+	// Close marks a cancelled attempt that was its seat's last lease
+	// (3.2.0-2b-1, the occupant match; Codex's P1 on #909): the seat may
+	// still be working on it, so a seat the scheduler counts up is closed
+	// and its termination confirmed before the check and the clean.
+	// Persisted, so a restart finishes the close; cleared once the close is
+	// confirmed (holdForExit).
+	Close bool `json:"close,omitempty"`
 }
 
 // SeatGoneObserver is a SeatLauncher told when a gone seat may be forgotten
@@ -309,9 +326,14 @@ func (s *Scheduler) exitPendingItem(it exitItem) bool {
 // expired or unclaimed and was not checked yet by this scheduler (a restart
 // checks the store's history once).
 func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) error {
+	return s.scanAttemptsLog(list, now, func(Decision) {})
+}
+
+func (s *Scheduler) scanAttemptsLog(list []task.Task, now time.Time, log func(Decision)) error {
 	if s.exitSeen == nil {
 		s.exitSeen = map[string]bool{}
 	}
+	s.dropRecordedCleans(list, log)
 	for _, t := range list {
 		for _, a := range t.Attempts {
 			key := fmt.Sprintf("%s#%d#%s", t.ID, a.N, a.Holder)
@@ -332,6 +354,33 @@ func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) error {
 			}
 			switch a.Outcome {
 			case task.OutcomeFailed, task.OutcomeExpired, task.OutcomeUnclaimed:
+			case task.OutcomeCancelled:
+				// The cancel's clean (3.2.0-2b-1 item 1) runs once per
+				// cancelled attempt and is recorded on the attempt
+				// (CleanedAt, Codex's P1 on #898 and the plan reviewer's
+				// note 1): a restart reads the record, never a memory.
+				if a.CleanedAt != nil || s.exitSeen[key] {
+					continue
+				}
+				if _, ok := s.Preparer.(AttemptCleaner); !ok {
+					continue
+				}
+				// The occupant match: a cancellation the seat has worked
+				// past (a later lease of the seat, ended or current) is not
+				// its unresolved cancellation. The lease boundary before
+				// that later grant (PrepareSeat's CleanSeat) archived and
+				// cleaned the worktree, so the attempt is recorded cleaned
+				// now, and the seat, which may be on another task, is
+				// neither closed nor cleaned for it.
+				if later := laterLease(list, a.Holder, t.ID, a); later != "" {
+					if _, err := s.Store.MarkAttemptCleaned(t.ID, a.N, now); err != nil {
+						s.logCleanDeferred(exitItem{Handle: a.Holder, TaskID: t.ID, TaskAttempt: a.N}, "record the superseded clean: "+err.Error(), log)
+						continue
+					}
+					s.exitSeen[key] = true
+					log(Decision{Kind: "seat_clean_superseded", TaskID: t.ID, Seat: a.Holder, Reason: fmt.Sprintf("seat %s's work on %s attempt %d was cleaned at the lease boundary before %s; recorded", a.Holder, t.ID, a.N, later)})
+					continue
+				}
 			default:
 				continue
 			}
@@ -339,13 +388,88 @@ func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) error {
 				continue
 			}
 			s.exitSeen[key] = true
-			it := exitItem{Handle: a.Holder, TaskID: t.ID, Why: a.Outcome, At: now}
+			it := exitItem{Handle: a.Holder, TaskID: t.ID, Why: a.Outcome, At: now, TaskAttempt: a.N}
+			// A cancelled attempt that is its seat's last lease (no later
+			// lease, above) and has no exit item yet is close-required
+			// (Codex's P1 on #909): nothing the scheduler holds proves the
+			// seat stopped working on it. A restart has seen no lease held
+			// (a cancel that landed before the previous incarnation queued
+			// its item leaves no Close on disk), and the lead's dispatch
+			// grants a lease outside the tick. runExits closes a seat the
+			// scheduler counts up, and the check and the clean wait for the
+			// confirmed close; a seat it does not count (no live process
+			// adopted at the restart, none joined since) has nothing to
+			// close. An item already queued keeps its own persisted flag.
+			if a.Outcome == task.OutcomeCancelled {
+				it.Close = true
+			}
 			if !s.exitPendingItem(it) {
 				s.queueExit(it)
 			}
 		}
 	}
 	return nil
+}
+
+// laterLease names a lease of the seat granted at or after the attempt
+// ended (an ended attempt, or the seat's current lease), "" when there is
+// none: the attempt is then the seat's last.
+func laterLease(list []task.Task, holder, taskID string, a task.Attempt) string {
+	for _, t := range list {
+		if t.Lease != nil && t.Lease.Holder == holder && !t.Lease.GrantedAt.Before(a.EndedAt) {
+			return t.ID
+		}
+		for _, b := range t.Attempts {
+			if t.ID == taskID && b.N == a.N {
+				continue // the attempt itself
+			}
+			if b.Holder == holder && !b.GrantedAt.Before(a.EndedAt) {
+				return t.ID
+			}
+		}
+	}
+	return ""
+}
+
+// dropRecordedCleans reconciles the exits queue with the store before
+// anything acts on it (Codex's P2 on #909): a cancelled attempt's item
+// whose attempt is recorded cleaned (cleaned_at) is a clean that finished
+// before a crash lost the queue's write (MarkAttemptCleaned, then the
+// deferred saveExits). The item is dropped with one line, never run again,
+// and the slot it held is released once the queue without it is written.
+func (s *Scheduler) dropRecordedCleans(list []task.Task, log func(Decision)) {
+	cleaned := map[string]bool{}
+	for _, t := range list {
+		for _, a := range t.Attempts {
+			if a.Outcome == task.OutcomeCancelled && a.CleanedAt != nil {
+				cleaned[fmt.Sprintf("%s#%d", t.ID, a.N)] = true
+			}
+		}
+	}
+	if len(cleaned) == 0 {
+		return
+	}
+	kept, dropped := s.exitQueue[:0], false
+	for _, it := range s.exitQueue {
+		if it.Why != task.OutcomeCancelled || !cleaned[fmt.Sprintf("%s#%d", it.TaskID, it.TaskAttempt)] {
+			kept = append(kept, it)
+			continue
+		}
+		dropped = true
+		delete(s.cleanDeferred, cleanDeferredKey(it))
+		delete(s.exitRefused, cleanDeferredKey(it))
+		if it.Gone {
+			if s.toRelease == nil {
+				s.toRelease = map[string]bool{}
+			}
+			s.toRelease[it.Handle] = true
+		}
+		log(Decision{Kind: "seat_clean_replay_dropped", TaskID: it.TaskID, Seat: it.Handle, Reason: fmt.Sprintf("seat %s's clean of %s attempt %d is recorded on the attempt; its queued exit item is dropped, not run again", it.Handle, it.TaskID, it.TaskAttempt)})
+	}
+	s.exitQueue = kept
+	if dropped && s.saveExits() == nil {
+		s.releaseDecided()
+	}
 }
 
 // runExits runs the queued exit checks; a deferred one stays queued (and
@@ -373,6 +497,15 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 			log(Decision{Kind: "exit_check_deferred", TaskID: it.TaskID, Seat: it.Handle, Reason: "a commit step of the seat is pending"})
 			continue
 		}
+		// A cancelled attempt whose turn was live on the seat (Close): the
+		// seat is closed first, the same order as a gone seat; the check
+		// and the clean wait for the confirmed close (3.2.0-2b-1 item 1).
+		if it.Close {
+			if st := s.seats[it.Handle]; st != nil && st.closing == "" {
+				st.closing = closeCancelled
+				log(Decision{Kind: "seat_closing", TaskID: it.TaskID, Seat: it.Handle, Reason: closeCancelled})
+			}
+		}
 		// P1-9: a seat being closed (an expired claimed lease, a restart) is
 		// checked only once its termination is confirmed and it is forgotten.
 		if st := s.seats[it.Handle]; st != nil && st.closing != "" {
@@ -385,6 +518,23 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 			s.exitQueue = append(s.exitQueue, it)
 			log(Decision{Kind: "exit_check_deferred", TaskID: it.TaskID, Seat: it.Handle, Reason: r.Detail})
 			continue
+		case r.Refused && it.Why == task.OutcomeCancelled:
+			// Codex's P2 (D) on #898: the hold is the seat's unresolved
+			// cancellation, not one queue item. The refused item stays
+			// queued (and persisted): the seat's slot is held and no grant
+			// reaches it, whatever other item for the seat is decided,
+			// until the check passes and the clean runs. The lead is told
+			// once per reason; the next tick re-checks silently.
+			s.exitQueue = append(s.exitQueue, it)
+			if s.noteExitRefused(it, r.ReasonCode+" at "+it.Why) {
+				log(Decision{Kind: "exit_refused", TaskID: it.TaskID, Seat: it.Handle, Reason: r.ReasonCode + " at " + it.Why})
+				if n, ok := s.Lead.(SeatExitRefusedNotifier); ok && s.Lead != nil {
+					if err := n.SeatExitRefused(it.Handle, it.TaskID, r.ReasonCode, r.Detail); err != nil {
+						log(Decision{Kind: "lead_notice_failed", TaskID: it.TaskID, Reason: err.Error()})
+					}
+				}
+			}
+			continue
 		case r.Refused:
 			log(Decision{Kind: "exit_refused", TaskID: it.TaskID, Seat: it.Handle, Reason: r.ReasonCode + " at " + it.Why})
 			if st := s.seats[it.Handle]; st != nil && st.closing == "" {
@@ -396,6 +546,43 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 				}
 			}
 		}
+		if it.Why == task.OutcomeCancelled {
+			// The archive and the clean, after the confirmed close and the
+			// passed check; a clean that cannot run yet keeps the item (and
+			// the hold) and says why once per reason (Codex's C on #898).
+			cleaner, ok := s.Preparer.(AttemptCleaner)
+			if !ok {
+				s.exitQueue = append(s.exitQueue, it)
+				s.logCleanDeferred(it, "the scheduler has no attempt cleaner", log)
+				continue
+			}
+			// The plan reviewer's identity rule on #909: the clean runs only
+			// once the seat's launch identity (pid and start stamp) is seen
+			// gone, whatever the launcher confirmed. An identity that is
+			// missing, unreadable or still live fails closed: nothing is
+			// cleaned, the item (and the seat's hold) stays, the lead is
+			// told once, and the attempt stays uncleaned.
+			if gone, why := s.seatIdentityGone(it.Handle); !gone {
+				s.exitQueue = append(s.exitQueue, it)
+				s.logIdentityUnproven(it, why, log)
+				continue
+			}
+			if err := cleaner.CleanAttempt(it.Handle, it.TaskID, it.TaskAttempt, it.Why); err != nil {
+				s.exitQueue = append(s.exitQueue, it)
+				s.logCleanDeferred(it, err.Error(), log)
+				continue
+			}
+			// The durable record (the plan reviewer's note 1): a restart
+			// reads it before acting, and never redoes a finished clean.
+			if _, err := s.Store.MarkAttemptCleaned(it.TaskID, it.TaskAttempt, now); err != nil {
+				s.exitQueue = append(s.exitQueue, it)
+				s.logCleanDeferred(it, "record the completed clean: "+err.Error(), log)
+				continue
+			}
+			delete(s.cleanDeferred, cleanDeferredKey(it))
+			delete(s.exitRefused, cleanDeferredKey(it))
+			log(Decision{Kind: "seat_cleaned", TaskID: it.TaskID, Seat: it.Handle, Reason: fmt.Sprintf("seat %s's work on %s attempt %d was archived and its worktree cleaned", it.Handle, it.TaskID, it.TaskAttempt)})
+		}
 		if it.Gone {
 			if s.toRelease == nil {
 				s.toRelease = map[string]bool{}
@@ -404,6 +591,98 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 		}
 	}
 	return nil
+}
+
+// ReasonSeatIdentityUnproven is the stop of a cancelled attempt whose
+// seat's launch identity is not seen gone: its clean waits for the lead.
+const ReasonSeatIdentityUnproven = "seat_identity_unproven"
+
+// seatIdentityGone reports whether the seat's launch identity is seen gone
+// (Liveness: the accepted proof's pid and start stamp; a pid alone is not
+// an identity, since pids are reused). No liveness hook, or an identity it
+// cannot read, is not gone (fail closed).
+func (s *Scheduler) seatIdentityGone(handle string) (bool, string) {
+	if s.Liveness == nil {
+		return false, "the scheduler has no process identity check"
+	}
+	gone, detail, err := s.Liveness.SeatProcess(handle, "")
+	switch {
+	case err != nil:
+		return false, err.Error()
+	case !gone:
+		return false, "its launch identity (pid and start stamp) is still live"
+	}
+	return true, detail
+}
+
+// logIdentityUnproven is the one lead stop for a cancelled attempt whose
+// seat is not seen gone, once per (code, seat, task, attempt).
+func (s *Scheduler) logIdentityUnproven(it exitItem, why string, log func(Decision)) {
+	if s.cleanDeferred == nil {
+		s.cleanDeferred = map[string]string{}
+	}
+	key := cleanDeferredKey(it)
+	if s.cleanDeferred[key] == ReasonSeatIdentityUnproven {
+		return
+	}
+	s.cleanDeferred[key] = ReasonSeatIdentityUnproven
+	log(Decision{Kind: "seat_may_be_writing", TaskID: it.TaskID, Seat: it.Handle, ReasonCode: ReasonSeatIdentityUnproven,
+		Reason: fmt.Sprintf("seat %s may still be writing to its worktree; the lead runs seat clean after it stops (%s)", it.Handle, why)})
+}
+
+func cleanDeferredKey(it exitItem) string {
+	return fmt.Sprintf("%s#%s#%d", it.Handle, it.TaskID, it.TaskAttempt)
+}
+
+// logCleanDeferred logs a cancelled attempt's deferred clean once per
+// (seat, task, attempt, reason): the same reason on the next tick is
+// silent; a changed reason, or a clean that then ran, starts over. The
+// reason is compared by its identity (reasonIdentity), never its whole
+// text, which can carry an advancing age (Codex's P2 on #909).
+func (s *Scheduler) logCleanDeferred(it exitItem, reason string, log func(Decision)) {
+	if s.cleanDeferred == nil {
+		s.cleanDeferred = map[string]string{}
+	}
+	key, id := cleanDeferredKey(it), reasonIdentity(reason)
+	if s.cleanDeferred[key] == id {
+		return
+	}
+	s.cleanDeferred[key] = id
+	log(Decision{Kind: "seat_clean_deferred", TaskID: it.TaskID, Seat: it.Handle, Reason: reason})
+}
+
+// reasonCode is a refusal code: a snake_case word with at least one
+// underscore (seat_cleaning, seat_worktree_dirty, ledger_tampered).
+var reasonCode = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)+$`)
+
+// reasonIdentity is a refusal's stable identity for once-per-reason
+// logging (Codex's P2 on #909): its code, the first ": "-separated segment
+// of the text that is one (the store's sentinels and the clean's and the
+// prepare's refusals all lead with theirs), so a text that carries an
+// advancing age ("seat_cleaning: seat s1 is being cleaned by pid 42 for
+// 12s") is one reason on every tick. A text with no code is its own
+// identity.
+func reasonIdentity(text string) string {
+	for _, seg := range strings.Split(text, ": ") {
+		if reasonCode.MatchString(seg) {
+			return seg
+		}
+	}
+	return text
+}
+
+// noteExitRefused records a cancelled attempt's refused check and reports
+// whether it is new for its (seat, task, attempt, reason).
+func (s *Scheduler) noteExitRefused(it exitItem, reason string) bool {
+	if s.exitRefused == nil {
+		s.exitRefused = map[string]string{}
+	}
+	key := cleanDeferredKey(it)
+	if s.exitRefused[key] == reason {
+		return false
+	}
+	s.exitRefused[key] = reason
+	return true
 }
 
 // releaseDecided releases the slot of every gone seat whose checks are all
@@ -450,6 +729,7 @@ func (s *Scheduler) holdForExit(h string) {
 	for i := range s.exitQueue {
 		if s.exitQueue[i].Handle == h {
 			s.exitQueue[i].Gone = true
+			s.exitQueue[i].Close = false // the close is confirmed; a restart never repeats it
 		}
 	}
 	s.saveExits()

@@ -239,7 +239,8 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if terr != nil {
 		fmt.Fprintf(out, "scheduler run: the push target: %v; the commit step refuses a push that needs it\n", terr)
 	}
-	slots := &schedproc.Slots{Squad: q, BaseBranch: firstOf(*baseBranch, target.BaseBranch), Target: target}
+	slots := &schedproc.Slots{Squad: q, BaseBranch: firstOf(*baseBranch, target.BaseBranch), Target: target,
+		LogDecision: func(d scheduler.Decision) { _ = schedproc.AppendDecision(root, taskNow(), d) }}
 	// The roster (3.0.1 t16): every seat that can start launches in one
 	// apply; a seat with no worktree of its own never started and is named.
 	roster, excluded := slots.Roster(*lead)

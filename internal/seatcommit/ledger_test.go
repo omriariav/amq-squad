@@ -169,3 +169,30 @@ func TestCleanSeatArchiveWinsBeforeLaterAttemptArchives(t *testing.T) {
 		t.Fatalf("first writer changed: before=%+v after=%+v err=%v", first.Discarded, after.Discarded, err)
 	}
 }
+
+// Codex's B on #898 (prepare.go:97): the clean never removes bytes the
+// ledger does not hold. An attempt archived once, then edited again under
+// the same task and attempt, gets a second discard at the clean (the tree
+// differs); the same tree is not archived twice.
+func TestCleanSeatDoesNotTreatSameAttemptWithDifferentTreeAsAlreadyArchived(t *testing.T) {
+	f := newFixture(t)
+	tk := f.leased("first.go", "second.go")
+	write(t, filepath.Join(f.wt, "first.go"), "package first\n")
+	if archived, err := ArchiveAttemptReason(f.root, f.handle, gitBin(t), nil, tk.ID, 1, task.OutcomeCancelled, f.now); err != nil || !archived {
+		t.Fatalf("first archive = %v, %v", archived, err)
+	}
+	if _, err := f.store.Cancel(tk.ID, "lead", "stop", f.now); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(f.wt, "second.go"), "package second\n")
+	if discarded, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now.Add(time.Second)); err != nil || !discarded {
+		t.Fatalf("changed-tree clean = %v, %v", discarded, err)
+	}
+	ledger, err := ReadLedger(f.root, f.handle)
+	if err != nil || len(ledger.Discarded) != 2 || ledger.Discarded[0].Tree == ledger.Discarded[1].Tree {
+		t.Fatalf("clean did not append the changed tree: %+v, %v", ledger.Discarded, err)
+	}
+	if got := sh(t, f.wt, "cat-file", "-p", ledger.Discarded[1].Tree+":second.go"); got != "package second" {
+		t.Fatalf("changed clean tree's second.go = %q", got)
+	}
+}

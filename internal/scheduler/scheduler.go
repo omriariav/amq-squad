@@ -225,6 +225,13 @@ type Scheduler struct {
 	// budgetWarned remembers the absolute end already warned for an attempt.
 	// An extension changes the end and permits one new warning.
 	budgetWarned map[string]time.Time
+	// prepareFailed and cleanDeferred suppress identical per-tick decisions.
+	// A changed reason is a new actionable state and is logged once.
+	prepareFailed map[string]string
+	cleanDeferred map[string]string
+	// exitRefused is the last refusal logged per cancelled attempt whose
+	// check holds the seat (exits.go, Codex's D on #898): once per reason.
+	exitRefused map[string]string
 }
 
 // WaitNoRosterSeat is the wait of a pending task whose route names a pool
@@ -425,7 +432,7 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	// R3: the exit check on every terminal path that is not a done report.
 	s.loadExits()
 	if s.exitsLoaded {
-		if err := s.scanAttempts(list, now); err != nil {
+		if err := s.scanAttemptsLog(list, now, log); err != nil {
 			return out, err
 		}
 		if err := s.runExits(now, log); err != nil {
@@ -857,9 +864,19 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			}
 			if s.Preparer != nil {
 				if err := s.Preparer.PrepareSeat(handle); err != nil {
-					log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
+					if s.prepareFailed == nil {
+						s.prepareFailed = map[string]string{}
+					}
+					// once per (seat, task, reason identity): a text with
+					// an advancing age is one reason (Codex's P2 on #909)
+					key, id := handle+"#"+t.ID, reasonIdentity(err.Error())
+					if s.prepareFailed[key] != id {
+						log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
+						s.prepareFailed[key] = id
+					}
 					continue
 				}
+				delete(s.prepareFailed, handle+"#"+t.ID)
 			}
 			got, err := s.Store.Grant(t.ID, handle, r.Pool, cfg.LeaseDuration, now)
 			var unverified *task.VerifierUnconfiguredError
@@ -1051,7 +1068,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 				log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
 				continue
 			}
-			if (st.closing == closeExpired || st.closing == closeRestart || st.closing == closeRelaunch) && s.closeUnconfirmed(h) {
+			if (st.closing == closeExpired || st.closing == closeRestart || st.closing == closeRelaunch || st.closing == closeCancelled) && s.closeUnconfirmed(h) {
 				st.awaitGone = true
 				log(Decision{Kind: "seat_close_requested", Seat: h, Reason: st.closing + "; waiting for its seat_gone"})
 				continue

@@ -57,8 +57,16 @@ var quarantineWriters = []ledgerWriter{
 		_, err := ArchiveAttempt(f.root, f.handle, gitBin(t), nil, "t1", 1, f.now)
 		return errRow(err)
 	}},
+	{"ArchiveAttemptReason", "archive attempt", func(t *testing.T, f *fixture) (string, bool) {
+		_, err := ArchiveAttemptReason(f.root, f.handle, gitBin(t), nil, "t1", 1, task.OutcomeCancelled, f.now)
+		return errRow(err)
+	}},
 	{"CleanSeat", "clean seat", func(t *testing.T, f *fixture) (string, bool) {
 		_, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now)
+		return errRow(err)
+	}},
+	{"CleanSeatDetailed", "clean seat", func(t *testing.T, f *fixture) (string, bool) {
+		_, _, err := CleanSeatDetailed(f.root, f.handle, gitBin(t), nil, f.now)
 		return errRow(err)
 	}},
 	{"StartTask", "start task", func(t *testing.T, f *fixture) (string, bool) {

@@ -91,6 +91,7 @@ function goBlocks(): string[] {
 const LAUNCH_FILES = [
 	...goFiles("internal/seatexec"),
 	...goFiles("internal/seatlaunch"),
+	"internal/schedproc/slots.go",
 	"internal/scheduler/launchfail.go",
 	"internal/scheduler/roster.go",
 	"internal/piruntime/session.go",
@@ -113,7 +114,7 @@ const LAUNCH_LITERALS = [
 ];
 const LAUNCH_CONSTS = /^(Reason|PiNotEmbedded$|SandboxPinsMissing$|IdentityIncomplete$|PermissionMismatch$|HooksMissing$|TokenInsecure$|RuntimeMismatchReason$|AMQBindingPresent$)/;
 function goLaunchCodes(): string[] {
-	return LAUNCH_FILES.flatMap((f) => [...literals(f, ...LAUNCH_LITERALS), ...constants(f, LAUNCH_CONSTS)]).filter((c) => !["applied", "up", "none"].includes(c));
+	return LAUNCH_FILES.flatMap((f) => [...literals(f, ...LAUNCH_LITERALS), ...constants(f, LAUNCH_CONSTS)]).filter((c) => !["applied", "up", "none", "git", "main"].includes(c));
 }
 
 // The seat warning codes status shows: Go's schedproc.ClearableWarnings,
@@ -149,6 +150,7 @@ function goSeatCodes(): string[] {
 // task store can emit to plain words; a reason the table lacks fails here,
 // by name. Reverted (a reason dropped from the table), its row fails.
 test("row 7: every wait and block reason in Go's sources maps to plain words in the one table", () => {
+	assert.ok(LAUNCH_FILES.includes("internal/schedproc/slots.go"), "the seat base launch branch is outside the launch-code scan");
 	const waits = goWaits();
 	const blocks = goBlocks();
 	const seats = goSeatCodes();
