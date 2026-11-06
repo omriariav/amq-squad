@@ -61,7 +61,8 @@ In short:
 - Until a 3.2.x fix, the lead lands a PR through the train only when its task
   has no live lease and no queued commit result.
 - Rolling back to 3.1.2 works; a 3.1.2 rewrite of a task drops its budget
-  fields. The notes have the details and what waits for rc.2.
+  fields. The notes have the details, rc.1's known limits and what waits for
+  rc.2.
 
 Earlier releases are in their notes, listed under
 [Where the plan and evidence live](#where-the-plan-and-evidence-live).
