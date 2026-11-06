@@ -48,7 +48,7 @@ func TestRestartDropsAQueuedCleanTheAttemptRecordsAsDone(t *testing.T) {
 	now := t0
 	tk := cancelledOn(t, store, "seat-a", now)
 	newScheduler := func(incarnation string, cleaner *attemptCleanRecorder) *Scheduler {
-		s, err := New(Options{Store: store, Now: func() time.Time { return now.Add(2 * time.Second) }, Launcher: &fakeLauncher{}, Exits: &exitRecorder{bad: map[string]bool{}}, Preparer: cleaner, Config: Config{IdleTimeout: time.Hour, ExitsPath: ledger}, Incarnation: incarnation})
+		s, err := New(Options{Store: store, Now: func() time.Time { return now.Add(2 * time.Second) }, Launcher: &fakeLauncher{}, Exits: &exitRecorder{bad: map[string]bool{}}, Preparer: cleaner, Liveness: goneLiveness{}, Config: Config{IdleTimeout: time.Hour, ExitsPath: ledger}, Incarnation: incarnation})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -140,6 +140,7 @@ func TestRefusalsWithAnAdvancingAgeLogOncePerReason(t *testing.T) {
 	t.Run("deferred clean", func(t *testing.T) {
 		h := newHarness(t, Config{IdleTimeout: time.Hour})
 		h.s.Exits = &exitRecorder{bad: map[string]bool{}}
+		h.s.Liveness = goneLiveness{}
 		cancelledOn(t, h.store, "seat-a", h.clk.Now())
 		if _, _, err := h.store.ReserveSeat("seat-a", h.clk.Now()); err != nil {
 			t.Fatal(err)
@@ -191,7 +192,7 @@ func TestCancelCloseFlagSurvivesARestartAndIsClearedOnceConfirmed(t *testing.T) 
 	now := t0
 	tk := cancelledOn(t, store, "seat-a", now)
 	newScheduler := func(incarnation string, launcher SeatLauncher, exits *exitRecorder, cleaner *attemptCleanRecorder) *Scheduler {
-		s, err := New(Options{Store: store, Now: func() time.Time { return now.Add(2 * time.Second) }, Launcher: launcher, Exits: exits, Preparer: cleaner, Config: Config{IdleTimeout: time.Hour, ExitsPath: ledger}, Incarnation: incarnation})
+		s, err := New(Options{Store: store, Now: func() time.Time { return now.Add(2 * time.Second) }, Launcher: launcher, Exits: exits, Preparer: cleaner, Liveness: goneLiveness{}, Config: Config{IdleTimeout: time.Hour, ExitsPath: ledger}, Incarnation: incarnation})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -233,5 +234,24 @@ func TestCancelCloseFlagSurvivesARestartAndIsClearedOnceConfirmed(t *testing.T) 
 	}
 	if has(d, "seat_closing", "", "seat-a") || len(launcher.closed) != 0 || !has(d, "seat_cleaned", tk.ID, "seat-a") {
 		t.Fatalf("the third incarnation: decisions=%+v closed=%v cleaned=%v", d, launcher.closed, cleaner.cleaned)
+	}
+}
+
+// The identity rule with no liveness hook: nothing proves the seat's
+// identity gone, so the clean fails closed with one lead stop, never runs,
+// and the attempt stays uncleaned. Reverted (no hook read as gone), it is
+// cleaned.
+func TestCancelledCleanWithNoIdentityCheckFailsClosed(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	h.s.Exits = &exitRecorder{bad: map[string]bool{}}
+	cleaner := &attemptCleanRecorder{}
+	h.s.Preparer = cleaner
+	tk := cancelledOn(t, h.store, "seat-a", h.clk.Now())
+	stops := 0
+	for i := 0; i < 3; i++ {
+		stops += count(h.tick(), "seat_may_be_writing")
+	}
+	if len(cleaner.cleaned) != 0 || stops != 1 || h.get(tk.ID).Attempts[0].CleanedAt != nil || !h.s.exitPending("seat-a") {
+		t.Fatalf("no identity check: cleaned=%v stops=%d attempt=%+v pending=%v", cleaner.cleaned, stops, h.get(tk.ID).Attempts[0], h.s.exitPending("seat-a"))
 	}
 }

@@ -162,6 +162,7 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	widen_snapshot_missing: () => ["the widening found no snapshot of the stopped attempt", RESET],
 	widen_snapshot_attempt_mismatch: () => ["the widening's snapshot is of another attempt", RESET],
 	seat_head_detached_unmerged: () => ["the seat worktree holds a local commit the harness did not record", "push, merge or branch the commit before cleaning"],
+	seat_identity_unproven: () => ["the seat may still be writing to its worktree", "the lead runs seat clean after it stops"],
 	push_target_unacknowledged: () => ["the push target is not the one the owner's grant names now", "ask the owner to acknowledge the push target in the grant"],
 	ledger_tampered: () => ["the commits ledger does not verify", "ask the owner to inspect the commits ledger before anything commits"],
 	tool_pin_mismatch: () => ["a pinned tool is not the pinned version", "ask the owner to check the pin"],
@@ -416,6 +417,9 @@ export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]
 	roster_incomplete: (d) => [`the roster came up without ${d.seat ? `seat ${d.seat}` : "every seat"}`, "ask the lead to relaunch the roster"],
 	seat_gone: (d) => [`${seatOf(d)}'s process is gone`, "ask the lead to relaunch the roster"],
 	seat_liveness_unknown: (d) => [`${seatOf(d)}'s liveness cannot be read`, "look at its pane"],
+	// a cancelled attempt's clean waits: the seat's launch identity is not
+	// seen gone (exits.go, the plan reviewer's identity rule on #909)
+	seat_may_be_writing: (d) => [`${seatOf(d)} may still be writing to its worktree${d.task_id ? ` after ${d.task_id}` : ""}`, "the lead runs seat clean after it stops"],
 	// Go records the task and no seat (scheduler.go seat_request_expired)
 	seat_request_expired: (d) => [`the seat request for ${d.task_id || "a task"} expired before a seat came up`, "ask the lead to relaunch the roster"],
 	seat_replacement_needs_relaunch: (d) => [`every seat of ${d.task_id ? `${d.task_id}'s pool` : "a pool"} is gone${d.seat ? ` (${d.seat})` : ""}`, "ask the lead to relaunch the roster"],

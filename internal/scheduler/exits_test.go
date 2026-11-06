@@ -28,8 +28,17 @@ func (r *attemptCleanRecorder) CleanAttempt(handle, taskID string, attempt int, 
 	return r.err
 }
 
+// goneLiveness proves every seat's launch identity gone: the identity rule
+// (exits.go seatIdentityGone) passes, so these rows test what follows it.
+type goneLiveness struct{}
+
+func (goneLiveness) SeatProcess(string, string) (bool, string, error) {
+	return true, "test: the seat's launch identity is gone", nil
+}
+
 func TestCancelledAttemptClosesThenArchivesAndCleansBeforeSlotRelease(t *testing.T) {
 	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	h.s.Liveness = goneLiveness{}
 	launcher := &holdLauncher{fakeLauncher: h.l}
 	h.s.Launcher = launcher
 	h.s.Exits = &exitRecorder{bad: map[string]bool{}}
@@ -103,7 +112,7 @@ func TestRestartDoesNotReplayOldCancellationOverNewOccupant(t *testing.T) {
 	launcher := &holdLauncher{fakeLauncher: &fakeLauncher{}}
 	exits := &exitRecorder{bad: map[string]bool{}}
 	cleaner := &attemptCleanRecorder{}
-	s, err := New(Options{Store: store, Now: func() time.Time { return now.Add(3 * time.Second) }, Launcher: launcher, Exits: exits, Preparer: cleaner, Config: Config{IdleTimeout: time.Hour}, Incarnation: "restart"})
+	s, err := New(Options{Store: store, Now: func() time.Time { return now.Add(3 * time.Second) }, Launcher: launcher, Exits: exits, Preparer: cleaner, Liveness: goneLiveness{}, Config: Config{IdleTimeout: time.Hour}, Incarnation: "restart"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,7 +167,7 @@ func TestRestartFinishesUncleanedCancellationOnceAndPersistsIt(t *testing.T) {
 	}
 	cleaner := &attemptCleanRecorder{}
 	newScheduler := func(incarnation string) *Scheduler {
-		s, err := New(Options{Store: store, Now: func() time.Time { return now.Add(2 * time.Second) }, Launcher: &fakeLauncher{}, Exits: &exitRecorder{bad: map[string]bool{}}, Preparer: cleaner, Config: Config{IdleTimeout: time.Hour}, Incarnation: incarnation})
+		s, err := New(Options{Store: store, Now: func() time.Time { return now.Add(2 * time.Second) }, Launcher: &fakeLauncher{}, Exits: &exitRecorder{bad: map[string]bool{}}, Preparer: cleaner, Liveness: goneLiveness{}, Config: Config{IdleTimeout: time.Hour}, Incarnation: incarnation})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -184,6 +193,7 @@ func TestRestartFinishesUncleanedCancellationOnceAndPersistsIt(t *testing.T) {
 
 func TestCancelledCleanDeferralLogsOncePerReason(t *testing.T) {
 	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	h.s.Liveness = goneLiveness{}
 	h.s.Exits = &exitRecorder{bad: map[string]bool{}}
 	cleaner := &attemptCleanRecorder{err: errors.New("archive busy")}
 	h.s.Preparer = cleaner
@@ -229,6 +239,7 @@ func TestPrepareRefusalLogsOncePerReason(t *testing.T) {
 
 func TestRefusedCancellationHoldsSeatAgainstGoneReleaseAndCompetingGrant(t *testing.T) {
 	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	h.s.Liveness = goneLiveness{}
 	launcher := &holdLauncher{fakeLauncher: h.l}
 	h.s.Launcher = launcher
 	h.s.Exits = &exitRecorder{bad: map[string]bool{"seat-a": true}}

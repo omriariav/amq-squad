@@ -556,6 +556,17 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 				s.logCleanDeferred(it, "the scheduler has no attempt cleaner", log)
 				continue
 			}
+			// The plan reviewer's identity rule on #909: the clean runs only
+			// once the seat's launch identity (pid and start stamp) is seen
+			// gone, whatever the launcher confirmed. An identity that is
+			// missing, unreadable or still live fails closed: nothing is
+			// cleaned, the item (and the seat's hold) stays, the lead is
+			// told once, and the attempt stays uncleaned.
+			if gone, why := s.seatIdentityGone(it.Handle); !gone {
+				s.exitQueue = append(s.exitQueue, it)
+				s.logIdentityUnproven(it, why, log)
+				continue
+			}
 			if err := cleaner.CleanAttempt(it.Handle, it.TaskID, it.TaskAttempt, it.Why); err != nil {
 				s.exitQueue = append(s.exitQueue, it)
 				s.logCleanDeferred(it, err.Error(), log)
@@ -580,6 +591,43 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 		}
 	}
 	return nil
+}
+
+// ReasonSeatIdentityUnproven is the stop of a cancelled attempt whose
+// seat's launch identity is not seen gone: its clean waits for the lead.
+const ReasonSeatIdentityUnproven = "seat_identity_unproven"
+
+// seatIdentityGone reports whether the seat's launch identity is seen gone
+// (Liveness: the accepted proof's pid and start stamp; a pid alone is not
+// an identity, since pids are reused). No liveness hook, or an identity it
+// cannot read, is not gone (fail closed).
+func (s *Scheduler) seatIdentityGone(handle string) (bool, string) {
+	if s.Liveness == nil {
+		return false, "the scheduler has no process identity check"
+	}
+	gone, detail, err := s.Liveness.SeatProcess(handle, "")
+	switch {
+	case err != nil:
+		return false, err.Error()
+	case !gone:
+		return false, "its launch identity (pid and start stamp) is still live"
+	}
+	return true, detail
+}
+
+// logIdentityUnproven is the one lead stop for a cancelled attempt whose
+// seat is not seen gone, once per (code, seat, task, attempt).
+func (s *Scheduler) logIdentityUnproven(it exitItem, why string, log func(Decision)) {
+	if s.cleanDeferred == nil {
+		s.cleanDeferred = map[string]string{}
+	}
+	key := cleanDeferredKey(it)
+	if s.cleanDeferred[key] == ReasonSeatIdentityUnproven {
+		return
+	}
+	s.cleanDeferred[key] = ReasonSeatIdentityUnproven
+	log(Decision{Kind: "seat_may_be_writing", TaskID: it.TaskID, Seat: it.Handle, ReasonCode: ReasonSeatIdentityUnproven,
+		Reason: fmt.Sprintf("seat %s may still be writing to its worktree; the lead runs seat clean after it stops (%s)", it.Handle, why)})
 }
 
 func cleanDeferredKey(it exitItem) string {

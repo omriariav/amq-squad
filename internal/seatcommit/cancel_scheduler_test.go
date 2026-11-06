@@ -66,6 +66,16 @@ func (l *cancellingProcessLauncher) CloseSeat(handle, reason string) error {
 	return nil
 }
 
+// SeatProcess is the identity rule's answer (scheduler.SeatLiveness): the
+// fake seat's identity is gone once its process was stopped and waited
+// for, or when no writer ever ran.
+func (l *cancellingProcessLauncher) SeatProcess(string, string) (bool, string, error) {
+	if l.cmd != nil {
+		return false, "", nil
+	}
+	return true, "the writer process was stopped and reaped", nil
+}
+
 type commitExitChecker struct{ f *fixture }
 
 func (c commitExitChecker) CheckExit(handle, taskID, why string) scheduler.ExitResult {
@@ -100,7 +110,8 @@ func (c *commitAttemptCleaner) CleanAttempt(handle, taskID string, attempt int, 
 // its first tick taken so the scheduler saw the seat's lease held.
 func cancelScheduler(t *testing.T, f *fixture, launcher scheduler.SeatLauncher, cleaner scheduler.SeatPreparer, incarnation string) *scheduler.Scheduler {
 	t.Helper()
-	s, err := scheduler.New(scheduler.Options{Store: f.store, Now: func() time.Time { return f.now.Add(2 * time.Second) }, Launcher: launcher, Exits: commitExitChecker{f: f}, Preparer: cleaner, Config: scheduler.Config{IdleTimeout: time.Hour}, Incarnation: incarnation})
+	live, _ := launcher.(scheduler.SeatLiveness)
+	s, err := scheduler.New(scheduler.Options{Store: f.store, Now: func() time.Time { return f.now.Add(2 * time.Second) }, Launcher: launcher, Exits: commitExitChecker{f: f}, Preparer: cleaner, Liveness: live, Config: scheduler.Config{IdleTimeout: time.Hour}, Incarnation: incarnation})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +242,7 @@ func TestRestartClosesALiveWriterOfAnUnqueuedCancellationBeforeItsClean(t *testi
 	}
 	launcher := &cancellingProcessLauncher{cmd: cmd, target: target}
 	cleaner := &commitAttemptCleaner{f: f}
-	s, err := scheduler.New(scheduler.Options{Store: f.store, Now: func() time.Time { return f.now.Add(2 * time.Second) }, Launcher: launcher, Exits: commitExitChecker{f: f}, Preparer: cleaner, Config: scheduler.Config{IdleTimeout: time.Hour}, Incarnation: "restartwriter"})
+	s, err := scheduler.New(scheduler.Options{Store: f.store, Now: func() time.Time { return f.now.Add(2 * time.Second) }, Launcher: launcher, Exits: commitExitChecker{f: f}, Preparer: cleaner, Liveness: launcher, Config: scheduler.Config{IdleTimeout: time.Hour}, Incarnation: "restartwriter"})
 	if err != nil {
 		t.Fatal(err)
 	}
