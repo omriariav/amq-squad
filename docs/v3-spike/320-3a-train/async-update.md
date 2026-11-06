@@ -533,8 +533,12 @@ order and the rows hold. Two P2 and a P3, the plan reviewer's rulings
    now treats a task already bound at exactly the target (the same
    repository and PR number, `PRHead == H`) as a read-only success, no
    write, merge facts untouched (`internal/task/bind.go`); any other head
-   is still `ErrPRBindingMismatch`. A rerun of the verb after it landed is
-   idempotent the same way.
+   is still `ErrPRBindingMismatch`. The store operation is idempotent
+   (the same `BindPRFrom` again is the same read-only success); the verb
+   is not, once it has landed: run again with `--from O --to H` while the
+   task is bound at H, it finds no task bound at O and refuses
+   `rebind_unbound` (`rebind.go`, the bound-task lookup), and it is left
+   so (Codex's sixth pass, P3; the PR does not grow).
 3. **The writer boundary (P3).** `bindAdmitted` is the only binding
    writer in the train and the lead's verb; the guard scans
    `internal/mergetrain/` only. The harness writes bindings outside that
@@ -566,6 +570,38 @@ replay is pending; the next run continues from it (task <id> to <head>:
 reconcile that stops on it now sets the run's stop line to it and
 journals the stop entry (`reconcileStop`), as `land`'s stop does; the CLI
 prints the error as `merge-train: <that>`.
+
+## Codex's sixth pass (round eleven)
+
+By reading at `6d4d7196`: the `CommittedError` and identical-target fixes,
+the scoped claim and the lock invariants hold, and nothing re-enters a
+lock. Two P2 of one class and a P3, the plan reviewer's rule (commit
+`a39df456`, batched with round ten):
+
+1. **An undo after an uncertain store outcome.** A store error from the
+   verb's `BindPRFrom` is not always "nothing written": the store's lock
+   replays an earlier committed journal first (`task.Store.withLock`,
+   `recoverJournal`), and an apply that fails there is an ordinary error
+   (a train bind of H past its commit point whose apply failed, so the
+   verb's write fails before its identical-target check); and a journal
+   renamed into place whose directory sync fails is an ordinary error
+   with the journal still replayable. The undo then superseded H, which
+   the store installs later. The rule, which closes the class: the undo
+   runs only on a definite outcome. After a failed write that is not a
+   `CommittedError`, still inside the journal section, `bindAdmitted`
+   reads the task through the store's normal read path
+   (`Binder.Binding`, `task.Store.Get`: under the store's lock, replaying
+   a committed journal first). Any error from that read means no undo;
+   the undo runs only when the read succeeds and shows the binding not at
+   H. A read that fails or shows H leaves the readmission standing (H
+   admitted and, until the store reads, perhaps unbound: the state the
+   reviewer accepted after a crash) and the verb stops with
+   `ErrBindingOutcomeUnknown`, `the binding's outcome is not known yet;
+   the task store's replay is pending; run merge-train rebind again once
+   the store reads` (the refusal `rebind_failed`, the readmission's run
+   named). Lock order stays the journal, then the store.
+2. **The note's idempotence claim (P3)**, corrected above: the store
+   operation is idempotent, the verb after it lands is not.
 
 ## Rows
 
@@ -625,6 +661,7 @@ prints the error as `merge-train: <that>`.
 | the committed bind | Codex's fifth pass (P2-1): a binder whose `BindPRFrom` binds durably and then returns `*task.CommittedError` (past the store's commit point, the after-image to be replayed): the verb succeeds and reports `the binding is written; the task store's replay is pending: ...`; no `rebind_superseded` under its run, H admitted and bound, and the next real run lands the PR. | `internal/mergetrain` `TestCommittedBindIsNotUndone` |
 | the same target first | Codex's fifth pass (P2-2): the train binds the task at H right before the verb's `BindPRFrom(old, H)` (a train's recovery that proved and bound the same head first): the store finds the task already bound at exactly the target (the same repository and PR number, `PRHead == H`) and returns a read-only success, so the verb succeeds with H admitted and bound. The stale-write row checks the store's side: `BindPRFrom` from the wrong head to a different target is still `ErrPRBindingMismatch`, and to the head already bound it is a success with no write (`UpdatedAt` and the recorded merge fact unchanged). | `internal/mergetrain` `TestTrainBindingTheSameHeadFirstIsTheVerbsSuccess`; `TestRebindRefusesWhenTheBindingMovedMeanwhile` |
 | the committed stop in words | Round ten: land's bind, and the recovery's bind (a journaled request and the push), each through a binder that binds durably and returns `*task.CommittedError`: the run's error is `ErrBindingReplayPending` and not `ErrBindingFailed`, the run's stop line and its stop entry carry `the binding is written; the task store's replay is pending; the next run continues from it`, the binding is the new head, and the next real run continues from it and lands the PR. | `internal/mergetrain` `TestCommittedTrainBindStopsInWords` (2 subtests) |
+| an uncertain outcome | Round eleven: the replay failure at the store's lock (a stand-in whose write installs the train's committed bind of H and fails as the replay does, and whose confirming read fails the same way) and the directory-sync failure after the journal's rename (the real write, then an ordinary error; the confirming read shows H): each leaves the readmission standing with no `rebind_superseded`, H admitted, and the verb refused with `the binding's outcome is not known yet; the task store's replay is pending; run merge-train rebind again once the store reads`; once the store reads, the binding is H and the next real run lands the PR. The definite failure (the confirming read shows the old head) still undoes: `a failed bind` above. | `internal/mergetrain` `TestUncertainBindOutcomeIsNotUndone` (2 subtests); `TestFailedRebindWriteLeavesTheHeadNotAdmitted` |
 | the wrappers whole | Item 2 as ruled: the match strips one of gh's two wrappers whole from gh's last stderr line, `gh: <message>` or `GraphQL: <message> (<path>)`, and compares the rest exactly, case aside. Definite: the table text in either wrapper (rows (1) and (2): the fake's `gh:` refusal through the production path is `definite refusal` above). Ambiguous, never definite (row (3), the text with anything extra): around `gh: ` a path after the message, `Retry later.` after it, `gh: gh: `, `warning: gh: `, `gh:` with no space, a second line (gh api's newline between several errors, or gh's scopes line after it), `gh: HTTP 502`, `gh: HTTP 422`; around `GraphQL: ` no path, a second path, the old fake's `[fake: ...]` after the path, a line after it, two errors on one line, `warning: GraphQL: `, `graphql: `; each table message's fragment inside unfamiliar text (`... while checking expected head ...`, `Internal server error: Head branch was modified...`, `Head branch was modified... Retry later.`, `Something went wrong, resource not accessible by integration` in both wrappers, `Resource not accessible by integration token`, `... not mergeable by ...`), a prefix of a message (`Head branch was modified`, `Resource not accessible`, in both wrappers), and an error not from gh carrying the GraphQL text; the fake's pinned-head mismatch through `GH.run` is definite by its own exact output with no table entry. | `internal/mergetrain` `TestDefiniteRefusalClassesTheGhError` |
 
 Rule 18: every row runs under a `t.TempDir` root; the mergetrain rows run
@@ -1535,6 +1572,31 @@ admission_test.go:619: the stop line: binding_failed: task t1 to 9d1c1cadfad7: t
 (the reconcile's generic error sets no stop line) restored: `ok ...
 1.546s`.
 
+### Codex's sixth pass (three runs, on `a39df456`)
+
+`903q undo on any error`: `internal/mergetrain/binding.go`
+(`bindAdmitted`) the uncertain-outcome test
+`if rerr != nil || (strings.EqualFold(tk.PRRepository, w.Repository) && tk.PRNumber == w.PR && tk.PRHead == w.To) {`
+to `if false && (...) {` (the undo after every failed write);
+`go test -count=1 -timeout 300s -run '^TestUncertainBindOutcomeIsNotUndone$/^the_replay.*$' ./internal/mergetrain/`;
+```
+admission_test.go:692: the uncertain outcome's words: rebind refused (binding_failed): task t1 to 6a60da382bbf: the binding could not be written: apply task t1: write task file: input/output error; nothing is bound (the confirming read failed: true)
+```
+restored: `ok ... 2.514s`. The same revert, the subtest `the directory
+sync after the rename`;
+```
+admission_test.go:692: the uncertain outcome's words: rebind refused (binding_failed): task t1 to ed9444b8461b: the binding could not be written: sync task directory: input/output error; nothing is bound (the confirming read failed: false)
+```
+restored: `ok ... 1.940s`.
+
+`903q never undo`: the same test to `if rerr != nil || true || (...) {`
+(the definite failure taken as uncertain);
+`go test -count=1 -timeout 300s -run ^TestFailedRebindWriteLeavesTheHeadNotAdmitted$ ./internal/mergetrain/`;
+```
+admission_test.go:418: the failed write's refusal: rebind refused (rebind_failed): the binding's outcome is not known yet; the task store's replay is pending; run merge-train rebind again once the store reads (the write failed: disk full; the store reads the binding at e44b497bc978) (the readmission is journaled under run mt-rebind-20261106T094648Z-60627237)
+```
+restored: `ok ... 1.552s`.
+
 R4 has no revert: it is the package's existing rows, run green on the new
 code (the gates below).
 
@@ -1821,6 +1883,25 @@ batch with Codex's sixth pass, so the package gate only: `go build ./...
 written with the go1.26.10 toolchain's `gofmt -w`; `go run
 ./scripts/redact-evidence -check docs/v3-spike/320-3a-train/` exit 0. The
 whole-module gate, `make ci` and `npm test` are not run on it yet.
+
+On `789f9454` (rounds ten and eleven: `internal/mergetrain/` and a
+comment in `internal/task/bind.go`; the note's commit after it has the
+same Go tree), the whole-module gate, `make ci` and `npm test` under the
+host's gate lock, each run once:
+
+- `gate-lock.sh 903-gates -- sh -c 'go build ./... && go vet ./... && go
+  test -count=1 ./...'`: the lock taken after 105 s, exit 0, 56 packages
+  `ok`.
+- `gate-lock.sh 903-ci -- make ci` (`NPM_FLAGS=--offline`, the PyYAML venv
+  first on PATH): the lock after 0 s, exit 0, 70 packages `ok`, pi-test
+  `ℹ tests 116`, `ℹ pass 115`, `ℹ fail 0`.
+- `gate-lock.sh 903-pi -- npm test` (in `pi/`): the lock after 0 s, exit 0,
+  `ℹ tests 116`, `ℹ pass 115`, `ℹ fail 0`, `ℹ skipped 1`;
+  `node scripts/lint.mjs`: exit 0.
+- `make fmt-check` with the go1.26.10 toolchain's `bin/` first on PATH
+  and `GOTOOLCHAIN=go1.26.10`: exit 0.
+- `go run ./scripts/redact-evidence -check docs/v3-spike/320-3a-train/`:
+  exit 0.
 
 ## Residual risk
 
