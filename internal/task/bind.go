@@ -36,7 +36,7 @@ func (s Store) BindPR(id, repository string, pr int, head string, now time.Time)
 // already at exactly the target (the same repository and PR number, the
 // head already head) is a read-only success, nothing written and any merge
 // fact untouched (Codex's fifth pass on #903: a train's recovery that bound
-// the same head first, or the verb run again after it landed). A binding
+// the same head first, or the same BindPRFrom called again). A binding
 // anywhere else is ErrPRBindingMismatch.
 func (s Store) BindPRFrom(id, repository string, pr int, from, head string, now time.Time) (Task, error) {
 	var out Task
