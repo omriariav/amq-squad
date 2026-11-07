@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakePR struct {
@@ -68,7 +69,35 @@ type fakeState struct {
 	// RateLimitPage: the timeline read of that page (1-based) answers a rate
 	// limit (5 re-pass, P1-2).
 	RateLimitPage int `json:"rate_limit_page,omitempty"`
+	// AsyncUpdate are PR numbers whose updatePullRequestBranch is GitHub's
+	// asynchronous one (brief 3.2.0-3a, run ab184d07): the mutation does the
+	// rebase (AlterAfterRebase alters the hunk as in the synchronous path),
+	// answers the head as it was, and the branch moves on a later pr view
+	// (after AsyncViews[n] views, default 1), where PushAfterRebase lands a
+	// competing commit on the rebased head at once. AsyncRejected are PR
+	// numbers whose update GitHub rejected asynchronously: the mutation
+	// answers the head as it was and the branch never moves.
+	AsyncUpdate   []string                  `json:"async_update,omitempty"`
+	AsyncViews    map[string]int            `json:"async_views,omitempty"`
+	AsyncRejected []string                  `json:"async_rejected,omitempty"`
+	Pending       map[string]*pendingUpdate `json:"pending,omitempty"`
+	// AuditPath, when set, is the train's audit log; the mutation records
+	// the entry kinds present the moment it is called (AuditAtMutation), so
+	// a row can assert the request was journaled before the mutation.
+	AuditPath       string   `json:"audit_path,omitempty"`
+	AuditAtMutation []string `json:"audit_at_mutation,omitempty"`
 }
+
+// pendingUpdate is an asynchronous update the fake server has performed
+// and not yet published: it lands on the branch after Views more pr views.
+type pendingUpdate struct {
+	Before string `json:"before"`
+	After  string `json:"after"`
+	Views  int    `json:"views"`
+}
+
+// forcePushAt is the time the fake's timeline reports for a force push.
+func forcePushAt() string { return time.Now().UTC().Format(time.RFC3339) }
 
 // timelinePage is GitHub's page size of the force-push timeline query.
 const timelinePage = 100
@@ -185,6 +214,29 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		if p == nil {
 			return fail("no PR %s", args[2])
 		}
+		if pend := s.Pending[args[2]]; pend != nil {
+			// GitHub's asynchronous update lands between two reads
+			pend.Views--
+			if pend.Views <= 0 {
+				if out, err := gitOut(s.Bare, "update-ref", "refs/heads/"+p.Head, pend.After); err != nil {
+					return fail("publish the update: %s", out)
+				}
+				p.ForcePushes = append(p.ForcePushes, ForcePush{Before: pend.Before, After: pend.After, Actor: "owner", At: forcePushAt()})
+				delete(s.Pending, args[2])
+				if slices.Contains(s.PushAfterRebase, args[2]) { // a competing push lands on the rebased head before the train reads it back
+					work, _ := os.MkdirTemp("", "fakegh-late-")
+					defer os.RemoveAll(work)
+					gitOut(work, "clone", "-q", s.Bare, "w")
+					w := filepath.Join(work, "w")
+					gitOut(w, "checkout", "-q", p.Head)
+					os.WriteFile(filepath.Join(w, "late.txt"), []byte("late\n"), 0o644)
+					gitOut(w, "add", "-A")
+					gitOut(w, "commit", "-q", "-m", "late push")
+					gitOut(w, "push", "-q", "origin", p.Head)
+				}
+			}
+			s.save(statePath)
+		}
 		head, base := rev(p.Head), rev(p.Base)
 		mergeable := "MERGEABLE"
 		if _, err := gitOut(s.Bare, "merge-tree", "--write-tree", base, head); err != nil {
@@ -224,7 +276,15 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		p := pr(n)
 		before := rev(p.Head)
 		if before != expect {
-			return fail("GraphQL: expected head %s, the head is %s", expect, before)
+			// the fake's sentinel line, then GitHub's exact message as `gh api
+			// graphql` prints it (gh: <message>), the last line
+			return fail("fake: expected head %s, the head is %s\ngh: Head branch was modified. Review and try the update again.", expect, before)
+		}
+		if s.AuditPath != "" {
+			s.AuditAtMutation = nil
+			for _, e := range func() []Entry { es, _ := Audit{Path: s.AuditPath}.Read(); return es }() {
+				s.AuditAtMutation = append(s.AuditAtMutation, e.Kind)
+			}
 		}
 		work, _ := os.MkdirTemp("", "fakegh-rebase-")
 		defer os.RemoveAll(work)
@@ -242,6 +302,12 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		if out, err := gitOut(w, "checkout", "-q", p.Head); err != nil {
 			return fail("checkout: %s", out)
 		}
+		if slices.Contains(s.AsyncRejected, n) {
+			// GitHub rejected the update asynchronously: the head is unmoved
+			s.save(statePath)
+			fmt.Fprintln(stdout, before)
+			break
+		}
 		if out, err := gitOut(w, "rebase", "-q", "origin/"+p.Base); err != nil {
 			return fail("rebase conflict: %s", out)
 		}
@@ -250,12 +316,31 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 			gitOut(w, "add", "-A")
 			gitOut(w, "commit", "-q", "--amend", "--no-edit")
 		}
+		if slices.Contains(s.AsyncUpdate, n) {
+			// the update is performed and published later, on a pr view; the
+			// mutation answers the head as it was (run ab184d07)
+			if out, err := gitOut(w, "push", "-q", "--force", "origin", "HEAD:refs/pending/"+p.Head); err != nil {
+				return fail("push: %s", out)
+			}
+			after, _ := gitOut(s.Bare, "rev-parse", "refs/pending/"+p.Head)
+			views := s.AsyncViews[n]
+			if views <= 0 {
+				views = 1
+			}
+			if s.Pending == nil {
+				s.Pending = map[string]*pendingUpdate{}
+			}
+			s.Pending[n] = &pendingUpdate{Before: before, After: after, Views: views}
+			s.save(statePath)
+			fmt.Fprintln(stdout, before)
+			break
+		}
 		if out, err := gitOut(w, "push", "-q", "--force", "origin", p.Head); err != nil {
 			return fail("push: %s", out)
 		}
 		after := rev(p.Head)
 		if after != before {
-			p.ForcePushes = append(p.ForcePushes, ForcePush{Before: before, After: after, Actor: "owner"})
+			p.ForcePushes = append(p.ForcePushes, ForcePush{Before: before, After: after, Actor: "owner", At: forcePushAt()})
 		}
 		if slices.Contains(s.PushAfterRebase, n) { // a concurrent push right after the server's rebase
 			os.WriteFile(filepath.Join(w, "late.txt"), []byte("late\n"), 0o644)
@@ -396,6 +481,13 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 				fmt.Fprintln(stdout, string(out))
 			}
 		case parts[0] == "commits" && len(parts) == 3 && parts[2] == "status":
+		case parts[0] == "commits" && len(parts) == 2:
+			// the commit's first parent, as .parents[0].sha // "" prints it
+			parent, err := gitOut(s.Bare, "rev-parse", "--verify", "-q", parts[1]+"^")
+			if err != nil {
+				parent = ""
+			}
+			fmt.Fprintln(stdout, parent)
 		case parts[0] == "branches" && len(parts) == 2:
 			fmt.Fprintln(stdout, rev(parts[1]))
 		case parts[0] == "branches" && len(parts) == 3 && parts[2] == "protection":

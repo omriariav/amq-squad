@@ -604,7 +604,10 @@ func decisionOptions(sel storeSelection, projectRoot string) *schedproc.DecideOp
 			return extendBudgetDecision(sel, lead, req)
 		}
 		return widenDecision(sel, projectRoot, lead, req)
-	}, Warnings: status.CurrentSeatWarnings} // brief 31-2: a clear names a warning status shows
+	}, Warnings: status.CurrentSeatWarnings, // brief 31-2: a clear names a warning status shows
+		Rebind: func(lead string, req schedproc.RebindRequest) schedproc.DecideReply { // brief 3.2.0-3a item 6
+			return rebindDecision(sel, lead, req)
+		}}
 	if schedulerDecideSeams != nil {
 		schedulerDecideSeams(d)
 	}

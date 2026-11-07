@@ -45,10 +45,27 @@ runs under the owner's gh outside any seat. --dry-run plans, orders and
 checks, and merges and raises nothing. Manual mode (--manual, or mode manual
 in the grant) stops before every merge.
 
+A branch the train brings up to date is updated by GitHub asynchronously:
+the train journals the request, reads the head back until it moves (120 s at
+most), proves the head it read (its first parent is the base tip, its patch-id
+is unchanged) and binds it; an update that never lands is refused
+(branch_update_unconfirmed). A branch the train moved without recording the
+result is recovered at the next run from the journaled request.
+
+  amq-squad merge-train rebind --pr N --from SHA --to SHA    the lead's recorded
+      re-bind of a task to the head an unrecorded update produced (see
+      merge-train rebind --help)
+
 Exit codes: 0 everything planned or landed, 1 a refusal, a stop or an error.
 `
 
+// mergeTrainRunBound is the run's wall-time bound (a test seam).
+var mergeTrainRunBound = mergetrain.RunBound
+
 func runMergeTrain(args []string) error {
+	if len(args) > 0 && args[0] == "rebind" {
+		return runMergeTrainRebind(args[1:], os.Stdout)
+	}
 	g := newGateStoreFlags("merge-train", mergeTrainUsage)
 	reqPath := g.fs.String("request", "", "the lead's ordered PR set (file or -)")
 	dry := g.fs.Bool("dry-run", false, "plan, order and check; merge and raise nothing")
@@ -123,7 +140,12 @@ func runMergeTrain(args []string) error {
 		t.ReleaseGates, t.Root = &gs, sel.Root // the tag and release drift check, every run
 		t.VerifyGate = releaseGateVerifier(sel)
 	}
-	ctx := context.Background()
+	// the run is bounded (Codex's re-pass on #903): a gh that stalls ends
+	// the run instead of hanging it; the train's own update wait and CI
+	// wait sit inside this bound
+	bound := mergeTrainRunBound(len(req.PRs))
+	ctx, cancel := context.WithTimeout(context.Background(), bound)
+	defer cancel()
 	if !*dry {
 		attachMergeGates(ctx, t, sel)
 	}
@@ -136,6 +158,10 @@ func runMergeTrain(args []string) error {
 		printMergeTrain(os.Stdout, res)
 	}
 	switch {
+	case runErr != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
+		// the run ended at its bound (Codex's re-pass on #903): the words
+		// above the rule, the code and the error below
+		return fmt.Errorf("merge-train: the run timed out after %s, a call to GitHub did not return; nothing more was merged, and the next run starts from the journal\n\n%s\nrefused (run_timeout): %v", bound, gatestore.Rule, runErr)
 	case runErr != nil:
 		return FormatMergeTrainError(runErr)
 	case len(res.Refused()) > 0 && !*dry:
@@ -305,6 +331,12 @@ func printMergeTrain(w io.Writer, r mergetrain.Result) {
 			line += "\n\trule: " + p.Refusals[i].Rule + "\n\told head: " + p.PatchProof.OldHead + "\n\tnew head: " + p.PatchProof.NewHead
 			line += "\n\told patch-id: " + p.PatchProof.OldID + "\n\tnew patch-id: " + p.PatchProof.NewID
 			fmt.Fprintln(w, line)
+			continue
+		}
+		// the update GitHub never performed (brief 3.2.0-3a item 1): the words
+		// first, the code below the rule
+		if i := slices.IndexFunc(p.Refusals, func(f mergetrain.Refusal) bool { return f.Rule == mergetrain.RuleUpdateUnconfirmed }); i >= 0 {
+			fmt.Fprintf(w, "#%d was not merged: %s\n\trule: %s\n\thead: %s\n", p.Number, p.Refusals[i].Detail, p.Refusals[i].Rule, p.Head)
 			continue
 		}
 		line := fmt.Sprintf("#%d\t%s\t%s\t%d lines\t%s", p.Number, orDash(p.Task), shortSHA(p.Head), p.Changed, p.Status)

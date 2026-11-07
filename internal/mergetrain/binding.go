@@ -122,10 +122,169 @@ func boundTask(store task.Store, repository string, pr int) (task.Task, string, 
 // the run stops before the merge, and the next run sees pr_head_moved.
 var ErrBindingFailed = errors.New("binding_failed")
 
-// Binder writes a task's PR binding.
+// ErrBindingReplayPending: the train's binding write crossed the task
+// store's commit point and failed after it (*task.CommittedError): the
+// binding is durable and the store replays its after-image at its next
+// locked access. The run stops, in these words, not as binding_failed (the
+// plan reviewer on #903).
+var ErrBindingReplayPending = errors.New("the binding is written; the task store's replay is pending; the next run continues from it")
+
+// bindingError is a failed train binding write in words: a CommittedError
+// is ErrBindingReplayPending, anything else ErrBindingFailed.
+func bindingError(taskID, head string, err error) error {
+	var committed *task.CommittedError
+	if errors.As(err, &committed) {
+		return fmt.Errorf("%w (task %s to %s: %v)", ErrBindingReplayPending, taskID, short(head), err)
+	}
+	return fmt.Errorf("%w: task %s to %s: %v", ErrBindingFailed, taskID, short(head), err)
+}
+
+// ErrHeadSuperseded: bindAdmitted found the head superseded by a lead
+// re-bind decision in the journal read under the audit lock, and wrote no
+// binding.
+var ErrHeadSuperseded = errors.New("head superseded by a lead re-bind decision")
+
+// bindWrite is one binding write: the task's binding of PR moves from the
+// bound head From to To. Conditional makes it hold only while the task is
+// still bound at From (BindPRFrom, the lead's verb). Readmit is that verb,
+// the one re-admission of a superseded head. Readmitted, when set, builds
+// the verb's rebind_readmitted entry from whether the head was admitted;
+// Undo, when set, builds the entry that undoes it when the write fails
+// (the verb's rebind_superseded with the reason rebind_failed). Both are
+// built by the caller (rebind.go) and appended by bindAdmitted inside the
+// write's critical section.
+type bindWrite struct {
+	Task, Repository string
+	PR               int
+	From, To         string
+	Conditional      bool
+	Readmit          bool
+	Readmitted       func(admitted bool) Entry
+	Undo             func(err error) Entry
+}
+
+// bindAdmitted is the only binding writer in the train and the lead's verb
+// (Codex's fourth pass on #903): every binding write of this package goes
+// through it, and a source guard fails on any other reference to BindPR or
+// BindPRFrom in the package. The harness writes bindings outside it, and
+// outside this claim (Codex's fifth pass): the commit step's
+// task.Store.BindPR (internal/cli/seat_commit.go:221, the BindPR hook of
+// internal/seatcommit/commit.go:1415) and task.Store.CompleteBound
+// (internal/task/scope.go:140, from internal/cli/seat_commit.go:123 and
+// internal/scheduler/scheduler.go:740). It is one critical section under the journal lock
+// (Audit.AuditLockPath, `<audit.jsonl>.lock`, the exclusive flock every
+// Append takes, so every writer of rebind_superseded and rebind_readmitted
+// takes it too): the fresh read of the journal, headAdmitted on that read,
+// for the lead's verb its rebind_readmitted entry (journaled before the
+// write, as update_requested before the update), the binding write, and,
+// when the write fails and the store's confirming read shows it did not
+// take effect, the verb's undo entry (a terminal rebind_superseded, so the
+// journal shows the head not admitted). Lock order: the journal lock, then
+// the task store's lock inside the write and the confirming read.
+// The two orders serialize: a supersede appended first is seen by the
+// fresh read and the write is refused; one appended after a binding write
+// lands in the journal after it, so trainHeads and every later admission
+// read it. A Readmit write binds a superseded head and reports that it was
+// not admitted (admitted false). Otherwise a superseded head is refused:
+// no binding is written, record (when set) gets a reconcile entry naming
+// the lead's merge-train rebind verb once the lock is released, and the
+// error is ErrHeadSuperseded. A readmission that could not be appended
+// writes no binding and returns an error wrapping errReadmittedNotWritten.
+// A write that crossed the store's commit point and failed after it
+// (*task.CommittedError) is returned as it is, with no undo: the binding
+// is durable.
+func bindAdmitted(a Audit, b Binder, record func(Entry) error, w bindWrite) (admitted bool, err error) {
+	err = a.locked(func() error {
+		journal, err := a.Read()
+		if err != nil {
+			return err
+		}
+		admitted = headAdmitted(journal, w.Repository, w.PR, w.To)
+		if !admitted && !w.Readmit {
+			return ErrHeadSuperseded
+		}
+		if w.Readmitted != nil {
+			if aerr := a.appendLocked(w.Readmitted(admitted)); aerr != nil {
+				return fmt.Errorf("%w: %v", errReadmittedNotWritten, aerr)
+			}
+		}
+		if w.Conditional {
+			err = b.BindPRFrom(w.Task, w.Repository, w.PR, w.From, w.To)
+		} else {
+			err = b.BindPR(w.Task, w.Repository, w.PR, w.To)
+		}
+		// a CommittedError crossed the store's commit point: the binding is
+		// durable and the store replays its after-image at the next locked
+		// access, so it counts as written (Codex's fifth pass on #903): the
+		// readmission stands and there is no undo.
+		var committed *task.CommittedError
+		if err == nil || w.Undo == nil || errors.As(err, &committed) {
+			return err
+		}
+		// The undo runs only on a definite outcome (Codex's sixth pass, the
+		// plan reviewer's rule): a store error can come after the write
+		// took effect (a journal renamed into place whose directory sync
+		// failed) or from replaying an earlier journal at the lock (a train
+		// bind past its commit point whose apply failed), and an undo then
+		// would supersede a head the store installs later. So the binding
+		// is read back through the store's normal read path, under its
+		// lock, still inside this section; the undo runs only when that
+		// read succeeds and shows the binding not at the target. A read
+		// that fails, or shows the target, leaves the readmission standing
+		// (the head admitted, as after a crash) and the outcome reported as
+		// not known yet.
+		tk, rerr := b.Binding(w.Task)
+		if rerr != nil || (strings.EqualFold(tk.PRRepository, w.Repository) && tk.PRNumber == w.PR && tk.PRHead == w.To) {
+			seen := "the store did not read: " + errString(rerr)
+			if rerr == nil {
+				seen = "the store reads the binding at " + short(w.To)
+			}
+			return fmt.Errorf("%w (the write failed: %v; %s)", ErrBindingOutcomeUnknown, err, seen)
+		}
+		if uerr := a.appendLocked(w.Undo(err)); uerr != nil {
+			return errors.Join(err, fmt.Errorf("the undo entry was not written: %w", uerr))
+		}
+		return err
+	})
+	if errors.Is(err, ErrHeadSuperseded) && record != nil {
+		if rerr := record(Entry{Kind: "reconcile", PR: w.PR, Task: w.Task, Head: w.From, NewHead: w.To,
+			Detail: fmt.Sprintf("the head %s was superseded by a lead re-bind decision before the binding write; the train does not bind it, only merge-train rebind re-admits it\nbinding not recovered", short(w.To))}); rerr != nil {
+			return admitted, errors.Join(err, rerr)
+		}
+	}
+	return admitted, err
+}
+
+// ErrBindingOutcomeUnknown: the verb's binding write failed and the
+// confirming read could not show it did not take effect (the read failed,
+// or it shows the target): no undo, the readmission stands, and the verb
+// stops in these words (Codex's sixth pass on #903, the plan reviewer).
+var ErrBindingOutcomeUnknown = errors.New("the binding's outcome is not known yet; the task store's replay is pending; run merge-train rebind again once the store reads")
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// errReadmittedNotWritten: the verb's rebind_readmitted entry could not be
+// appended, so no binding was written.
+var errReadmittedNotWritten = errors.New("the readmission entry was not written")
+
+// Binder writes a task's PR binding. Its BindPR and BindPRFrom are called
+// only by bindAdmitted.
 type Binder interface {
 	BindPR(taskID, repository string, pr int, head string) error
+	// BindPRFrom binds only while the task is still bound to from, under
+	// the store's lock (the lead's re-bind; task.ErrPRBindingMismatch
+	// otherwise).
+	BindPRFrom(taskID, repository string, pr int, from, head string) error
 	RecordPRMerge(taskID, repository string, pr int, head, commit string) error
+	// Binding reads the task through the store's normal read path (under
+	// the store's lock, replaying a committed journal first): the
+	// confirming read before an undo.
+	Binding(taskID string) (task.Task, error)
 }
 
 // StoreBinder binds through task.Store.BindPR.
@@ -142,6 +301,17 @@ func (b StoreBinder) BindPR(taskID, repository string, pr int, head string) erro
 	_, err := b.Store.BindPR(taskID, repository, pr, head, now)
 	return err
 }
+
+func (b StoreBinder) BindPRFrom(taskID, repository string, pr int, from, head string) error {
+	now := time.Now()
+	if b.Now != nil {
+		now = b.Now()
+	}
+	_, err := b.Store.BindPRFrom(taskID, repository, pr, from, head, now)
+	return err
+}
+
+func (b StoreBinder) Binding(taskID string) (task.Task, error) { return b.Store.Get(taskID) }
 
 func (b StoreBinder) RecordPRMerge(taskID, repository string, pr int, head, commit string) error {
 	now := time.Now()

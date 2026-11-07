@@ -32,6 +32,11 @@ const (
 	// RuleHistoryIncomplete: the force-push timeline was not read whole, so
 	// an unauthorized force push could be hidden (5 re-pass, P1-2).
 	RuleHistoryIncomplete = "history_incomplete"
+	// RuleUpdateUnconfirmed: the train asked GitHub to update the branch and
+	// the head had not moved when the bounded wait ended (an update GitHub
+	// rejected asynchronously leaves the head unmoved); nothing is bound
+	// (brief 3.2.0-3a item 1).
+	RuleUpdateUnconfirmed = "branch_update_unconfirmed"
 )
 
 // Refusal is one failed rule for one PR.
