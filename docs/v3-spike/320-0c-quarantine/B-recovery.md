@@ -40,7 +40,10 @@ refusal words dropped (the reviewer accepted leaving them out), and
 `8cffafe7`, its note; then `eff2fea1` and `97a05cc4`, Codex's pass on
 `8cffafe7` (the section "The hold release file"), and `50986a71`, its
 note; then `a57e9627`, Codex's pass on `50986a71` (the append's
-descriptor; the refusal's words); then this note. The helper move of `8017ffea` is between
+descriptor; the refusal's words), and `a817fed3`, its note; then
+`85b5d8df`, the merge of `origin/v3` at `3966afb7`, and `f3d72b7f`, the
+anchored prefix (the section "The merge of origin/v3, and the anchored
+prefix"); then this note. The helper move of `8017ffea` is between
 two declared packages (`internal/schedproc/slots.go` to
 `internal/seatcommit/baseshadow.go`), so it left the declared set
 unchanged. `9de43a6c` widens it by two files, `internal/task/reset_if.go`
@@ -1031,6 +1034,45 @@ B's (`TestAnOlderAlarmsRecordLandingAfterBsLeavesBReleased`, now in the
 file), and the `commits/` listing
 (`TestAlarmsFilesBesideTheLedgerAddNoSeatOrLedger`).
 
+## The merge of origin/v3, and the anchored prefix (`85b5d8df`, `f3d72b7f`)
+
+The reviewer's whole-PR read of `a817fed3` passed, to merge in rc.2 after
+0e. #904 then conflicted with v3 (#903, the merge train's re-bind and
+`internal/task/bind.go`; #910, the rc.1 bump and notes), and CI stopped
+running on the branch. `85b5d8df` merges `origin/v3` at `3966afb7` (a
+merge commit; no rebase, no amend). Two files conflicted, each by both
+sides adding beside the same line, and both sides were kept:
+
+- `internal/schedproc/decide.go`: `DecideOptions` keeps this branch's
+  `Recover` and gains v3's `Rebind`; the proof's kind filter admits
+  `RecoverRequestKind` and `RebindRequestKind` (the `apply` switch merged
+  cleanly with both cases).
+- `pi/extensions/lib/words.ts`: `ROUTINE_DECISIONS` keeps v3's
+  `merge_train_rebound` and this branch's `ledger_recovered`,
+  `ledger_tampers_restored` and `ledger_hold_released`.
+
+Three files changed on both sides since the merge base `d522a066`
+(`git diff --name-only`): the two above, and
+`internal/cli/scheduler_run.go`, which merged cleanly (the `Recovery`
+from `NewRecovery` and v3's `Rebind` decision both wired, checked by
+hand). `internal/task` did not overlap (v3 changed `bind.go`, this branch
+added `reset_if.go` and its test), nor did any doc. The merged packages passed before the next
+commit (`internal/schedproc`, `internal/task`, `internal/cli`,
+`internal/scheduler`; `pi/test/words.test.ts`).
+
+`f3d72b7f`, the reviewer's P3: `names` matched "; alarm ID)" anywhere in
+a block's detail, and `tamperDetail` writes the refusal's own error text
+after that marker, so text inside an error could name another alarm.
+`names` now reads the alarm from the detail's fixed prefix only
+(`detailAlarm`: "seat H: quarantined at PATH (seq N; alarm ID): " or
+"seat H: the refused document could not be quarantined (seq N; alarm
+ID): ", the path matched lazily so the prefix's own marker, which comes
+before the error text, is the one read). Row:
+`TestAnErrorTextNamingAnotherAlarmIsNotThatAlarmsBlock` (a block
+re-raised by alarm B whose refusal text contains "; alarm A)" is left by
+A's release; `detailAlarm` reads B from the prefix and nothing from a
+detail that does not start with it).
+
 ## The quarantine layout read
 
 A slot is `<root>/extensions/amq-squad/quarantine/commits.<handle>.seq<N>[.k]/`
@@ -1083,6 +1125,7 @@ CLI.
 | no slot | A hold with no slot (seq 150): its block names its alarm (`; alarm ID)`); a record naming a slot at the hold's seq, and a decision by alarm for another alarm, release nothing over 10 ticks; the state file keeps the alarm and a restarted scheduler publishes it (`HeldAlarm`); the decision by its own alarm releases the hold, resets the task and dispatches it, and the seat is no longer published as held. | `internal/scheduler` `TestAHoldWithNoSlotIsReleasedOnlyByItsAlarm` |
 | lower-seq slot | A hold on slot seq150; the ledger records the recovery of a lower-seq slot (seq1): 10 ticks release nothing; the decision by the hold's alarm releases it, and the release line names the alarm. | `internal/scheduler` `TestALowerSeqSlotLeavesTheHoldToItsAlarm` |
 | late decision | A newer hold (alarm B); the ledger records a decision by an earlier alarm A (landing late): 20 ticks release nothing; B's own decision releases it. | `internal/scheduler` `TestALateDecisionForAnEarlierAlarmDoesNotReleaseANewerHold` |
+| the anchored prefix | Between A's release read and its reset the task is blocked by alarm B, whose refusal text contains "; alarm A)": no `task_reset`, B's block stays with its detail, A's hold is released; `detailAlarm` reads B from B's prefix and "" from a detail without the prefix. | `internal/scheduler` `TestAnErrorTextNamingAnotherAlarmIsNotThatAlarmsBlock` |
 | the append's descriptor | Unix: the hold release file replaced by a symlink before the append: refused naming the link, its target unchanged; replaced by a FIFO: refused at once (within 5 s, never blocked); a regular file again: the append works and its line verifies. | `internal/seatcommit` `TestTheAppendWritesOnlyToTheSeatsOwnRegularFile` |
 | two steps | Through `NewRecovery` (Git omitted, the production constructor): the quarantine's mode 0755 refuses the prepare's copy (a hold with no slot, `seq unknown`); the decision by alarm is refused naming the copy's failure; the mode repaired, it makes only the copy and is refused "seat H's ledger does not verify; it was copied to slot S; recover it with `amq-squad scheduler recover --seat H --seq 1 --reason ...`, which shows what it carries; then, if the hold remains, send the alarm decision again", the ledger unchanged, the slot holding the live bytes; step one, the slot recovery, carries nothing and releases nothing (the hold has no slot); step two, the decision by alarm, releases the seat. | `internal/schedproc` `TestACopyFailedHoldIsReleasedInTwoSteps` |
 | look, then change | The lead's look sees a ledger that verifies; it changes before the apply; the decision by alarm copies what it found and refuses with the slot and the command; the ledger is left as found, no line is written, no tick releases. | `internal/schedproc` `TestALedgerChangedBeforeTheAlarmDecisionIsCopiedNotRebuilt` |
@@ -2611,6 +2654,25 @@ alarms_unix_test.go:42: the append through a symlink: <nil>
 ```
 restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.297s`.
 
+### The anchored prefix (`f3d72b7f`)
+
+```
+go test -count=1 -run ^TestAnErrorTextNamingAnotherAlarmIsNotThatAlarmsBlock$ ./internal/scheduler/
+```
+Reverted `internal/scheduler/tamper.go:393` (the marker matched anywhere):
+```
+		detailAlarm(tm.Handle, t.BlockDetail) == tm.Alarm
+```
+to:
+```
+		strings.Contains(t.BlockDetail, "; alarm "+tm.Alarm+")")
+```
+First failing line (exit 1):
+```
+tamper_test.go:1005: A's release reset B's block: [{Kind:task_reset TaskID:t1 Seat:seat-a ...} ...]
+```
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	0.342s`.
+
 ## Gates
 
 The PR lands in two phases (the plan reviewer's changed ruling on the
@@ -2625,8 +2687,28 @@ on you" only when both are empty; its row (a tamper block with no gates
 shows under "waiting on you", never the "nothing" line) and revert run go
 in this note, and the gates run again on that head.
 
-Phase one, on `a57e9627` (Codex on `50986a71`; this note is the only
-change after it), each from the worktree root; the whole-module test,
+Phase one, on `f3d72b7f` (the merge of `origin/v3` at `3966afb7`, then
+the anchored prefix; this note is the only change after it), each from
+the worktree root; the whole-module test, `npm test` with lint, and `make
+ci` under the gate lock, one after another, each printing `f3d72b7f`
+inside the lock:
+
+- `gate-lock.sh 904-gates -- sh -c 'go build ./... && go vet ./... && go
+  test -count=1 ./...'`: exit 0, 56 packages `ok`, no `FAIL`.
+- `gate-lock.sh 904-pi -- sh -c 'cd pi && npm test && node
+  scripts/lint.mjs'`: exit 0, `ℹ tests 119`, `ℹ pass 118`, `ℹ fail 0`,
+  `ℹ skipped 1`, `lint ok: 30 files`.
+- `gate-lock.sh 904-ci -- sh -c 'PATH=<job tmp>/pyvenv/bin:$PATH
+  NPM_FLAGS=--offline make ci'`: exit 0, 70 `ok` (37 from the cache), no
+  `FAIL`.
+- `make fmt-check` with Go 1.26's gofmt first on PATH: exit 0;
+  `GOOS=windows go build ./internal/seatcommit/`: exit 0; the redact
+  check and the skill checks on this note: exit 0.
+
+Every gate passed on its first run, none repeated.
+
+Before that, phase one on `a57e9627` (Codex on `50986a71`; the note
+`a817fed3` the only change after it), each from the worktree root; the whole-module test,
 `npm test` with lint, and `make ci` under the gate lock, one after
 another, each printing `a57e9627` inside the lock:
 
