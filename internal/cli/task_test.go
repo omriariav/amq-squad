@@ -243,6 +243,27 @@ func TestTaskCLIClaimIgnoresNonLiveSeatRecordsAndUsesExplicitPool(t *testing.T) 
 		{"pid with no stamp", func(t *testing.T, root string) {
 			writeTaskCLISeatRecord(t, root, "seat-a", terra, &launch.Exec{Outcome: "exec", PID: os.Getpid()})
 		}},
+		{"live pid with a different stamp", func(t *testing.T, root string) {
+			start, ok := procinfo.StartToken(os.Getpid())
+			if !ok {
+				t.Fatal("current process start stamp is unavailable")
+			}
+			writeTaskCLISeatRecord(t, root, "seat-a", terra, &launch.Exec{Outcome: "exec", PID: os.Getpid(), ProcessStart: start + "-different"})
+		}},
+		{"unreadable current stamp", func(t *testing.T, root string) {
+			const recorded = "recorded-but-unreadable"
+			prev := taskClaimSeatStartToken
+			taskClaimSeatStartToken = func(int) (string, bool) { return recorded, false }
+			t.Cleanup(func() { taskClaimSeatStartToken = prev })
+			writeTaskCLISeatRecord(t, root, "seat-a", terra, &launch.Exec{Outcome: "exec", PID: os.Getpid(), ProcessStart: recorded})
+		}},
+		{"non-exec outcome", func(t *testing.T, root string) {
+			start, ok := procinfo.StartToken(os.Getpid())
+			if !ok {
+				t.Fatal("current process start stamp is unavailable")
+			}
+			writeTaskCLISeatRecord(t, root, "seat-a", terra, &launch.Exec{Outcome: "refused", PID: os.Getpid(), ProcessStart: start})
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -259,6 +280,27 @@ func TestTaskCLIClaimIgnoresNonLiveSeatRecordsAndUsesExplicitPool(t *testing.T) 
 				t.Fatalf("explicit pool was overridden by a non-live record: %v", err)
 			}
 		})
+	}
+}
+
+func TestTaskCLIClaimUsesAModelLessPiSeatRecordForAdmission(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	want := task.Pool{Runtime: "pi", Model: "qwen3.6:27b", Effort: "low"}
+	writeTaskCLISeatPool(t, root, "seat-pi", task.Pool{Runtime: "pi"})
+	if _, err := taskCLI(t, "add", "--title", "local", "--class", "script", "--pool", want.Key()); err != nil {
+		t.Fatal(err)
+	}
+	out, err := taskCLI(t, "claim", "t1", "--me", "seat-pi", "--json")
+	if err != nil {
+		t.Fatalf("model-less pi seat record did not supply its admission pool: %v", err)
+	}
+	got := decodeJSONEnvelope[taskEnvelope](t, out).Data.Task
+	if got.Lease == nil || got.Lease.ClaimedAt == nil || got.Pool == nil || *got.Pool != want {
+		t.Fatalf("model-less pi claim = %+v", got)
 	}
 }
 
