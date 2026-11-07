@@ -402,7 +402,7 @@ func recordAlarm(o RecoverOptions) (RecoverResult, error) {
 		if k, err := slotIndex(o.Handle, q.Seq, q.Slot); err == nil && k > 1 {
 			slotFlag = fmt.Sprintf(" --slot %d", k)
 		}
-		return out, refuseRecover(RecoverAlarmUnverified, "seat %s's ledger does not verify; it was copied to slot %s; recover it with `amq-squad scheduler recover --seat %s --seq %s%s --reason ...`, which shows what it carries, then send the alarm decision again", o.Handle, q.Slot, o.Handle, q.Seq, slotFlag)
+		return out, refuseRecover(RecoverAlarmUnverified, "seat %s's ledger does not verify; it was copied to slot %s; recover it with `amq-squad scheduler recover --seat %s --seq %s%s --reason ...`, which shows what it carries; then, if the hold remains, send the alarm decision again", o.Handle, q.Slot, o.Handle, q.Seq, slotFlag)
 	}
 	if rerr != nil {
 		return out, refuseRecover(RecoverAlarmUnverified, "the commits ledger of seat %s cannot be read as a document (%v); the decision by alarm needs one to verify or to quarantine", o.Handle, rerr)

@@ -469,7 +469,7 @@ func alarmOf(t *testing.T, detail string) string {
 
 // copyOnlyRe is the decision by alarm's copy-only refusal (the plan
 // reviewer's ruling on Codex's pass on 8cffafe7), with the slot and the seq.
-var copyOnlyRe = regexp.MustCompile("^seat (\\S+)'s ledger does not verify; it was copied to slot (\\S+); recover it with `amq-squad scheduler recover --seat (\\S+) --seq (\\S+) --reason \\.\\.\\.`, which shows what it carries, then send the alarm decision again$")
+var copyOnlyRe = regexp.MustCompile("^seat (\\S+)'s ledger does not verify; it was copied to slot (\\S+); recover it with `amq-squad scheduler recover --seat (\\S+) --seq (\\S+) --reason \\.\\.\\.`, which shows what it carries; then, if the hold remains, send the alarm decision again$")
 
 // Codex on 254f2c2c (P2-1) and on 8cffafe7, the reviewer's two steps, on
 // real files through the apply step and the production constructor

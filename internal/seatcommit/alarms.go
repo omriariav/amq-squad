@@ -153,21 +153,26 @@ func appendAlarm(root string, d AlarmDecision) error {
 		return err
 	}
 	path := AlarmsPath(root, d.Seat)
-	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file", path)
-	}
-	prev, _, err := readNoFollow(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
+	// one descriptor, no link followed, no FIFO blocked on, a regular file
+	// (openAppendNoFollow); the torn-tail check reads through it
+	f, err := openAppendNoFollow(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
 	var line []byte
-	if len(prev) > 0 && prev[len(prev)-1] != '\n' {
-		line = append(line, '\n')
+	if fi.Size() > 0 {
+		last := make([]byte, 1)
+		if _, err := f.ReadAt(last, fi.Size()-1); err != nil {
+			return err
+		}
+		if last[0] != '\n' {
+			line = append(line, '\n')
+		}
 	}
 	line = append(line, body...)
 	line = append(line, '\t')
