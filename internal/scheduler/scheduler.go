@@ -178,6 +178,14 @@ type Scheduler struct {
 	// exitsErr is the exits ledger's last load or write failure: dispatch
 	// stops (exits_ledger_unwritable) until a load and a write succeed.
 	exitsErr error
+	// exitsLegacy marks a verified embedded-seal exits document whose next
+	// write migrates it. exitsMigratedSeq carries that write into the next
+	// returned decision batch so the scheduler process persists the evidence.
+	exitsLegacy      bool
+	exitsMigratedSeq int
+	// exitsStopLogged is the typed compatibility/tamper stop already emitted
+	// for exitsErr. A persistent scheduler-wide refusal is logged once.
+	exitsStopLogged string
 	// toRelease are gone seats whose checks were decided: their slots are
 	// released once nothing for them is queued and the ledger says so.
 	toRelease map[string]bool
@@ -425,6 +433,10 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	}
 	// R3: the exit check on every terminal path that is not a done report.
 	s.loadExits()
+	if s.exitsMigratedSeq > 0 {
+		log(Decision{Kind: "ledger_layout_migrated", Reason: fmt.Sprintf("legacy exits ledger migrated to %s at link %d", sealchain.RawLayout, s.exitsMigratedSeq)})
+		s.exitsMigratedSeq = 0
+	}
 	if s.exitsLoaded {
 		if err := s.scanAttempts(list, now); err != nil {
 			return out, err
@@ -449,15 +461,31 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	// N3 (b): an exits ledger that cannot be read or written stops dispatch
 	// until it can.
 	if s.exitsErr != nil {
-		if errors.Is(s.exitsErr, sealchain.ErrTampered) {
-			// A failed tag or chain: a block routed to the owner, never a
-			// silent pass (the ruling); dispatch stays stopped.
-			log(Decision{Kind: "ledger_tampered", Reason: "owner: " + s.exitsErr.Error()})
+		switch {
+		case errors.Is(s.exitsErr, sealchain.ErrNewerWriter):
+			key := "newer_writer\x00" + s.exitsErr.Error()
+			if s.exitsStopLogged != key {
+				log(Decision{Kind: "newer_writer", Reason: "owner: " + s.exitsErr.Error()})
+				s.exitsStopLogged = key
+			}
+		case errors.Is(s.exitsErr, sealchain.ErrSchemaMismatch):
+			key := "schema_mismatch\x00" + s.exitsErr.Error()
+			if s.exitsStopLogged != key {
+				log(Decision{Kind: "schema_mismatch", Reason: "lead: " + s.exitsErr.Error()})
+				s.exitsStopLogged = key
+			}
+		case errors.Is(s.exitsErr, sealchain.ErrTampered):
+			key := "ledger_tampered\x00" + s.exitsErr.Error()
+			if s.exitsStopLogged != key {
+				log(Decision{Kind: "ledger_tampered", Reason: "lead: " + s.exitsErr.Error()})
+				s.exitsStopLogged = key
+			}
 		}
 		log(Decision{Kind: "exits_ledger_unwritable", Reason: s.exitsErr.Error()})
 		s.closeIdle(list, now, cfg, log)
 		return out, s.writeState(now, cfg)
 	}
+	s.exitsStopLogged = ""
 	// N2: the seats a previous incarnation left running are closed and
 	// confirmed gone before the first dispatch.
 	if s.closeAdopted(log) {
@@ -858,6 +886,20 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			}
 			if s.Preparer != nil {
 				if err := s.Preparer.PrepareSeat(handle); err != nil {
+					var refusal *PrepareRefusal
+					if errors.As(err, &refusal) {
+						route := refusal.Route
+						if route == "" {
+							route = task.RouteLead
+						}
+						got, berr := s.Store.Block(t.ID, "", refusal.Reason, refusal.Detail, route, now)
+						if berr != nil {
+							return berr
+						}
+						list = replace(list, got)
+						log(Decision{Kind: "blocked", TaskID: t.ID, Seat: handle, Reason: refusal.Reason})
+						continue
+					}
 					log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
 					continue
 				}

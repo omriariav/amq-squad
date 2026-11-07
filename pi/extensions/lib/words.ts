@@ -162,7 +162,9 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	widen_snapshot_missing: () => ["the widening found no snapshot of the stopped attempt", RESET],
 	widen_snapshot_attempt_mismatch: () => ["the widening's snapshot is of another attempt", RESET],
 	push_target_unacknowledged: () => ["the push target is not the one the owner's grant names now", "ask the owner to acknowledge the push target in the grant"],
-	ledger_tampered: () => ["the commits ledger does not verify", "ask the owner to inspect the commits ledger before anything commits"],
+	ledger_tampered: () => ["the commits ledger failed its check", "ask the lead to investigate before anything commits"],
+	newer_writer: () => ["the commits ledger was written by a newer amq-squad", "ask the owner to install the build named in the record"],
+	schema_mismatch: () => ["the commits ledger does not match the schema its writer claimed", "ask the lead to investigate the writer"],
 	tool_pin_mismatch: () => ["a pinned tool is not the pinned version", "ask the owner to check the pin"],
 	verifier_timeout: () => ["its verifier ran past its time limit", `${RESET}, or ask the owner to raise the limit`],
 	verifier_output_exceeded: () => ["its verifier printed more than the limit", `${RESET}, or ask the owner to raise the limit`],
@@ -395,7 +397,9 @@ export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]
 	seat_refused: (d) => [`${seatOf(d)} was refused`, "ask the lead why; the record is below the line"],
 	exit_refused: (d) => [`${seatOf(d)} did not stop cleanly${d.task_id ? ` after ${d.task_id}` : ""}`, "ask the owner to inspect it before the seat is relaunched"],
 	seat_close_failed: (d) => [`${seatOf(d)} could not be closed`, "close its pane by hand"],
-	ledger_tampered: () => ["the ledger does not verify", "ask the owner to inspect it"],
+	ledger_tampered: () => ["the exits ledger failed its check", "ask the lead to investigate it"],
+	newer_writer: () => ["the exits ledger was written by a newer amq-squad", "ask the owner to install the build named in the record"],
+	schema_mismatch: () => ["the exits ledger does not match the schema its writer claimed", "ask the lead to investigate the writer"],
 	scheduler_stopped: () => ["the scheduler stopped", "start the team again with amq-squad up"],
 	// the stops the plan reviewer's ruling on Codex's last finding on #863
 	// added: every decision kind Go writes is a stop (here) or routine
@@ -438,7 +442,7 @@ export const ROUTINE_DECISIONS: Record<string, true> = Object.fromEntries(
 	[
 		"blocked", "commit_adopted", "commit_cancelled", "commit_cancelling", "commit_deferred", "commit_refused", "commit_running", "completed",
 		"decision_socket_open", "discovery_stale", "dispatch_held", "dispatched", "exit_check_deferred", "exit_check_duplicate", "launch_failures_restored",
-		"lease_expired", "lease_normalised", "lease_renewed", "legacy_merge_head_missing", "pr_bound", "roster_adopted", "roster_launched", "roster_over_cap", "roster_relaunch_requested",
+		"lease_expired", "lease_normalised", "lease_renewed", "ledger_layout_migrated", "legacy_merge_head_missing", "pr_bound", "roster_adopted", "roster_launched", "roster_over_cap", "roster_relaunch_requested",
 		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing",
 		"seat_first_message", "seat_launch_retry", "seat_request_cancel_pending", "seat_request_cancelled", "seat_requested", "seat_up", "session_created",
 		"merge_train_rebound", "task_budget_extended", "task_reset", "usage_limit", "warning_cleared",

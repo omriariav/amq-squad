@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -27,6 +28,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/status"
@@ -314,6 +316,9 @@ func (u *upRun) install() (string, error) {
 				return "", err
 			}
 		}
+		if err := u.checkLedgerTarget(target); err != nil {
+			return "", err
+		}
 		v, err := u.checkPiBuild(target)
 		if err != nil {
 			return "", err
@@ -329,6 +334,9 @@ func (u *upRun) install() (string, error) {
 	}
 	if st, err := os.Stat(src); err != nil || !st.Mode().IsRegular() {
 		return "", refuse("pi_binary_missing", "%s is not a built binary; build it at a tag with scripts/build-pi-runtime.sh, or pass --binary PATH", src)
+	}
+	if err := u.checkLedgerTarget(src); err != nil {
+		return "", err
 	}
 	v, err := u.checkPiBuild(src)
 	if err != nil {
@@ -357,6 +365,125 @@ func (u *upRun) install() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("installed %s (%s) at %s by temp name and rename", src, v, target), nil
+}
+
+// checkLedgerTarget runs before the ordinary tagged-pi checks. Once a session
+// carries raw-layout heads, even an untagged or otherwise malformed target must
+// be refused in layout-specific words rather than falling through to the
+// generic pi_binary_untagged refusal.
+func (u *upRun) checkLedgerTarget(bin string) error {
+	_, raw, err := sealchain.SessionRawLayout(u.q.SessionRoot())
+	if err != nil {
+		return refuse("ledger_layout_unreadable", "the session's sealed heads could not be checked before install: %v", err)
+	}
+	if !raw {
+		return nil
+	}
+	out, _ := squadRun(u.ctx, u.report.Project, os.Environ(), bin, "version")
+	return u.checkLedgerDowngrade(parseAmqSquadVersion(string(out)))
+}
+
+func (u *upRun) checkLedgerDowngrade(targetVersion string) error {
+	writer, raw, err := sealchain.SessionRawLayout(u.q.SessionRoot())
+	if err != nil {
+		return refuse("ledger_layout_unreadable", "the session's sealed heads could not be checked before install: %v", err)
+	}
+	if !raw {
+		return nil
+	}
+	cmp, ok := compareReleaseVersions(targetVersion, sealchain.FirstRawLayoutVersion)
+	if !ok {
+		return refuse("ledger_layout_downgrade", "the session's ledgers were written by amq-squad %s in the raw-bytes seal layout; %q could not be read as a released version, so its layout support cannot be known; install a released build", writer, targetVersion)
+	}
+	if cmp < 0 {
+		return refuse("ledger_layout_downgrade", "the session's ledgers were written by amq-squad %s in the raw-bytes seal layout; %s predates that layout and cannot read them; roll forward or start a new session", writer, targetVersion)
+	}
+	return nil
+}
+
+type releaseVersion struct {
+	major, minor, patch int
+	pre                 []string
+}
+
+var releaseVersionPattern = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$`)
+
+// compareReleaseVersions returns the semver precedence of a and b. The
+// implementation is deliberately local: up needs only released tags and
+// must also reject devel and pseudo versions in words.
+func compareReleaseVersions(a, b string) (int, bool) {
+	parse := func(v string) (releaseVersion, bool) {
+		m := releaseVersionPattern.FindStringSubmatch(v)
+		if len(m) != 5 {
+			return releaseVersion{}, false
+		}
+		major, e1 := strconv.Atoi(m[1])
+		minor, e2 := strconv.Atoi(m[2])
+		patch, e3 := strconv.Atoi(m[3])
+		if e1 != nil || e2 != nil || e3 != nil {
+			return releaseVersion{}, false
+		}
+		out := releaseVersion{major: major, minor: minor, patch: patch}
+		if m[4] != "" {
+			out.pre = strings.Split(m[4], ".")
+		}
+		return out, true
+	}
+	left, ok := parse(a)
+	if !ok {
+		return 0, false
+	}
+	right, ok := parse(b)
+	if !ok {
+		return 0, false
+	}
+	for _, pair := range [][2]int{{left.major, right.major}, {left.minor, right.minor}, {left.patch, right.patch}} {
+		if pair[0] < pair[1] {
+			return -1, true
+		}
+		if pair[0] > pair[1] {
+			return 1, true
+		}
+	}
+	if len(left.pre) == 0 || len(right.pre) == 0 {
+		switch {
+		case len(left.pre) == len(right.pre):
+			return 0, true
+		case len(left.pre) == 0:
+			return 1, true
+		default:
+			return -1, true
+		}
+	}
+	for i := 0; i < len(left.pre) && i < len(right.pre); i++ {
+		if left.pre[i] == right.pre[i] {
+			continue
+		}
+		li, le := strconv.Atoi(left.pre[i])
+		ri, re := strconv.Atoi(right.pre[i])
+		switch {
+		case le == nil && re == nil:
+			if li < ri {
+				return -1, true
+			}
+			return 1, true
+		case le == nil:
+			return -1, true
+		case re == nil:
+			return 1, true
+		case left.pre[i] < right.pre[i]:
+			return -1, true
+		default:
+			return 1, true
+		}
+	}
+	if len(left.pre) < len(right.pre) {
+		return -1, true
+	}
+	if len(left.pre) > len(right.pre) {
+		return 1, true
+	}
+	return 0, true
 }
 
 // useInstalled resolves only the executable that now exists and will launch

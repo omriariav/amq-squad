@@ -1,12 +1,14 @@
 package schedproc
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -40,6 +42,10 @@ func (c *CleanSeats) PrepareSeat(handle string) error {
 	// (3.2.0-0c-A), and the reason names the copy.
 	if _, err := seatcommit.ReadLedgerAs(c.Root, handle, "scheduler prepare"); os.IsNotExist(err) {
 		return nil
+	} else if errors.Is(err, sealchain.ErrNewerWriter) {
+		return &scheduler.PrepareRefusal{Reason: seatcommit.ReasonNewerWriter, Detail: err.Error(), Route: task.RouteOwner}
+	} else if errors.Is(err, sealchain.ErrSchemaMismatch) {
+		return &scheduler.PrepareRefusal{Reason: seatcommit.ReasonSchemaMismatch, Detail: err.Error(), Route: task.RouteLead}
 	} else if err != nil {
 		return fmt.Errorf("the commit ledger of seat %s: %w", handle, err)
 	}

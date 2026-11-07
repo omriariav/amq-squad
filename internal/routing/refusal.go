@@ -32,6 +32,8 @@ var RefusalWorkFailure = map[string]bool{
 	seatcommit.ReasonRecordedDiffMismatch:     false,
 	seatcommit.ReasonLeaseTaskMismatch:        false,
 	seatcommit.ReasonLedgerTampered:           false,
+	seatcommit.ReasonNewerWriter:              false,
+	seatcommit.ReasonSchemaMismatch:           false,
 	seatcommit.ReasonPushTargetUnacknowledged: false,
 	seatcommit.ReasonEvidenceRefSymbolic:      false,
 	task.BlockVerdictTreeMismatch:             false,
