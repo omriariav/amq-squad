@@ -1,0 +1,44 @@
+{"at":"2026-11-07T16:46:03.333788Z","kind":"scheduler_stopped"}
+{"at":"2026-11-07T16:46:06.842985Z","kind":"scheduler_started","reason":"incarnation bbb289e15a23"}
+{"at":"2026-11-07T16:46:07.491998Z","kind":"roster_adopted","seat":"dev,reviewer","reason":"every roster seat is live from the previous incarnation; no launch"}
+{"at":"2026-11-07T16:50:59.071219Z","kind":"merge_train_rebound","task_id":"t88","seat":"cto","reason":"PR #894 re-bound from 68792071d942 to 2555d34aa770 by the lead's decision; first parent 87fb71e9b21b is the base tip of run mt-20261105T192313Z-ab184d07's batch; patch-id bb04a7c198466144716cd38e5d93fe1053bf32c5; force push 68792071d942003613da13562ed2c7cb1dd34529 -> 2555d34aa77084145bd7b3ca58f252c5178ac55a by omriariav; audit run mt-rebind-20261107T165103Z-324576e2"}
+{"at":"2026-11-07T16:52:51.508444Z","kind":"roster_relaunch_requested","reason":"rc.1: relaunch the roster so the codex seats get the rc.1 activity hooks; no task in progress"}
+{"at":"2026-11-07T16:52:51.508471Z","kind":"seat_closed","seat":"dev","reason":"roster_relaunch"}
+{"at":"2026-11-07T16:52:51.508475Z","kind":"seat_closed","seat":"reviewer","reason":"roster_relaunch"}
+{"at":"2026-11-07T16:52:51.508478Z","kind":"roster_reloaded","reason":"squad.yaml compiled again at the relaunch's drain: a roster of 2 seats; added none; removed none (each closed in the drain, not launched again); at most 3 leases at once"}
+{"at":"2026-11-07T16:52:51.508481Z","kind":"roster_launch_failed","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:52:51.508491Z","kind":"scheduler_stopped","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:52:52.568573Z","kind":"launch_failures_restored","reason":"2 launch failures and 0 tasks blocked on one, from the previous incarnation's state"}
+{"at":"2026-11-07T16:52:52.568887Z","kind":"scheduler_started","reason":"incarnation 5707ede4ee2f"}
+{"at":"2026-11-07T16:52:55.095341Z","kind":"roster_launch_failed","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:52:55.098579Z","kind":"scheduler_stopped","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:52:57.183569Z","kind":"launch_failures_restored","reason":"2 launch failures and 0 tasks blocked on one, from the previous incarnation's state"}
+{"at":"2026-11-07T16:52:57.186772Z","kind":"scheduler_started","reason":"incarnation 96764d2e1641"}
+{"at":"2026-11-07T16:52:59.82653Z","kind":"roster_launch_failed","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:52:59.829493Z","kind":"scheduler_stopped","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:53:03.890149Z","kind":"launch_failures_restored","reason":"2 launch failures and 0 tasks blocked on one, from the previous incarnation's state"}
+{"at":"2026-11-07T16:53:03.890537Z","kind":"scheduler_started","reason":"incarnation c2549eaec3f7"}
+{"at":"2026-11-07T16:53:06.457186Z","kind":"roster_launch_failed","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:53:06.457219Z","kind":"scheduler_stopped","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:53:14.521997Z","kind":"launch_failures_restored","reason":"2 launch failures and 0 tasks blocked on one, from the previous incarnation's state"}
+{"at":"2026-11-07T16:53:14.522372Z","kind":"scheduler_started","reason":"incarnation 2a799266afdf"}
+{"at":"2026-11-07T16:53:17.05613Z","kind":"roster_launch_failed","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:53:17.056166Z","kind":"scheduler_stopped","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:53:33.136639Z","kind":"launch_failures_restored","reason":"2 launch failures and 0 tasks blocked on one, from the previous incarnation's state"}
+{"at":"2026-11-07T16:53:33.13717Z","kind":"scheduler_started","reason":"incarnation c03db7998c75"}
+{"at":"2026-11-07T16:53:35.625301Z","kind":"roster_launch_failed","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:53:35.625324Z","kind":"scheduler_stopped","reason":"the roster launch failed at stage launch_error, reason none: plan the roster: seat reviewer worktree to the base tip 3966afb72b85: git read-tree: exit status 128: error: Entry 'MIGRATION.md' not uptodate. Cannot merge."}
+{"at":"2026-11-07T16:55:34.096951Z","kind":"launch_failures_restored","reason":"2 launch failures and 0 tasks blocked on one, from the previous incarnation's state"}
+{"at":"2026-11-07T16:55:34.097374Z","kind":"scheduler_started","reason":"incarnation 963f92fd8965"}
+{"at":"2026-11-07T16:55:37.38156Z","kind":"roster_launched","reason":"launch bce671a0f13ec2acf5092edbf4e34939: 2 seats in one apply"}
+{"at":"2026-11-07T16:55:37.381575Z","kind":"seat_up","seat":"dev","pool":"codex:gpt-5.6-terra:medium"}
+{"at":"2026-11-07T16:55:37.381579Z","kind":"seat_up","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-07T17:41:27.186302Z","kind":"roster_relaunch_requested","reason":"rc.1: relaunch with the codex hooks already trusted, for the live renewal row; no task in progress"}
+{"at":"2026-11-07T17:41:27.186325Z","kind":"seat_closed","seat":"dev","reason":"roster_relaunch"}
+{"at":"2026-11-07T17:41:27.186329Z","kind":"seat_closed","seat":"reviewer","reason":"roster_relaunch"}
+{"at":"2026-11-07T17:41:27.186332Z","kind":"roster_reloaded","reason":"squad.yaml compiled again at the relaunch's drain: a roster of 2 seats; added none; removed none (each closed in the drain, not launched again); at most 3 leases at once"}
+{"at":"2026-11-07T17:41:27.186335Z","kind":"roster_launched","reason":"launch d1e5673a8b6f6bb7a524bccd802bf15d: 2 seats in one apply"}
+{"at":"2026-11-07T17:41:27.186338Z","kind":"seat_up","seat":"dev","pool":"codex:gpt-5.6-terra:medium"}
+{"at":"2026-11-07T17:41:27.186341Z","kind":"seat_up","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-07T17:48:47.835855Z","kind":"lease_renewed","task_id":"t109","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-07T18:43:08.629275Z","kind":"lease_renewed","task_id":"t110","seat":"reviewer","reason":"first activity renewal of attempt 1"}
