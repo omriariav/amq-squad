@@ -72,7 +72,16 @@ function goWaits(): string[] {
 // task/scope.go (file_lock_conflict, self_widen: the widen verb's replies,
 // never a task's block), and the scheduler's verbs and kinds that are not
 // codes (RelaunchVerb's text).
-const NOT_BLOCKS = new Set(["file_lock_conflict", "self_widen"]);
+const NOT_BLOCKS = new Set([
+	"file_lock_conflict",
+	"self_widen",
+	// task claim refusals are CLI replies, never persisted block reasons.
+	// Their complete words live in internal/cli/task.go above the rule.
+	"claim_offer_required",
+	"claim_offer_expired",
+	"claim_pool_mismatch",
+	"claim_pool_unknown",
+]);
 function goBlocks(): string[] {
 	return [
 		...REASON_PACKAGES.flatMap(goFiles).flatMap((f) => [...constants(f, /^(Reason|Block|Refusal)/), ...literals(f, ...REASON_LITERALS)]),
@@ -187,6 +196,19 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	assert.deepEqual(seatDoing({ handle: "dev", state: "online", reason_code: "made_up_code" }, undefined), { text: "waiting", record: "dev: made_up_code" });
 	// the lead's hold
 	assert.equal(blockWords({ id: "t9", task_state: "blocked", block_reason: "hold" }).line, "t9 held by the lead");
+});
+
+test("claim refusal names are CLI-only and their plain words stay above the rule", () => {
+	const src = go("internal/cli/task.go");
+	for (const code of ["claim_offer_required", "claim_offer_expired", "claim_pool_mismatch", "claim_pool_unknown"]) {
+		assert.ok(NOT_BLOCKS.has(code), `${code} must stay out of the block-reason scan`);
+		assert.ok(!Object.hasOwn(BLOCK_WORDS, code), `${code} is not a persisted block reason`);
+	}
+	for (const words of [
+		"the scheduler hands out work; wait for its offer",
+		"has expired; wait for the scheduler to offer it again",
+		"claim it with --pool, or let the scheduler hand it out",
+	]) assert.ok(src.includes(words), `missing CLI refusal words: ${words}`);
 });
 
 // Row 7 (Codex on ed3d1e65): a failed seat launch's code is the pool's

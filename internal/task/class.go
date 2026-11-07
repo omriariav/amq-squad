@@ -164,6 +164,18 @@ type Pool struct {
 // Key is the pool's canonical "runtime:model:effort" string.
 func (p Pool) Key() string { return p.Runtime + ":" + p.Model + ":" + p.Effort }
 
+// PoolServes reports whether a seat pool serves a task pool. A model-less pi
+// seat serves any pi model; Claude and Codex require the same model and effort.
+func PoolServes(seat, want Pool) bool {
+	if seat.Runtime != want.Runtime {
+		return false
+	}
+	if seat.Runtime == "pi" {
+		return seat.Model == "" || seat.Model == want.Model
+	}
+	return seat.Model == want.Model && seat.Effort == want.Effort
+}
+
 // ParsePool parses "runtime:model:effort". Model and effort may be empty
 // ("pi:qwen3.6:27b:low" keeps colons inside the model: the first field is
 // the runtime, the last the effort).
