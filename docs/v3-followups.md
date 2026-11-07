@@ -9,7 +9,9 @@ planning sessions that made them; nothing here is a release blocker.
 ### Flakes
 
 - **Load-sensitive test timings.** Fix rule for every row: no wall-clock
-  budget that host load or the test's own setup can exhaust.
+  budget that host load or the test's own setup can exhaust. Counts, timings
+  and loads below are as reported in the 2026-11-06 and 2026-11-07 agent and
+  lead run reports unless a row cites the record that holds them.
 
   1. `internal/seatlaunch TestPiSeatPlansThroughTheUpstreamAdapter` failed at
      about 5.2 s against a 5 s budget with
@@ -34,13 +36,19 @@ planning sessions that made them; nothing here is a release blocker.
      answer", until its 5 minute budget expired against the 127.0.0.1 relay
      under load; it passed on rerun. Source: the test and its signal rule in
      `docs/v3-spike/5-301-evidence/t18-buzz-dryrun-signal.md`.
-  5. The pi R53 guard rows use a 5 s guard timeout. When `npm test` ran beside
-     another suite, row 2 took 11.4 s and other rows took 7 to 9 s; they also
+  5. The pi R53 guard rows use a 5 s guard timeout. Under host load (load
+     average 17.5) two R53 rows took 8.2 s and 9.2 s and failed with
+     `amq-squad guard failed closed (timed out after 5000 ms)`; R53 rows also
      failed once while the host gate lock held with other load outside it.
-     Source: #903's 3a execution note at
-     `docs/v3-spike/320-3a-train/async-update.md:1806` and the R53 tests in
-     `pi/test/phase.test.ts`.
-  6. `internal/cli/repass5_fix_test.go:74`
+     Sources: #903's 3a execution note at
+     `docs/v3-spike/320-3a-train/async-update.md:1806-1816` and the R53 tests
+     in `pi/test/phase.test.ts`.
+  6. In the same run the pi screen row `row 2: the screen's last line ...`
+     took 11.4 s and failed with `TypeError: Cannot read properties of
+     undefined (reading 'lines')`; it is a separate screen-row timing
+     failure, not an R53 guard row. Source:
+     `docs/v3-spike/320-3a-train/async-update.md:1808-1812`.
+  7. `internal/cli/repass5_fix_test.go:74`
      `TestDecisionAdapterKillsAHungGuardGroup` reported a hung guard and
      unparsable guard output after 30.0 s at load 16.7. Source: the test's
      watchdog assertion.
@@ -56,7 +64,7 @@ planning sessions that made them; nothing here is a release blocker.
   checks before every land that the PR's task has no live lease and no queued
   commit result. Sources: the #903 review,
   `internal/task/scope.go:131`, `internal/cli/seat_commit.go:123` and `:221`,
-  and `internal/scheduler/scheduler.go:740`.
+  and `internal/scheduler/scheduler.go:741`.
 - Three small fixes remain from the #903 merge-train review.
   `definiteRefusal` should match only gh's ` (HTTP 4NN)` suffix on the last
   stderr line; `headAdmitted`, `trainHeads` and `journaledBases` should compare
@@ -70,19 +78,26 @@ planning sessions that made them; nothing here is a release blocker.
   Protect it alongside the sealed and gate names. Source:
   `internal/uninstall/plan.go:78`.
 - One `amq-squad status --json` response immediately after a scheduler start
-  at 2026-11-07 16:46Z contained a raw control character and `jq` rejected it;
-  six later runs were valid. Go's JSON encoder escapes control characters, so
-  find the writer that bypassed `encoding/json`. Source: the 2026-11-07 run
-  note.
-- Three records under `gates/clear-*.json` in the v31 session have failed to
-  parse as `gate record is malformed` since 2026-11-05 17:20Z. Find which
-  writer produced them before anyone clears them. Source: the v31 gate-store
-  note and `internal/gatestore/record.go:211`.
+  at 2026-11-07 16:46Z (as reported in the lead's run report) contained a raw
+  control character and `jq` rejected it; six later runs were valid. The
+  command writes through `json.NewEncoder(os.Stdout)`
+  (`internal/cli/status.go:80-82`), which escapes control characters, so the
+  likely cause is another writer interleaving with stdout; that is a
+  hypothesis. Capture the failing bytes next.
+- Three records under `gates/clear-*.json` in the v31 session have failed
+  gate-record validation (`gate record is malformed`) since 2026-11-05 17:20Z
+  (as reported by the squad's alerts). Find which writer produced them before
+  anyone clears them. Source: `Record.Validate` in
+  `internal/gatestore/record.go:207-211`.
 - **rc.2:** upgrade normalisation can end a live legacy attempt on the first
   scheduler tick. Stamp its budget end as the later of grant plus the default
   budget and now plus one lease length. Source: the legacy-lease rule in
   `docs/v3.2.0-release-notes.md:66`.
-- Today identical refused bytes reuse their slot (sameSlot, internal/seatcommit/quarantine.go:369), which allows the same-uid slot-reuse replay. A slot named by a recovery record must never be reused: identical bytes refused again get a new .k slot.
+- **rc.2:** today identical refused bytes reuse their slot (`sameSlot` at
+  `internal/seatcommit/quarantine.go:333`, and the reuse branch at `:213-221`),
+  which allows the same-uid slot-reuse replay. A slot named by a recovery
+  record must never be reused: identical bytes refused again get a new .k
+  slot.
 - Briefs that carry another PR's commits conflict after the merge train
   rebases and lands the carried PR, as #907 did after #901's `12d1a8ba`
   landed as `27fa44f0`. Make briefs depend on that PR instead of carrying its
@@ -106,12 +121,12 @@ planning sessions that made them; nothing here is a release blocker.
   these seat gates, as the lead's agents already do with a host gate lock.
 - `CancelCommit` can launch an extra seat outside roster mode when its wait is
   zero. Prevent that launch at `internal/schedproc/committer.go:131`.
-- Lead stops other than the tamper alarm appear as lead failures even when
-  they require owner action. Move those stops under "waiting on you" on the
-  lead screen, while leaving the tamper alarm distinct.
-- **rc.2:** `internal/routing/tamper.go:62` accepts only four tamper kinds and
-  tags a re-encoded struct, so an older reader rejects every new routing-log
-  row. Land 0f's raw-bytes row tags and tolerant-kind verification first.
+- The lead screen's "waiting on you" section lists only open gates, so it can
+  say "Nothing is waiting on you" while a lead-routed stop is open. #904's
+  phase two lists the tamper alarm there; the other lead-routed stop kinds
+  should be listed there too.
+- (Low priority) Write a decision line per task wait change, so a wait is on
+  record when the screen cannot show its row.
 - A seat launch can hang indefinitely while fetching from origin because the
   fetch has no time limit. Reuse the bounded runner already provided by
   `seatcommit`.
@@ -133,9 +148,14 @@ planning sessions that made them; nothing here is a release blocker.
   its raw bytes are not sealed with schema-specific refusal reasons. Seal the
   raw bytes and refuse downgrades with distinct `newer_writer` and
   `schema_mismatch` reasons; #904 and #909 land after it.
-- **rc.2 0f:** routing decision-log tags are computed from re-encoded rows and
-  older readers reject unfamiliar kinds. Tag the raw row bytes and tolerate
-  new kinds during verification.
+- **rc.2 0f:** the routing decision log's tamper rows accept only four kinds
+  (`internal/routing/tamper.go:63-69`) and are tagged over a re-encoded struct
+  (`:57-59`), so an older reader rejects rows with an unfamiliar kind; a field
+  change can also break verification, because the tag covers a re-encoded
+  struct. Ordinary verified decisions and the four known kinds are still
+  accepted (`internal/routing/chain.go:161-172`). Tag the raw row bytes and
+  tolerate new kinds during verification; 0f lands before any new routing-log
+  row kind.
 
 ## 3.1
 
