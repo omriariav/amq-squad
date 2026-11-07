@@ -1,0 +1,208 @@
+{
+  "schema_version": 1,
+  "kind": "up",
+  "data": {
+    "project": "/Users/omri/code/amq-squad",
+    "root": "/Users/omri/code/amq-squad/.agent-mail/v31",
+    "session": "v31",
+    "lead": "cto",
+    "binary": "/Users/omri/go/bin/amq-squad",
+    "start": "2026-11-07T16:46:04.404044Z",
+    "tmux_session": "squad-lead-amq-squad-f42a4",
+    "attach": "tmux attach -t squad-lead-amq-squad-f42a4",
+    "steps": [
+      {
+        "name": "compile",
+        "outcome": "ok",
+        "detail": "3 seats, lead cto, session v31"
+      },
+      {
+        "name": "install",
+        "outcome": "ok",
+        "detail": "installed /Users/omri/scratch-v320rc1/build/pi/amq-squad (v3.2.0-rc.1) at /Users/omri/go/bin/amq-squad by temp name and rename"
+      },
+      {
+        "name": "session",
+        "outcome": "skipped",
+        "detail": "skipped: the session root /Users/omri/code/amq-squad/.agent-mail/v31 exists"
+      },
+      {
+        "name": "doctor",
+        "outcome": "ok",
+        "detail": "40 checks, none failed (6 warnings)"
+      },
+      {
+        "name": "lead",
+        "outcome": "ok",
+        "detail": "no recorded lead or scheduler is running"
+      },
+      {
+        "name": "tmux",
+        "outcome": "ok",
+        "detail": "tmux session squad-lead-amq-squad-f42a4 runs /Users/omri/go/bin/amq-squad lead --team in /Users/omri/code/amq-squad"
+      },
+      {
+        "name": "roster",
+        "outcome": "ok",
+        "detail": "roster_adopted: every roster seat is live from the previous incarnation; no launch"
+      }
+    ],
+    "roster": [
+      {
+        "handle": "cto",
+        "role": "",
+        "runtime": "",
+        "model": "",
+        "effort": "",
+        "state": "stale",
+        "live": false,
+        "reason_code": "no_live_signal",
+        "bucket": "inactive",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "",
+        "last_activity_at": "2026-11-06T05:37:56.386857Z",
+        "last_message_at": "2026-11-06T05:37:56.338986Z",
+        "last_message": "t104 (0d8) addendum: two more generated-string classes for the property row (an escape inside a grapheme cluster; an escape between surrogate halves): For t104 (0d8) when you take it: Codex's follow-u",
+        "prompt_state": "running",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "",
+        "branch": "",
+        "launch": null
+      },
+      {
+        "handle": "dev",
+        "role": "senior-dev",
+        "runtime": "codex",
+        "model": "gpt-5.6-terra",
+        "effort": "medium",
+        "state": "online",
+        "live": true,
+        "reason_code": "idle",
+        "bucket": "ready",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "/Users/omri/code/amq-squad/.worktrees/dev",
+        "last_activity_at": "2026-11-07T16:45:58.145419Z",
+        "last_message_at": "2026-11-05T15:03:49.964358Z",
+        "last_message": "Re: t80 (3.2.0-0c-A): renew your lease by hand every 5 minutes: t80 claim refused: seat_unclean, dev worktree is not known clean since 15:02:57Z. The worktree still has t77 docs/v3-spike/320-0-ledger ",
+        "prompt_state": "unknown",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "/Users/omri/code/amq-squad/.worktrees/dev",
+        "branch": "seat/dev",
+        "launch": {
+          "launch_id": "aaa2a7f7061101f14e4a83757eccb4e5",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-06T04:51:53.560444Z",
+            "seat_live": "2026-11-06T04:51:58.002118Z",
+            "first_message": null,
+            "to_seat_live_ms": 4441,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "drain",
+                "ms": 1796
+              },
+              {
+                "name": "prepare",
+                "ms": 2002
+              },
+              {
+                "name": "mint",
+                "ms": 81
+              },
+              {
+                "name": "apply",
+                "ms": 446
+              },
+              {
+                "name": "seat_exec",
+                "ms": 114
+              }
+            ]
+          },
+          "added_at": null
+        }
+      },
+      {
+        "handle": "reviewer",
+        "role": "qa",
+        "runtime": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "needs_you",
+        "live": true,
+        "reason_code": "question_to_owner",
+        "bucket": "needs_you",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "/Users/omri/code/amq-squad/.worktrees/reviewer",
+        "last_activity_at": "2026-11-07T16:45:58.157406Z",
+        "last_message_at": "2026-11-06T06:09:11.932304Z",
+        "last_message": "Re: task t104: 3.2.0-0d8 (after t103): the local measure as an upper bound by construction, carrying e060a4ef: printable ASCII 1, tab 3, a tiny width-1 allowlist (Latin-1 letters, Hebrew letters), eve",
+        "prompt_state": "unknown",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "/Users/omri/code/amq-squad/.worktrees/reviewer",
+        "branch": "seat/reviewer",
+        "launch": {
+          "launch_id": "aaa2a7f7061101f14e4a83757eccb4e5",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-06T04:51:53.560444Z",
+            "seat_live": "2026-11-06T04:51:57.973244Z",
+            "first_message": "2026-11-06T05:29:00.936464Z",
+            "to_seat_live_ms": 4412,
+            "to_first_message_ms": 2227376,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "drain",
+                "ms": 1796
+              },
+              {
+                "name": "prepare",
+                "ms": 2002
+              },
+              {
+                "name": "mint",
+                "ms": 81
+              },
+              {
+                "name": "apply",
+                "ms": 446
+              },
+              {
+                "name": "seat_exec",
+                "ms": 85
+              }
+            ]
+          },
+          "added_at": null
+        }
+      }
+    ]
+  }
+}

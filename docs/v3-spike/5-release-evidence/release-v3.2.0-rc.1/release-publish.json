@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "kind": "release_publish",
+  "data": {
+    "error": "",
+    "steps": [
+      {
+        "role": "tag",
+        "gate_id": "rel-tag-bac0d98d5b361923de04",
+        "target": "git tag v3.2.0-rc.1 3966afb72b85e1ab6c0fc8c879f1c5ef03f92a40 on omriariav/amq-squad",
+        "status": "ran",
+        "result": "3966afb72b85e1ab6c0fc8c879f1c5ef03f92a40"
+      },
+      {
+        "role": "github_release",
+        "gate_id": "rel-gh-52f285c7875979d81165",
+        "target": "gh release create v3.2.0-rc.1 on omriariav/amq-squad",
+        "status": "ran",
+        "result": "https://github.com/omriariav/amq-squad/releases/tag/v3.2.0-rc.1"
+      }
+    ]
+  }
+}
