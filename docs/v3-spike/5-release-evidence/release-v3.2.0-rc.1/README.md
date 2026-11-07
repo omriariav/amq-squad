@@ -96,7 +96,7 @@ pi's `!` prefix runs the rest as a shell command from the lead's own process, wh
 
 ## The train on rc.1
 
-interim-rule.txt records the interim rule checked before a train ran: every task whose PR goes in completed with no lease, and the exits queue holds no queued commit result. It has three lines: 17:00:34Z (before #894, #901 and #907: t88, t98, t103), 17:37:49Z (before #911: t106) and 17:44:25Z (before #912: t108). It has no line for #913, #914 or #915.
+interim-rule.txt records the interim rule checked before a train ran: every task whose PR goes in completed with no lease, and the exits queue holds no queued commit result. It has three lines: 17:00:34Z (before #894, #901 and #907: t88, t98, t103), 17:37:49Z (before #911: t106) and 17:44:25Z (before #912: t108). #914 also went through the train (run mt-20261107T181555Z-17dc0ad2) with no line written: its check before the train (t109 completed, no lease; the exits queue empty) is by the lead session's account. #913 and #915 were lead PRs merged by hand, not through the train, so the rule does not apply to them.
 
 What landed on v3 after the cut (`gh pr view` for each, re-run for this note):
 
@@ -113,7 +113,7 @@ What landed on v3 after the cut (`gh pr view` for each, re-run for this note):
 
 - #894 went in through train run mt-20261107T170044Z-879e3790: update_requested, rebase, rebind, merge. By the lead session's account it was the first live asynchronous update. The run's own output is not copied here. What git shows: #894's merged head b91153ae95d41e1d64dfa21be579d2dd4400876e has first parent 3966afb7 (the tag commit), and `git diff 3966afb7 b91153ae | git patch-id --stable` prints bb04a7c198466144716cd38e5d93fe1053bf32c5, the patch-id in rebind-894.txt.
 - #907 was refused: by the lead session's account it conflicted after #901's rebase, because it had carried #901's commits. It was redone as #912 (t108, "apply its own diff 12d1a8ba..fd52d772 only"). The two diffs are the same: `git diff 12d1a8ba fd52d772` and #912's commit `git diff 24dcc91d^ 24dcc91d` both have patch-id cbc2f9bf41ebf18d047ba991c40bd07327e39e74 (2 files, +79/-3), and their text is equal apart from the `index` lines, whose blob ids follow the different base.
-- The PR heads moved after the seats bound them: t106 bound #911 at head 723ed3f5094e4bba0565368626e3dc262b8737da (renewal-decisions-t106.log) and #911 merged from head b37f4611501cf38f619bbdd4058e9328eb8054e7; t109 bound #914 at head 5a4bc57c79e461a2e54e99f4c70a9f4366900b4c (renewal-decisions-t109.log) and #914 merged from head f1c23cdbfaf15641c7ea185bdf67f7e0306ac0b1.
+- The merged heads of #911 and #914 differ from the heads the seats bound because the train's own async update rebased them onto the new v3, not because a seat pushed. t106 bound #911 at 723ed3f5094e4bba0565368626e3dc262b8737da (renewal-decisions-t106.log); the train run mt-20261107T173812Z-772a32a6 requested the update, rebased and rebound it with patch-id 119743e1e655a630ea67278e7064bf303e1baee4 and first parent 27fa44f0, and merged b37f4611501cf38f619bbdd4058e9328eb8054e7, whose patch-id is the same. t109 bound #914 at 5a4bc57c79e461a2e54e99f4c70a9f4366900b4c (renewal-decisions-t109.log); run mt-20261107T181555Z-17dc0ad2 rebased and rebound it with patch-id b8343b6bcaa97fe37dbb6286764083c5ba0765c9 and first parent d9cea129, and merged f1c23cdbfaf15641c7ea185bdf67f7e0306ac0b1, same patch-id. The update_requested, rebase and rebind entries are in mergetrain-audit-excerpt.jsonl.
 
 ## The live renewal row
 
@@ -158,7 +158,9 @@ Three files back facts the sections above mark "by the lead session's account":
 
 - `mergetrain-audit-excerpt.jsonl`: every audit entry of the train runs
   mt-20261107T170044Z-879e3790 (#894), mt-20261107T171004Z-2cab1580 (#901),
-  mt-20261107T171951Z-bffd7583 (#907, the `refusal`) and the rebind verb's run
+  mt-20261107T171951Z-bffd7583 (#907, the `refusal`),
+  mt-20261107T173812Z-772a32a6 (#911), mt-20261107T174719Z-95049c8c (#912) and
+  mt-20261107T181555Z-17dc0ad2 (#914), and the rebind verb's run
   mt-rebind-20261107T165103Z-324576e2, read from the v31 session's
   `extensions/amq-squad/mergetrain/audit.jsonl`. It holds the
   `update_requested`, `rebase` and `rebind` entries of #894's and #901's async
@@ -176,9 +178,14 @@ Three files back facts the sections above mark "by the lead session's account":
   17:20:18Z in `attach-v31-restored.jsonl` ("accepted merge-e8c88d76dad1a873
   spawn"): the owner approved an override of that rule for #907's head on Buzz.
   It was never used: #907 conflicts with v3, so no override could merge it, and it
-  was closed in favour of #912. A merge conflict should not raise an override gate
-  at all (the 3.2.x `update_conflict` item covers the refusal code; the override
-  offer belongs with it).
+  was closed in favour of #912. This gate should not exist. Draft 2's 3.1.2 item 6
+  said the strict refusal is not liftable by an owner gate and says in words that
+  no gate overrides GitHub's rule; that item never landed (origin/v3 has no such
+  words, and the train builds the "grow merge" target through
+  internal/gatetarget/gatetarget.go:136). It is on the rc.2 list: a strict or
+  conflict refusal raises no override gate and ends in words ("GitHub requires the
+  branch up to date; the train could not update it because it conflicts; a seat
+  resolves it"), because such a gate asks the owner a question with no safe yes.
 
 ## The files
 
