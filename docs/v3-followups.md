@@ -4,6 +4,89 @@ Items deferred out of 3.0 by a recorded decision, each with the plan section
 that records it (docs/v3-plan.md unless named otherwise). They outlive the
 planning sessions that made them; nothing here is a release blocker.
 
+## 3.2.x
+
+### Flakes
+
+- **Load-sensitive test timings.** Fix rule for every row: no wall-clock
+  budget that host load or the test's own setup can exhaust.
+
+  1. `internal/seatlaunch TestPiSeatPlansThroughTheUpstreamAdapter` failed at
+     about 5.2 s against a 5 s budget with
+     `amqpi_test.go:75: outcome unsupported (launcher_not_available)`. It was
+     seen twice on 2026-11-06 in quiet-tree `make ci` runs by the 3a and 0c-B
+     agents. Sources: the test at `internal/seatlaunch/amqpi_test.go:75` and
+     #903's 3a execution note at
+     `docs/v3-spike/320-3a-train/async-update.md:1618`.
+  2. `internal/registry TestMeasureTTFT` also spends wall-clock time inside
+     the test and belongs under the same rule. Source:
+     `internal/registry/probe_test.go:169`.
+  3. `internal/cli TestContextHostKillsAHangingCommandsGroupAndNamesTheFactMissing`
+     lost its fake git at the 4 s deadline before the script wrote
+     `child.pid`; `TestContextHostSharesOneBudgetAndLeavesNoProcessBehind`
+     returned an empty branch after its shared 4 s budget was spent. Both
+     were seen on 2026-11-06 at load about 10, when the first execution of a
+     fresh temporary script took 0.3 to 0.5 s. Sources:
+     `internal/cli/first_turn_unix_test.go:52` and `:98`, and the #837 row in
+     `docs/v3-spike/31-evidence/31-3-pr2-r53-first-turn.md:299`.
+  4. `internal/buzz TestOwnerScriptDryRun` hung at
+     `enroll_test.go:447`, with no signal for "the attach verifies the thread
+     answer", until its 5 minute budget expired against the 127.0.0.1 relay
+     under load; it passed on rerun. Source: the test and its signal rule in
+     `docs/v3-spike/5-301-evidence/t18-buzz-dryrun-signal.md`.
+  5. The pi R53 guard rows use a 5 s guard timeout. When `npm test` ran beside
+     another suite, row 2 took 11.4 s and other rows took 7 to 9 s; they also
+     failed once while the host gate lock held with other load outside it.
+     Source: #903's 3a execution note at
+     `docs/v3-spike/320-3a-train/async-update.md:1806` and the R53 tests in
+     `pi/test/phase.test.ts`.
+  6. `internal/cli/repass5_fix_test.go:74`
+     `TestDecisionAdapterKillsAHungGuardGroup` reported a hung guard and
+     unparsable guard output after 30.0 s at load 16.7. Source: the test's
+     watchdog assertion.
+
+### Open items
+
+- `CompleteBound` can overwrite a newer merge-train head. A seat commit
+  result cached at head O can reach `CompleteBound` after the train has bound
+  head H, and there is no admission or from-head check; `seat commit` also
+  binds a PR directly. Route both bindings through the train's admission and
+  from-head check, or refuse the older head. This must land before the train
+  lands a PR whose task still has a live seat attempt. Until it does, the lead
+  checks before every land that the PR's task has no live lease and no queued
+  commit result. Sources: the #903 review,
+  `internal/task/scope.go:131`, `internal/cli/seat_commit.go:123` and `:221`,
+  and `internal/scheduler/scheduler.go:740`.
+- Three small fixes remain from the #903 merge-train review.
+  `definiteRefusal` should match only gh's ` (HTTP 4NN)` suffix on the last
+  stderr line; `headAdmitted`, `trainHeads` and `journaledBases` should compare
+  repository names with `EqualFold`, as the store does; and `trainHeads`
+  should report that the journal read failed when `Audit.Read` fails instead
+  of suggesting a seat push. Sources: #903 and
+  `internal/mergetrain/update.go:109`, `audit.go:192`, `audit.go:213`, and
+  `rebind.go:208`.
+- `uninstall --write` deletes quarantine evidence without `--purge` because
+  `internal/uninstall/plan.go` does not protect the quarantine directory.
+  Protect it alongside the sealed and gate names. Source:
+  `internal/uninstall/plan.go:78`.
+- One `amq-squad status --json` response immediately after a scheduler start
+  at 2026-11-07 16:46Z contained a raw control character and `jq` rejected it;
+  six later runs were valid. Go's JSON encoder escapes control characters, so
+  find the writer that bypassed `encoding/json`. Source: the 2026-11-07 run
+  note.
+- Three records under `gates/clear-*.json` in the v31 session have failed to
+  parse as `gate record is malformed` since 2026-11-05 17:20Z. Find which
+  writer produced them before anyone clears them. Source: the v31 gate-store
+  note and `internal/gatestore/record.go:211`.
+- **rc.2:** upgrade normalisation can end a live legacy attempt on the first
+  scheduler tick. Stamp its budget end as the later of grant plus the default
+  budget and now plus one lease length. Source: the legacy-lease rule in
+  `docs/v3.2.0-release-notes.md:66`.
+- **rc.2:** a quarantine slot named by a recovery record is never reused, so
+  refusing the same bytes again creates a new `.k` slot. Reuse the recorded
+  slot for identical bytes. Source: the 0c-B recovery and 0e seal notes in
+  `docs/v3.2.0-release-notes.md:281`.
+
 ## 3.1
 
 **Direction for 3.1 (owner, 2026-10-30, in his words):** "we want to copy
@@ -230,10 +313,7 @@ closes.
 - Test flakes still open after the hygiene branches: internal/seatlaunch
   TestProofConnectionsAreBounded and
   TestAmbiguousRequestIsAbandonedOnlyWhenNoPaneExists (TempDir cleanup
-  races); internal/seatlaunch TestPiSeatPlansThroughTheUpstreamAdapter under
-  host load (AMQ's tmux detection has a 5 s deadline, backend_common.go:16;
-  a loaded host misses it and Prepare says launcher_not_available; seen in
-  3.0.1 t16, see its execution note); the internal/cli hung-guard row was fixed on v3-5-hygiene2
+  races); the internal/cli hung-guard row was fixed on v3-5-hygiene2
   (merged c15ac65b). Keep the failing full-run output before any fix. Spike
   log, test-hygiene list.
 - `amq-squad uninstall --json`: the verb has no JSON envelope. Plan 16.4
@@ -313,7 +393,7 @@ closes.
 - 3.0.x: `remote attach` starts when another attach already holds the same mailbox; with two on one mailbox the newest reply wins, so a verified answer can show as refused (v31 and v302 on 2026-10-31). The attach refuses to start while another attach holds its mailbox.
 - 3.0.x: a `release join` step in the release flow's containment check (#819's CheckCommit, internal/releaseflow/releaseflow.go:253): cut main-<version> off main, merge the release commit, prove the empty tree diff (`git diff --stat` against the release branch), open the PR, so the lead stops doing it by hand (done by hand as #813 for 3.0.1 and #824 for 3.0.2).
 - 3.0.x: internal/cli TestRealPTYWaitPostureRefusesNamedGateBeforeTimeout (wait_posture_pty_test.go) runs a `go build` of ./cmd/amq-squad that reaches proxy.golang.org (briefs ruling 18: no test reaches the network). The build runs offline, as 3.0.1 t18 made the buzz dry run's.
-- 3.0.x, flakes to watch (seen 2026-10-31, keep the failing full-run output before any fix): internal/seatlaunch TestPiSeatPlansThroughTheUpstreamAdapter said launcher_not_available once under load (the tmux deadline in the test-flakes line above); internal/cli TestDecisionAdapterKillsAHungGuardGroup ran out its 30 s watchdog once under load; internal/redact TestBlockIsLinearOnALongLine failed once on #814's CI at 78.5x against the 64x bound (the t2 evidence).
+- 3.0.x, flakes to watch (seen 2026-10-31, keep the failing full-run output before any fix): internal/cli TestDecisionAdapterKillsAHungGuardGroup ran out its 30 s watchdog once under load; internal/redact TestBlockIsLinearOnALongLine failed once on #814's CI at 78.5x against the 64x bound (the t2 evidence).
 
 ## Acceptance rows that wait on the owner session (not deferred, open)
 
