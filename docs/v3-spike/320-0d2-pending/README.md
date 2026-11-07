@@ -16,11 +16,12 @@ tasks (76)
 ```
 
 In three independent reconstructions, t72, t73 and t74 were task rows 41, 42
-and 43. Each row contained the expected v3.1.2 text
-`waiting: t71 hold its files`, but none was inside the three-row visible
-region. The lead's reported bare `pending` came from `task show`, while the
-screen supplied no row for those tasks. There is no captured screen row that
-lost a wait field.
+and 43. None of the three rows was inside the three-row visible region; that
+holds for all three tasks. The row text `waiting: t71 hold its files` was
+observed for t74 at 14:06:56Z; for t72 and t73 it is inferred from the same
+code path and their cancellation records. The lead's reported bare `pending`
+came from `task show`, while the screen supplied no row for those tasks. There
+is no captured screen row that lost a wait field.
 
 This is still a 3.2.0 screen defect. It is an ordering and bounded-height
 presentation defect, not a status-classification defect.
