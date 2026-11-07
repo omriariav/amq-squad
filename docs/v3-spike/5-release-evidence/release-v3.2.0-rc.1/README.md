@@ -152,6 +152,34 @@ From the t106 and t109 rows: the first-renewal decision keys on `Renewals == 1`,
 
 `up` refuses a running lead (up-320rc1-2.json), so both restarts (16:46:03Z and 16:55:32Z) were SIGTERMs, as on 3.1.2.
 
+## Records added by the lead (after the first draft)
+
+Three files back facts the sections above mark "by the lead session's account":
+
+- `mergetrain-audit-excerpt.jsonl`: every audit entry of the train runs
+  mt-20261107T170044Z-879e3790 (#894), mt-20261107T171004Z-2cab1580 (#901),
+  mt-20261107T171951Z-bffd7583 (#907, the `refusal`) and the rebind verb's run
+  mt-rebind-20261107T165103Z-324576e2, read from the v31 session's
+  `extensions/amq-squad/mergetrain/audit.jsonl`. It holds the
+  `update_requested`, `rebase` and `rebind` entries of #894's and #901's async
+  updates (so "the first live async update" is now a record, not an account) and
+  #907's refusal with its rule.
+- `decisions-excerpt.jsonl`: the v31 scheduler decisions from 16:40Z on whose kind
+  is a roster, seat close or up, lease renewal, rebind, or scheduler start or stop
+  entry. It holds both roster launches (bce671a0f13ec2acf5092edbf4e34939 after the
+  first relaunch, d1e5673a8b6f6bb7a524bccd802bf15d at 17:41:27Z before t109), the
+  `merge_train_rebound` line for #894 and t109's `lease_renewed` line.
+- `gate-merge-907.json`: the owner gate the train raised when it refused #907:
+  class `spawn`, target "grow merge omriariav/amq-squad#907
+  head=fd52d772e0494ababc468d1bb0dd5c7af1ebbe6e
+  rules=strict_required_status_checks_policy". This is the unlisted approval at
+  17:20:18Z in `attach-v31-restored.jsonl` ("accepted merge-e8c88d76dad1a873
+  spawn"): the owner approved an override of that rule for #907's head on Buzz.
+  It was never used: #907 conflicts with v3, so no override could merge it, and it
+  was closed in favour of #912. A merge conflict should not raise an override gate
+  at all (the 3.2.x `update_conflict` item covers the refusal code; the override
+  offer belongs with it).
+
 ## The files
 
 All copied from the job's scratch records through `go run ./scripts/redact-evidence` (rule 18; it replaced no value, and `-check` is clean):
