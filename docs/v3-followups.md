@@ -157,6 +157,48 @@ planning sessions that made them; nothing here is a release blocker.
   tolerate new kinds during verification; 0f lands before any new routing-log
   row kind.
 
+- **rc.2 items 5 and 6:** the merge train never raises an owner gate whose "yes"
+  cannot be acted on safely. A strict refusal, a branch-update conflict and a PR
+  already merged at another head each end in words with no gate, and an accepted
+  legacy gate record never lifts them; a transient read error during reconcile
+  (5xx, transport, deadline, rate limit, gh killed) audits and skips that PR while
+  the run continues. See the audit table below.
+- **rc.2 item 8:** the cut procedure (RELEASING.md and the orchestrator skill)
+  names the publish as the lead's own step; the release agent prepares and checks,
+  never publishes; a refused step goes back to the owner, never to another session.
+- **rc.2 item 7d:** the rc.2 known limits re-state that the merge train's dry run
+  still appends its audit entries (flagged `DryRun`); making the dry run read-only
+  is 3.2.x.
+- Stall marker (item 7a): the seat warning comes from `.wake.dialog`'s existence
+  alone (`internal/status/screen.go:239-240`); clear it when the prompt is
+  answered, or use a liveness signal.
+- Plan text (item 7b): the merge-train plan still prints the run header, the raw
+  `ci_app_unbound` note, short heads and rule names first
+  (`internal/cli/merge_train.go:317-362`); put them in words with the codes below.
+- Cap-off (item 7c): `size_cap_lines` and `size_cap_files` accept no off value
+  (`internal/grants/parse.go:258-261`); add an explicit off with the growth gate
+  following it.
+
+### The 3.1.2 plan's eight items, audited against origin/v3 (2026-11-07, at a4dff16c)
+
+Draft 2 of the 3.1.2 plan (2026-11-05) listed eight items. 3.1.2 shipped as the hotfix #883 without most of them; 3.2.0's work since then carried three. Each row is read from origin/v3's code.
+
+| Item | Status | PR | Where it lives, or what still behaves the old way |
+| --- | --- | --- | --- |
+| 1. Codex leases renew from the seat's activity, bounded by the task budget; #876's rule kept | Landed | #891 | `internal/cli/hook_ingest.go:121` (`renewLeaseOnToolResult`) and `:160`; `internal/task/lease.go:167-168` (the budget cap), `:417-434`; `internal/routing/refusal.go:73-76` (an expired lease counted, never escalated); `TestActivityRenewalIsBoundedByTaskBudgetOnBothPaths`; live row proven on t109 (the rc.1 evidence). Open: the two rc.2 renewal items below. |
+| 2. `task claim ID` checks the task's pool | Landed | #901 (carrying #899) | `internal/task/lease.go:121-137` (`requireServingPool`, `claim_pool_mismatch`, `claim_pool_unknown`); `internal/cli/task.go:551-579`; `TestClaimServingChecksAConcurrentRepinInsideTheClaimUpdate`. |
+| 3. The lapsed-holder skip resets on relaunch | Landed | #901 | `internal/scheduler/scheduler.go:1003-1007` (skip only for attempts granted since `joinedAt`), `:559`; `internal/scheduler/roster.go:132-140` (adoption keeps the launch anchor); `TestLapsedHolderIsEligibleAgainOnlyAfterItsCurrentJoin`. |
+| 4. C5, the seat's approvals policy and writable roots | Not | none | `internal/seatexec/codex.go:29` still emits `writable_roots=[]`; `seatexec_unix.go:561-567`, `:575-576` require it; the seat launch (`internal/seatlaunch/compile.go:111`) carries no auto reviewer and no trusted choice, unlike `internal/cli/agent_defaults.go:10-11`. The bypass flag is already refused (`seatexec_unix.go:330`). The writable roots are C5a and C5b (rc.2). The trust choice (the auto reviewer, or the trusted path when the owner chose it) stays out of both: it meets the auto-reviewer escalation residual, so it goes to the owner as one A/B once C5b lands, not into a brief now. |
+| 5. Train: a transient read error skips one PR; a PR merged at another head is refused from the plan | Not | none | `internal/mergetrain/train.go:907-910` and `:338-339` end the whole run on a read error; a PR merged at another head is audited and skipped (`:1004-1010`, `:919-920`), then refused `pr_state` (`checks.go:88-89`) with a `grow merge` owner gate (`refuse()`, `:487-523`) on every run. |
+| 6. The strict refusal is not liftable by an owner gate | Not | none | `train.go:474` adds `strict_required_status_checks_policy`; `refuse()` raises the `grow merge` gate (`internal/gatetarget/gatetarget.go:136`) and an accepted gate lifts it (`train.go:490-495`); no wording says no gate overrides GitHub's rule (`internal/cli/merge_train.go:357-360`, `words.ts:611`). On 2026-11-07 the owner approved such a gate for #907; it was never used. |
+| 7a. The stall marker (C4) | Not | none | `internal/status/screen.go:239-240` warns from `.wake.dialog`'s existence alone; AMQ's hook clears it only at turn end. |
+| 7b. The plan text's code lines | Not | none | `internal/cli/merge_train.go:317` (run id and full SHA header), `:318-319` (the raw `ci_app_unbound` note first), `:342` (short heads), `:362` (rule names first). |
+| 7c. An explicit cap-off for size_cap_lines/files | Not | none | `internal/grants/parse.go:258-261` (minimum 1), `docs/squad-yaml.md:241-242`; no off value, so a very high cap silences the growth gate. |
+| 7d. The dry run's audit entries read-only or stated | Partly | #877 (stated only) | Stated as 3.1.1 known limit 12; the code still appends them (`train.go:264-271`, `:282`, `:557`, `:380`), and rc.1's known limits do not repeat it. |
+| 8. The cut procedure names the publish as the lead's step | Not | none | `RELEASING.md:29-63` names no actor for steps 2-6; the orchestrator skill, `docs/skills.md:190-192` and `README.md:509-510` say only that publish runs under the owner's gh outside any seat. |
+
+Where each open item goes: rc.2: 4 (C5, split into C5a and C5b), 5, 6, 8, and 7d's re-statement in the rc.2 known limits. 3.2.x: 7a, 7b, 7c, and making the dry run read-only (7d).
+
 ## 3.1
 
 **Direction for 3.1 (owner, 2026-10-30, in his words):** "we want to copy
