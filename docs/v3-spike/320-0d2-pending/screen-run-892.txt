@@ -1,0 +1,4 @@
+PASS fixture-892.json
+  t72 waits for t71: both declare docs/v3-spike/320-evidence/
+  t73 waits for t71: both declare docs/v3-spike/320-evidence/
+  t74 waits for t71: both declare docs/v3-spike/320-evidence/
