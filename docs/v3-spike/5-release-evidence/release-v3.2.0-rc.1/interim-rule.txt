@@ -1,0 +1,3 @@
+2026-11-07T17:00:34Z interim rule before the train (rc.1): t88 (#894) completed, no lease, pr_head 2555d34aa770; t98 (#901) completed, no lease, pr_head 12d1a8bab14d; t103 (#907) completed, no lease, pr_head fd52d772e049; scheduler/exits.json queue empty (no queued commit result)
+2026-11-07T17:37:49Z interim rule before the train: t106 (#911) completed, no lease, pr_head 723ed3f5; exits queue as printed
+2026-11-07T17:44:25Z interim rule before the train: t108 (#912) completed, no lease, pr_head 51e378ea; exits queue empty

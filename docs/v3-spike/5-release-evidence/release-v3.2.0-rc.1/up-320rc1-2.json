@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "kind": "up",
+  "data": {
+    "project": "/Users/omri/code/amq-squad",
+    "root": "/Users/omri/code/amq-squad/.agent-mail/v31",
+    "session": "v31",
+    "lead": "cto",
+    "binary": "/Users/omri/go/bin/amq-squad",
+    "start": "2026-11-07T16:55:19.340949Z",
+    "steps": [
+      {
+        "name": "compile",
+        "outcome": "ok",
+        "detail": "3 seats, lead cto, session v31"
+      },
+      {
+        "name": "install",
+        "outcome": "skipped",
+        "detail": "skipped: /Users/omri/go/bin/amq-squad already reports v3.2.0-rc.1"
+      },
+      {
+        "name": "session",
+        "outcome": "skipped",
+        "detail": "skipped: the session root /Users/omri/code/amq-squad/.agent-mail/v31 exists"
+      },
+      {
+        "name": "doctor",
+        "outcome": "ok",
+        "detail": "40 checks, none failed (6 warnings)"
+      },
+      {
+        "name": "lead",
+        "outcome": "refused",
+        "refusal": "lead_running",
+        "detail": "lead_running: a lead of /Users/omri/code/amq-squad/.agent-mail/v31 is running (pid 69669, tmux pane %134); one lead per root; attach to it with: tmux attach -t %134"
+      }
+    ]
+  }
+}

@@ -1,0 +1,1 @@
+error: up: lead_running: lead_running: a lead of /Users/omri/code/amq-squad/.agent-mail/v31 is running (pid 69669, tmux pane %134); one lead per root; attach to it with: tmux attach -t %134
