@@ -38,7 +38,9 @@ the reviewer's rulings on that pass (the section "The reviewer on Codex's
 pass on 254f2c2c"), and `ff7b5530`, its note; then `cb4f7d13`, the
 refusal words dropped (the reviewer accepted leaving them out), and
 `8cffafe7`, its note; then `eff2fea1` and `97a05cc4`, Codex's pass on
-`8cffafe7` (the section "The hold release file"); then this note. The helper move of `8017ffea` is between
+`8cffafe7` (the section "The hold release file"), and `50986a71`, its
+note; then `a57e9627`, Codex's pass on `50986a71` (the append's
+descriptor; the refusal's words); then this note. The helper move of `8017ffea` is between
 two declared packages (`internal/schedproc/slots.go` to
 `internal/seatcommit/baseshadow.go`), so it left the declared set
 unchanged. `9de43a6c` widens it by two files, `internal/task/reset_if.go`
@@ -930,15 +932,30 @@ accepted a simplification over patching:
   (`quarantine`, the copy a refusing read makes) and refuses
   `recover_alarm_unverified` with "seat H's ledger does not verify; it
   was copied to slot S; recover it with `amq-squad scheduler recover
-  --seat H --seq N --reason ...`, which shows what it carries, then send
-  the alarm decision again" (`--slot K` added when the copy is not the
-  first slot of its seq, so the command runs as shown). Recovery is the
-  lead's two steps: the slot recovery, then the decision by alarm.
+  --seat H --seq N --reason ...`, which shows what it carries; then, if
+  the hold remains, send the alarm decision again" (`--slot K` added when
+  the copy is not the first slot of its seq, so the command runs as shown;
+  "if the hold remains" since `a57e9627`). The slot recovery comes first.
+  When the hold names that exact slot, the slot recovery releases it at
+  the next tick and nothing more is needed (an alarm decision sent then is
+  `recover_alarm_not_held`, the hold being gone); the decision by alarm is
+  needed only when the hold has no matching slot (a refusal that
+  quarantined nothing, as in the two-step row, or a slot the chain has
+  moved past). An earlier version of this item said recovery is always
+  the two steps.
 - **(a) The decisions in a file of their own** (`97a05cc4`): the
   decision by alarm is a line of the seat's hold release file,
   `<root>/extensions/amq-squad/commits/<handle>.alarms.jsonl`
   (`seatcommit.AlarmsPath`, `internal/seatcommit/alarms.go`), appended
-  under the seat's ledger lock, so the lock order is unchanged. A line is
+  under the seat's ledger lock, so the lock order is unchanged, through one
+  descriptor (`openAppendNoFollow`, `a57e9627`: on unix
+  `O_RDWR|O_APPEND|O_CREAT|O_NOFOLLOW|O_NONBLOCK`, the descriptor fstat'd
+  and required to be a regular file, the torn-tail check reading the last
+  byte through the same descriptor, beside the quarantine's unix
+  descriptor helpers; off unix a link check, then the open). Codex on
+  `50986a71` found the first version checked the path and then opened it
+  again, so a swap to a symlink between the two appended elsewhere and a
+  swap to a FIFO blocked the open under the ledger lock. A line is
   the JSON body (seat, alarm, reason, time, and the lead the socket
   proved), a tab, and the hex HMAC-SHA256 under the session seed's key of
   the domain string "amq-squad scheduler hold release v1", a zero byte
@@ -1066,7 +1083,8 @@ CLI.
 | no slot | A hold with no slot (seq 150): its block names its alarm (`; alarm ID)`); a record naming a slot at the hold's seq, and a decision by alarm for another alarm, release nothing over 10 ticks; the state file keeps the alarm and a restarted scheduler publishes it (`HeldAlarm`); the decision by its own alarm releases the hold, resets the task and dispatches it, and the seat is no longer published as held. | `internal/scheduler` `TestAHoldWithNoSlotIsReleasedOnlyByItsAlarm` |
 | lower-seq slot | A hold on slot seq150; the ledger records the recovery of a lower-seq slot (seq1): 10 ticks release nothing; the decision by the hold's alarm releases it, and the release line names the alarm. | `internal/scheduler` `TestALowerSeqSlotLeavesTheHoldToItsAlarm` |
 | late decision | A newer hold (alarm B); the ledger records a decision by an earlier alarm A (landing late): 20 ticks release nothing; B's own decision releases it. | `internal/scheduler` `TestALateDecisionForAnEarlierAlarmDoesNotReleaseANewerHold` |
-| two steps | Through `NewRecovery` (Git omitted, the production constructor): the quarantine's mode 0755 refuses the prepare's copy (a hold with no slot, `seq unknown`); the decision by alarm is refused naming the copy's failure; the mode repaired, it makes only the copy and is refused "seat H's ledger does not verify; it was copied to slot S; recover it with `amq-squad scheduler recover --seat H --seq 1 --reason ...`, which shows what it carries, then send the alarm decision again", the ledger unchanged, the slot holding the live bytes; step one, the slot recovery, carries nothing and releases nothing (the hold has no slot); step two, the decision by alarm, releases the seat. | `internal/schedproc` `TestACopyFailedHoldIsReleasedInTwoSteps` |
+| the append's descriptor | Unix: the hold release file replaced by a symlink before the append: refused naming the link, its target unchanged; replaced by a FIFO: refused at once (within 5 s, never blocked); a regular file again: the append works and its line verifies. | `internal/seatcommit` `TestTheAppendWritesOnlyToTheSeatsOwnRegularFile` |
+| two steps | Through `NewRecovery` (Git omitted, the production constructor): the quarantine's mode 0755 refuses the prepare's copy (a hold with no slot, `seq unknown`); the decision by alarm is refused naming the copy's failure; the mode repaired, it makes only the copy and is refused "seat H's ledger does not verify; it was copied to slot S; recover it with `amq-squad scheduler recover --seat H --seq 1 --reason ...`, which shows what it carries; then, if the hold remains, send the alarm decision again", the ledger unchanged, the slot holding the live bytes; step one, the slot recovery, carries nothing and releases nothing (the hold has no slot); step two, the decision by alarm, releases the seat. | `internal/schedproc` `TestACopyFailedHoldIsReleasedInTwoSteps` |
 | look, then change | The lead's look sees a ledger that verifies; it changes before the apply; the decision by alarm copies what it found and refuses with the slot and the command; the ledger is left as found, no line is written, no tick releases. | `internal/schedproc` `TestALedgerChangedBeforeTheAlarmDecisionIsCopiedNotRebuilt` |
 | the seal | The hold release file: a line from `appendAlarm` releases its alarm; a forged seal, a one-byte edit, a line under another root's seed and a line sealed for another seat release nothing, each one problem by its line number; a body with an unknown field verifies; a valid line before a torn tail releases, the tail one problem; the next append terminates the tail and its line verifies; the file is mode 0600. | `internal/seatcommit` `TestTheHoldReleaseFileReleasesOnlyVerifiedLines` |
 | logged once | A problem of the hold release file is one `hold_release_line_skipped` over 10 ticks; a new problem beside a verified line is one more, and the line releases. | `internal/scheduler` `TestAHoldReleaseFileProblemIsLoggedOnce` |
@@ -2574,6 +2592,25 @@ the row named in the table of rows. (The first run of "the seal not
 checked" left the key unused and did not compile; it was run again with
 the key and the tag kept, and failed on its row as above.)
 
+### Codex on 50986a71 (`a57e9627`)
+
+```
+go test -count=1 -run ^TestTheAppendWritesOnlyToTheSeatsOwnRegularFile$ ./internal/seatcommit/
+```
+Reverted `internal/seatcommit/alarms.go:158` (a plain OpenFile):
+```
+	f, err := openAppendNoFollow(path)
+```
+to:
+```
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o600)
+```
+First failing line (exit 1):
+```
+alarms_unix_test.go:42: the append through a symlink: <nil>
+```
+restored and re-run (exit 0): `ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	0.297s`.
+
 ## Gates
 
 The PR lands in two phases (the plan reviewer's changed ruling on the
@@ -2588,8 +2625,28 @@ on you" only when both are empty; its row (a tamper block with no gates
 shows under "waiting on you", never the "nothing" line) and revert run go
 in this note, and the gates run again on that head.
 
-Phase one, on `97a05cc4` (the hold release file; this note is the only
+Phase one, on `a57e9627` (Codex on `50986a71`; this note is the only
 change after it), each from the worktree root; the whole-module test,
+`npm test` with lint, and `make ci` under the gate lock, one after
+another, each printing `a57e9627` inside the lock:
+
+- `gate-lock.sh 904-gates -- sh -c 'go build ./... && go vet ./... && go
+  test -count=1 ./...'`: exit 0, 56 packages `ok`, no `FAIL`.
+- `gate-lock.sh 904-pi -- sh -c 'cd pi && npm test && node
+  scripts/lint.mjs'`: exit 0, `ℹ tests 119`, `ℹ pass 118`, `ℹ fail 0`,
+  `ℹ skipped 1`, `lint ok: 30 files`.
+- `gate-lock.sh 904-ci -- sh -c 'PATH=<job tmp>/pyvenv/bin:$PATH
+  NPM_FLAGS=--offline make ci'`: exit 0, 70 `ok` (48 from the cache), no
+  `FAIL`.
+- `make fmt-check` with Go 1.26's gofmt first on PATH: exit 0;
+  `GOOS=windows go build ./internal/seatcommit/`: exit 0 (the non-unix
+  `openAppendNoFollow` builds); the redact check and the skill checks on
+  this note: exit 0.
+
+Every gate passed on its first run, none repeated.
+
+Before that, phase one on `97a05cc4` (the hold release file; the note
+`50986a71` the only change after it), each from the worktree root; the whole-module test,
 `npm test` with lint, and `make ci` under the gate lock, one after
 another, each printing `97a05cc4` inside the lock:
 
