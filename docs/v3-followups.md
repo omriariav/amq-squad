@@ -82,10 +82,60 @@ planning sessions that made them; nothing here is a release blocker.
   scheduler tick. Stamp its budget end as the later of grant plus the default
   budget and now plus one lease length. Source: the legacy-lease rule in
   `docs/v3.2.0-release-notes.md:66`.
-- **rc.2:** a quarantine slot named by a recovery record is never reused, so
-  refusing the same bytes again creates a new `.k` slot. Reuse the recorded
-  slot for identical bytes. Source: the 0c-B recovery and 0e seal notes in
-  `docs/v3.2.0-release-notes.md:281`.
+- Today identical refused bytes reuse their slot (sameSlot, internal/seatcommit/quarantine.go:369), which allows the same-uid slot-reuse replay. A slot named by a recovery record must never be reused: identical bytes refused again get a new .k slot.
+- Briefs that carry another PR's commits conflict after the merge train
+  rebases and lands the carried PR, as #907 did after #901's `12d1a8ba`
+  landed as `27fa44f0`. Make briefs depend on that PR instead of carrying its
+  commits.
+- A branch-update merge conflict was reported as
+  `strict_required_status_checks_policy`, which hides the actual refusal from
+  the lead screen and audit. Give this refusal its own `update_conflict` code.
+- `task add` accepted a plan task pinned to the Codex terra tier even though
+  the registry could never resolve that class and pool, then left it blocked
+  as `pin_unresolved`. Refuse an impossible class and pool pair at add time
+  and explain the mismatch in words.
+- The roster plan can reject a clean worktree as `not uptodate` because of
+  stat-only index drift in `MIGRATION.md`, seen on 2026-11-05 and 2026-11-07.
+  Refresh the index before deciding that the worktree is dirty.
+- The Makefile's `fmt-check` can use a newer host `gofmt` whose alignment
+  differs from CI's Go 1.26, because `GOTOOLCHAIN` does not switch the
+  standalone formatter. Resolve `gofmt` from the toolchain selected by
+  `go.mod`.
+- Whole-module tests, `make ci` and `npm test` from different seats compete
+  for one host and create load-sensitive failures. Have the harness serialise
+  these seat gates, as the lead's agents already do with a host gate lock.
+- `CancelCommit` can launch an extra seat outside roster mode when its wait is
+  zero. Prevent that launch at `internal/schedproc/committer.go:131`.
+- Lead stops other than the tamper alarm appear as lead failures even when
+  they require owner action. Move those stops under "waiting on you" on the
+  lead screen, while leaving the tamper alarm distinct.
+- **rc.2:** `internal/routing/tamper.go:62` accepts only four tamper kinds and
+  tags a re-encoded struct, so an older reader rejects every new routing-log
+  row. Land 0f's raw-bytes row tags and tolerant-kind verification first.
+- A seat launch can hang indefinitely while fetching from origin because the
+  fetch has no time limit. Reuse the bounded runner already provided by
+  `seatcommit`.
+- **rc.2 C5:** Codex seats pin `writable_roots=[]` at
+  `internal/seatexec/seatexec_unix.go:562-571`, so a seat cannot drain or
+  claim without an approval prompt and the terra seat gives up. Add only the
+  seat's own mailbox directory and the exact lock paths required by `amq
+  drain` and task claim; never make the session root,
+  `extensions/amq-squad/`, or another seat's mailbox writable, because that
+  denial protects sealed state.
+- **rc.2:** the first-renewal decision uses `Renewals == 1`, so a manual
+  renewal can consume the marker before the attempt's first activity. Key the
+  decision on the first activity renewal and label every renewal as
+  `activity` or `manual` in the ledger.
+- **rc.2:** the task doorbell reads Codex hook trust at launch, so trust added
+  mid-session does not remove the manual-renew instruction from later tasks.
+  Read hook trust at dispatch for every doorbell.
+- **rc.2 0e:** the commit ledger can be downgraded or reinterpreted because
+  its raw bytes are not sealed with schema-specific refusal reasons. Seal the
+  raw bytes and refuse downgrades with distinct `newer_writer` and
+  `schema_mismatch` reasons; #904 and #909 land after it.
+- **rc.2 0f:** routing decision-log tags are computed from re-encoded rows and
+  older readers reject unfamiliar kinds. Tag the raw row bytes and tolerate
+  new kinds during verification.
 
 ## 3.1
 
