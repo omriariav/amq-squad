@@ -384,9 +384,29 @@ func (tm *LedgerTamper) covers(rec RecoveryMark) bool {
 // names the hold's alarm id. A tamper block of another alarm, or written
 // by another writer (the commit step's refusal names no alarm), is not
 // this hold's and its release leaves it (the plan reviewer on af1a6124).
+//
+// The alarm is read from the detail's fixed prefix only (detailAlarm), so
+// a refusal's own error text, which follows the prefix, can never name
+// another alarm (the plan reviewer on a817fed3).
 func (tm *LedgerTamper) names(t task.Task) bool {
 	return t.State == task.StateBlocked && t.BlockReason == ReasonLedgerTampered && tm.Alarm != "" &&
-		strings.Contains(t.BlockDetail, "; alarm "+tm.Alarm+")")
+		detailAlarm(tm.Handle, t.BlockDetail) == tm.Alarm
+}
+
+// detailAlarm is the alarm id in the fixed prefix of a tamper block's
+// detail as tamperDetail writes it ("seat H: quarantined at PATH (seq N;
+// alarm ID): ..." or "seat H: the refused document could not be
+// quarantined (seq N; alarm ID): ..."), or "" when the detail does not
+// start with that prefix for this seat. The path is matched lazily, so
+// the first marker, the prefix's own, is the one read; the refusal's text
+// comes after it.
+func detailAlarm(handle, detail string) string {
+	re := regexp.MustCompile(`^seat ` + regexp.QuoteMeta(handle) + `: (?:quarantined at .+?|the refused document could not be quarantined) \(seq [^;()]+; alarm ([0-9a-f]{8})\): `)
+	m := re.FindStringSubmatch(detail)
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // RestoreLedgerTampers takes the tamper alarms a previous incarnation

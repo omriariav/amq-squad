@@ -958,3 +958,56 @@ func TestAHoldReleaseFileProblemIsLoggedOnce(t *testing.T) {
 		t.Fatalf("a new problem beside a verified line: %+v", ds)
 	}
 }
+
+// The plan reviewer on a817fed3: a block is a hold's own only when the
+// detail's fixed prefix names the hold's alarm; the refusal's error text
+// after the prefix can say anything. Between the release's read and its
+// reset the task is blocked again by alarm B, whose refusal text contains
+// "; alarm A)" (A being the hold released): the block stays, no
+// task_reset, and A's hold is released. detailAlarm reads B from the
+// prefix, and nothing from a detail that does not start with the prefix
+// (the commit step's refusal) even when its text carries the marker.
+// Reverted (the marker matched anywhere in the detail), B's block is
+// cleared by A's release.
+func TestAnErrorTextNamingAnotherAlarmIsNotThatAlarmsBlock(t *testing.T) {
+	h := newHarness(t, Config{IdleTimeout: time.Hour})
+	p := &tamperPreparer{seat: "seat-a", err: tamperErr("seat-a", "150")}
+	h.s.Preparer = p
+	tk := h.add("a", &sonnet)
+	h.up("seat-a", sonnet)
+	h.tick()
+	a := h.s.tampered["seat-a"].Alarm
+	p.recover("seat-a", 150, slotOf("seat-a", "150"))
+	bErr := tamperErr("seat-a", "151")
+	bErr.Err = errors.New("commit ledger seat-a: ledger_tampered: the refused body reads (seq 150; alarm " + a + "): forged")
+	other := tamperDetail("seat-a", bErr, "b0000002")
+	if !strings.Contains(other, "; alarm "+a+")") || detailAlarm("seat-a", other) != "b0000002" {
+		t.Fatalf("the detail's prefix: %q -> %q", other, detailAlarm("seat-a", other))
+	}
+	if got := detailAlarm("seat-a", "the commits ledger refused the write: commit ledger seat-a: (seq 150; alarm "+a+"): x"); got != "" {
+		t.Fatalf("a detail without the prefix names %q", got)
+	}
+	prev := storeGet
+	t.Cleanup(func() { storeGet = prev })
+	storeGet = func(st task.Store, id string) (task.Task, error) {
+		got, err := prev(st, id)
+		if _, rerr := st.Reset(id, nil, h.clk.Now()); rerr != nil {
+			t.Fatal(rerr)
+		}
+		if _, berr := st.Block(id, "", ReasonLedgerTampered, other, task.RouteLead, h.clk.Now()); berr != nil {
+			t.Fatal(berr)
+		}
+		return got, err
+	}
+	ds := h.tick()
+	storeGet = prev
+	if has(ds, "task_reset", tk.ID, "") || has(ds, "dispatched", tk.ID, "") {
+		t.Fatalf("A's release reset B's block: %+v", ds)
+	}
+	if got := h.get(tk.ID); got.State != task.StateBlocked || got.BlockDetail != other {
+		t.Fatalf("B's block was cleared: %s %q", got.State, got.BlockDetail)
+	}
+	if !has(ds, "ledger_hold_released", "", "seat-a") {
+		t.Fatalf("A's hold was not released: %+v", ds)
+	}
+}
