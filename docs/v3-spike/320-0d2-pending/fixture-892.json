@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "source": "snapshot-0d2 normalized into three independent task lifetimes and classified at PR #892 head 874ced4b",
+  "cases": [
+    {
+      "target": {"id":"t72","title":"file-lock investigation t72","task_state":"pending","wait_reason":"file_lock","wait_holders":["t71"],"waits_for":[{"task_id":"t71","path":"docs/v3-spike/320-evidence/"}],"lease_holder":"","pr_number":0},
+      "holder": {"id":"t71","title":"holder","task_state":"in_progress","lease_holder":"reviewer","wait_reason":"","wait_holders":[],"pr_number":0}
+    },
+    {
+      "target": {"id":"t73","title":"file-lock investigation t73","task_state":"pending","wait_reason":"file_lock","wait_holders":["t71"],"waits_for":[{"task_id":"t71","path":"docs/v3-spike/320-evidence/"}],"lease_holder":"","pr_number":0},
+      "holder": {"id":"t71","title":"holder","task_state":"in_progress","lease_holder":"reviewer","wait_reason":"","wait_holders":[],"pr_number":0}
+    },
+    {
+      "target": {"id":"t74","title":"file-lock investigation t74","task_state":"pending","wait_reason":"file_lock","wait_holders":["t71"],"waits_for":[{"task_id":"t71","path":"docs/v3-spike/320-evidence/"}],"lease_holder":"","pr_number":0},
+      "holder": {"id":"t71","title":"holder","task_state":"in_progress","lease_holder":"reviewer","wait_reason":"","wait_holders":[],"pr_number":0}
+    }
+  ]
+}

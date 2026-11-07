@@ -1,0 +1,721 @@
+{
+  "schema_version": 1,
+  "source": "snapshot-0d2/status-now.json filtered to t1..t76 in recorded status order; t71 and the target are overridden per independent case",
+  "captured_task_rows": 3,
+  "status": {
+    "root": "/snapshot-0d2",
+    "session": "v31",
+    "lead_handle": "cto",
+    "seats": [],
+    "gates": [],
+    "attention": [],
+    "decisions": [],
+    "requests": [],
+    "warnings": [],
+    "train": {
+      "runs": [],
+      "alerts": []
+    },
+    "tasks": [
+      {
+        "id": "t7",
+        "title": "3.0.x: redact linearity test as an in-process ratio (no wall-clock bound)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t24",
+        "title": "3.0.2 blocker: the commit step pushes the seat branch before the PR-binding check, so a second task's commit lands on the first task's open PR (pr_bound_elsewhere after the push)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t9",
+        "title": "3.0.x: seats are launched with AMQ wake enabled so the scheduler's doorbell becomes a turn",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t16",
+        "title": "3.0.x blocker: a second seat cannot join a live squad (AMQ 0.116.2 refuses binding_present_without_resumable_conversation when the bound tmux session is present and a planned seat is fresh); the scheduler launches one seat per request, so every squad is single-seat",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t18",
+        "title": "3.0.1 t18: the buzz owner-script dry run waits on the serve loop's own signal, one run budget, timing split from behaviour (train blocker on make ci)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t19",
+        "title": "3.0.2: lead --team gives the pi lead the squad's AMQ identity (AM_ME the lead handle, AM_ROOT the seats file's session root), so its tools read the squad's task store",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 816
+      },
+      {
+        "id": "t6",
+        "title": "3.0.x: a Claude seat's config dir is born past Claude Code's first-run onboarding, with the hooks plugin enabled and its worktree trusted",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t17",
+        "title": "3.0.x: a failed or unresolved seat launch logs its reason (the launcher's settle keeps r.err in memory; the scheduler logs seat_request_cancelled with no reason, the operator sees seat_starting forever)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t22",
+        "title": "3.0.2: a seat's base is the base branch's tip at every launch, not the commit ledger's first base",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t23",
+        "title": "3.0.2: one branch per task, so a seat's next task does not wait on its previous PR (pr_bound_elsewhere)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t11",
+        "title": "3.0.x: a task re-pin before the first claim is honoured; after a claim it is refused with the reason",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t20",
+        "title": "3.0.2: a seat's own block with a widen request has no caller: the manager's amq_task_widen takes only outside_declared_files refusals with recorded paths",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t26",
+        "title": "3.0.2: a seat's own block with a widen request has a typed block: the lead's amq_task_widen takes widen_requested blocks with recorded refused_paths (re-added after 3.0.2; t20's successor)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t27",
+        "title": "3.0.2: a seat's own block with a widen request has a typed block (t26 re-added with the six files its block named)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t28",
+        "title": "3.0.2: a seat's own block with a widen request has a typed block (t27 re-added at attempt 1; cap raised)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 844
+      },
+      {
+        "id": "t29",
+        "title": "3.1.1: the typed widen block's four fixes from Codex on #844 (retry after the growth gate, size-cap dry run, exact-file paths with symlink resolution, validation on load)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t30",
+        "title": "3.1.1: typed widen fixes, part 1 of 2: the request survives the growth gate, the size-cap dry run runs (from t29)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 845
+      },
+      {
+        "id": "t32",
+        "title": "3.1.1: typed widen fixes, part 2 of 2: exact-file paths with symlink resolution, validation on load (from t29; part 1 merged as #845)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 846
+      },
+      {
+        "id": "t33",
+        "title": "3.1.1: typed widen symlinks resolve to the real file: the gate names the resolved path, outside and dangling refused, managed names, validator gaps, journal (Codex on #846)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 847
+      },
+      {
+        "id": "t34",
+        "title": "3.1.1: resolve on every widen path, the gate record shows the resolved path via its link, the real-HOME row fixed, four rows (from #847)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 848
+      },
+      {
+        "id": "t35",
+        "title": "3.1.1: the commit step judges a committed symlink by its destination (link_target_refused: outside, protected, managed, dangling)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 849
+      },
+      {
+        "id": "t36",
+        "title": "3.1.1: link_target_refused from the commit's tree: one git-objects-only resolver for the commit step and the verifier, only changed links judged (redo of #849)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t37",
+        "title": "3.1.1: link_target_refused part 1 of 2: the git-objects-only tree resolver and the commit step (from t36)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 850
+      },
+      {
+        "id": "t38",
+        "title": "3.1.1: link_target_refused part 2 of 2: the verifier on the tree resolver, the mode-flip filter, depth-only cycle bound, the panic fake at both callers (from t36; part 1 merged as #850)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 851
+      },
+      {
+        "id": "t39",
+        "title": "3.1.1: widen entries normalized before the exact test, branch rows through applyLeadWiden, via-link pairs truncated not dropped, two rows rewritten, the static no-filesystem row (from #848, #851)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 852
+      },
+      {
+        "id": "t40",
+        "title": "3.1.1: the typed widen's size-cap dry run measures a harness snapshot of the stopped attempt by attempt id, never the live tree; typedRequest narrowed (Codex on #845)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 853
+      },
+      {
+        "id": "t41",
+        "title": "3.1.1: the scheduler archives the stopped attempt at the typed block (one sealed write with CleanSeat), the block records its attempt, a pending widen_requested refused, the snapshot row's HOME (from #853)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t42",
+        "title": "3.1.1: the scheduler archives the stopped attempt at the typed block, the block records its attempt, a pending widen_requested refused, the snapshot row's HOME (t41 re-added with internal/cli/task_test.go)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t43",
+        "title": "3.1.1: the scheduler archives the stopped attempt at the typed block, the block records its attempt, a pending widen_requested refused, the snapshot row's HOME (t42 re-added with task.go and scope.go)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 855
+      },
+      {
+        "id": "t44",
+        "title": "3.1.1: the widen archives on demand when a typed block's snapshot is not yet taken (same sealed write), and the reverse-order archive row (from #855)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 856
+      },
+      {
+        "id": "t10",
+        "title": "3.0.x: seat rebaseline, an owner-present verb that rewrites the preflight baseline from the current owner config with a ledger row",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t21",
+        "title": "3.0.x: seat rebaseline, an owner-present verb that rewrites the preflight baseline from the current owner config with a ledger row",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t25",
+        "title": "3.0.x: seat rebaseline, an owner-present verb that rewrites the preflight baseline from the current owner config with a ledger row (re-added after 3.0.2; t10's successor with its two missing files)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t31",
+        "title": "3.1.1: typed widen fixes, part 2 of 2: exact-file paths with symlink resolution, validation on load (from t29)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t45",
+        "title": "3.1.1: depends_on waits for the dependency's PR to merge, not its completion; a plain wait reason",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t46",
+        "title": "3.1.1: depends_on waits for the dependency's PR to merge: the train records the merge on the bound task, WaitDependencies reads it; a plain wait reason",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 857
+      },
+      {
+        "id": "t12",
+        "title": "3.0.x: a task re-pin before the first claim is honoured; after a claim it is refused with the reason",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 815
+      },
+      {
+        "id": "t13",
+        "title": "3.0.x: the scheduler's commit step opens and binds the draft PR (pr_number, pr_head) on a done report so the merge train can take it; a lead verb binds an existing PR to a completed task's commit",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t14",
+        "title": "3.0.x: the scheduler's commit step opens and binds the draft PR (pr_number, pr_head) on a done report when the repository has a merge grant, so the merge train can take it",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t15",
+        "title": "3.0.x: doctor refuses --probe and --write-registry inside a seat (fail-closed on the seat environment marker)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t72",
+        "title": "3.2.0-0: the reviewer commit ledger under the rc.1, 3.1.1 and 3.1.2 verifiers (read-only investigation; tamper alarm)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t73",
+        "title": "3.2.0-0: the reviewer commit ledger under the rc.1, 3.1.1 and 3.1.2 verifiers (read-only investigation; tamper alarm)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t74",
+        "title": "3.2.0-0: the reviewer commit ledger under the rc.1, 3.1.1 and 3.1.2 verifiers (read-only investigation; tamper alarm)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t75",
+        "title": "3.2.0-0: the reviewer commit ledger under the rc.1, 3.1.1 and 3.1.2 verifiers (read-only investigation; tamper alarm)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t76",
+        "title": "3.2.0-0: the reviewer commit ledger under the rc.1, 3.1.1 and 3.1.2 verifiers (read-only investigation; tamper alarm)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t1",
+        "title": "Brief 0 (3.1): the GPT-6 family in the Codex catalog with probe rows",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t2",
+        "title": "3.0.x: redact linearity test as an in-process ratio (no wall-clock bound)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t3",
+        "title": "3.0.x: the mayor's start carries the owner's standing trust answer (operator start-squad --trust) and a team seats verb compiles squad.yaml to the seat list",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t4",
+        "title": "3.0.x: a Claude seat's config dir is born past Claude Code's first-run onboarding",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t5",
+        "title": "Brief 0 (3.1): the GPT-6 family in the Codex catalog with probe rows",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t8",
+        "title": "3.0.x: the mayor's start carries the owner's standing trust answer (operator start-squad --trust) and a team seats verb compiles squad.yaml to the seat list",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t47",
+        "title": "3.1.1: the widen archives on demand for a retried attempt (keyed by task and BlockAttempt), a real -race contention row, revert runs (from #856)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 858
+      },
+      {
+        "id": "t48",
+        "title": "t46r: 3.1.1: re-land t46 (depends_on waits for the dependency's merge) as a pure cherry-pick of 8b9b6a13 from the closed #857, reviewed by range-diff equality",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t49",
+        "title": "t46r: 3.1.1: re-land t46 (depends_on waits for the dependency's merge): apply 8b9b6a13 from the closed #857 without committing; the patch body must range-diff equal",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 859
+      },
+      {
+        "id": "t50",
+        "title": "t47b: 3.1.1: redo of t47 (#858 closed): the widen archives on demand for a retried attempt keyed inside the ledger lock, the first decision always stands, a lock proof in seatcommit, revert runs for all six rows",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 860
+      },
+      {
+        "id": "t51",
+        "title": "t47c: 3.1.1: redo of t47b (#860 closed, production change kept): the lock row with a different parent and a single-use hook, the retried-attempt row, the absent-ledger row through applyLeadWiden, recorded revert runs, the seam rename",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 861
+      },
+      {
+        "id": "t52",
+        "title": "3.1.1: the merge record is bound to the merged head, a mismatched reconcile does not abort the run, and a real train run records a merge the server already reports (hand merges, tasks completed before t46) (from #857/#859)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 862
+      },
+      {
+        "id": "t53",
+        "title": "t52b: 3.1.1: redo of t52 (#862 closed, behaviour kept): the merge record bound to the merged head, with recorded revert runs, the audit text in words, and the two early head checks removed only if nothing with a side effect runs before the helper's check",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t54",
+        "title": "merge-record-head part 1 of 2: the task store binds the merge fact to the merged head (RecordPRMerge head, WaitDependencies compares, bindPR clears), with recorded revert runs (from #862)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t55",
+        "title": "merge-record-head part 1 of 2: the task store binds the merge fact to the merged head (RecordPRMerge head, WaitDependencies compares, bindPR clears, records without a head accepted), with recorded revert runs (from #862)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 864
+      },
+      {
+        "id": "t56",
+        "title": "merge-record-head part 1b of 2: the task store binds the merge fact to the merged head (store code from #864 kept), the no-head release audited in the decision log, the reconcile call sites keep the base behaviour, recorded revert runs",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 865
+      },
+      {
+        "id": "t57",
+        "title": "merge-record-head part 2 of 2: a mismatched reconcile is audited and skipped (not recorded at the bound head), a real run records a server-reported merge with no merge call, the server-head audit with both heads, the dry-run guard, the audit and CLI texts in words, the two early checks under the side-effect condition, recorded revert runs (from #862)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t58",
+        "title": "merge-record-head part 2a: the reconcile path skips and audits a journal entry that no longer matches the binding (replacing part 1b's stopgap), the audit and CLI texts in words, recorded revert runs (from #862)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t59",
+        "title": "merge-record-head part 2a: the reconcile path skips and audits a journal entry that no longer matches the binding (replacing part 1b's stopgap), the audit and CLI texts in words, stands alone on v3, recorded revert runs (from #862)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 867
+      },
+      {
+        "id": "t60",
+        "title": "merge-record-head part 2b (last): a real train run records a merge the server already reports at the bound head with no merge call; MERGED at another head audited with both heads; the dry-run guard; idempotence; the t46 note's remedy; recorded revert runs (from #862)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 868
+      },
+      {
+        "id": "t61",
+        "title": "3.1.1: the merge train honours the ruleset's strict up-to-date policy: a behind PR is rebased, re-bound and re-checked whatever its CI state; a behind PR the train cannot rebase is refused by the dry run naming the strict rule",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 869
+      },
+      {
+        "id": "t62",
+        "title": "t61b: 3.1.1: the merge train honours the strict up-to-date policy: behind computed from GitHub's compare against the pinned base (not baseRefOid), re-checked before each landing; the dry run refuses a behind PR it cannot rebase (redo of #869, part 1 of 2)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 870
+      },
+      {
+        "id": "t63",
+        "title": "t61c: 3.1.1: the named-task dry run binds the head the real run reads; the merge train's owner text in words (the strict rebase, the strict refusal, the compare stop, the plan's after-the-first line); compare only when strict or CI absent (redo of #869, part 2 of 2)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 871
+      },
+      {
+        "id": "t64",
+        "title": "3.1.1: the merge train re-binds a brought-up-to-date PR only after proving the update changed nothing of the seat's work (git patch-id --stable over the seat's range), refusing in words otherwise; the rebind journaled with the proof; plus the singular 'check run' and #871's three reverts re-recorded exactly",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t65",
+        "title": "3.1.1: the merge train re-binds a brought-up-to-date PR only after proving the update changed nothing of the seat's work (git patch-id --stable over the seat's range), refusing in words otherwise; the rebind journaled with the proof; plus the singular 'check run' and #871's three reverts re-recorded exactly (t64 re-added)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 872
+      },
+      {
+        "id": "t66",
+        "title": "t65b: 3.1.1: the merge train's re-bind proof (redo of #872, shape kept): the after side against the base GitHub rebased onto, refusal on an incomplete compare diff, the changed-patch refusal in words with heads and patch-ids below the rule, row 4 re-run",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 874
+      },
+      {
+        "id": "t67",
+        "title": "3.1.1: an expired lease does not escalate the tier and keeps the lead's pin; it still counts toward MaxAttempts (its own row in the refusal table; any new name mapped in words.ts in this PR)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 876
+      },
+      {
+        "id": "t68",
+        "title": "3.1.1: tighten the rows of #861 (expected tree captured independently, T2 != T1, the first decision captured before the call, a bounded hook release, the line number), #874's two incomplete-compare rows and three line numbers, #876's scheduler row on the real router; tests and notes only",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 879
+      },
+      {
+        "id": "t69",
+        "title": "3.2.0-1: a seat's lease renews from the seat's own activity (one producer per runtime; codex: Stop, receipts, an in-turn event if the catalogue has one, else stop and report), bound to the attempt and to a per-task time budget in the store; the lead sets and extends the budget; words and decisions",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t70",
+        "title": "3.2.0-1: a seat's lease renews from the seat's own activity (one producer per runtime; codex: Stop, receipts, an in-turn event if the catalogue has one, else stop and report), bound to the attempt and to a per-task time budget in the store; the lead sets and extends the budget; words and decisions (t69 re-added with docs/squad-yaml.md)",
+        "task_state": "cancelled",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 0
+      },
+      {
+        "id": "t71",
+        "title": "3.2.0-1: a seat's lease renews from the seat's own activity (one producer per runtime; codex: Stop, receipts, an in-turn event if the catalogue has one, else stop and report), bound to the attempt and to a per-task time budget in the store; the lead sets and extends the budget; words and decisions (t70 re-added, pinned to sol)",
+        "task_state": "completed",
+        "wait_reason": "",
+        "wait_holders": [],
+        "lease_holder": "",
+        "pr_number": 886
+      }
+    ]
+  },
+  "cases": [
+    {
+      "target": "t72",
+      "expected_row": 41
+    },
+    {
+      "target": "t73",
+      "expected_row": 42
+    },
+    {
+      "target": "t74",
+      "expected_row": 43
+    }
+  ]
+}
+
