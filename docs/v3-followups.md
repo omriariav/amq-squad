@@ -36,13 +36,13 @@ planning sessions that made them; nothing here is a release blocker.
      answer", until its 5 minute budget expired against the 127.0.0.1 relay
      under load; it passed on rerun. Source: the test and its signal rule in
      `docs/v3-spike/5-301-evidence/t18-buzz-dryrun-signal.md`.
-  5. The pi R53 guard rows use a 5 s guard timeout. Under host load (load
-     average 17.5) two R53 rows took 8.2 s and 9.2 s and failed with
-     `amq-squad guard failed closed (timed out after 5000 ms)`; R53 rows also
-     failed once while the host gate lock held with other load outside it.
-     Sources: #903's 3a execution note at
-     `docs/v3-spike/320-3a-train/async-update.md:1806-1816` and the R53 tests
-     in `pi/test/phase.test.ts`.
+  5. The pi R53 guard rows use a 5 s guard timeout. Under host load two R53
+     rows took 8.2 s and 9.2 s and failed with `amq-squad guard failed closed
+     (timed out after 5000 ms)`; the rerun passed, with the load average at
+     17.5 at its end (`docs/v3-spike/320-3a-train/async-update.md:1806-1816`).
+     An R53 row also failed once at 7.0 s while the host gate lock was held,
+     with load 12.5 from work outside the lock (`async-update.md:1865-1869`).
+     The R53 tests are in `pi/test/phase.test.ts`.
   6. In the same run the pi screen row `row 2: the screen's last line ...`
      took 11.4 s and failed with `TypeError: Cannot read properties of
      undefined (reading 'lines')`; it is a separate screen-row timing
