@@ -96,7 +96,7 @@ pi's `!` prefix runs the rest as a shell command from the lead's own process, wh
 
 ## The train on rc.1
 
-interim-rule.txt records the interim rule checked before a train ran: every task whose PR goes in completed with no lease, and the exits queue holds no queued commit result. It has three lines: 17:00:34Z (before #894, #901 and #907: t88, t98, t103), 17:37:49Z (before #911: t106) and 17:44:25Z (before #912: t108). #914 also went through the train (run mt-20261107T181555Z-17dc0ad2) with no line written: its check before the train (t109 completed, no lease; the exits queue empty) is by the lead session's account. #913 and #915 were lead PRs merged by hand, not through the train, so the rule does not apply to them.
+interim-rule.txt records the interim rule checked before a train ran: every task whose PR goes in completed with no lease, and the exits queue holds no queued commit result. It has three lines: 17:00:34Z (before #894, #901 and #907: t88, t98, t103), 17:37:49Z (before #911: t106; this line records t106 completed with no lease but only "exits queue as printed": the queue printed empty, `[]`, by the lead session's account) and 17:44:25Z (before #912: t108). #914 also went through the train (run mt-20261107T181555Z-17dc0ad2) with no line written: its check before the train (t109 completed, no lease; the exits queue empty) is by the lead session's account. #913 and #915 were lead PRs merged by hand, not through the train, so the rule does not apply to them.
 
 What landed on v3 after the cut (`gh pr view` for each, re-run for this note):
 
@@ -164,7 +164,7 @@ Three files back facts the sections above mark "by the lead session's account":
   mt-rebind-20261107T165103Z-324576e2, read from the v31 session's
   `extensions/amq-squad/mergetrain/audit.jsonl`. It holds the
   `update_requested`, `rebase` and `rebind` entries of #894's and #901's async
-  updates (so "the first live async update" is now a record, not an account) and
+  updates (so the async update itself is now a record; that it was the first live one remains the lead session's account, since the excerpt holds selected runs, not the whole history) and
   #907's refusal with its rule.
 - `decisions-excerpt.jsonl`: the v31 scheduler decisions from 16:40Z on whose kind
   is a roster, seat close or up, lease renewal, rebind, or scheduler start or stop
