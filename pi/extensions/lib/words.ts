@@ -608,7 +608,8 @@ export const TRAIN_RULE_WORDS: Record<string, [string, string]> = {
 	// #871: the branch protection's strict up-to-date rule (mergetrain
 	// train.go applyStrict). A seat branch is never rebased by hand: the
 	// remedy is the lead's (the plan reviewer on #873)
-	strict_required_status_checks_policy: ["its branch is behind its base", "the train brings it up to date and waits for its checks; if the train cannot, reset the task so a seat redoes it on the current base"],
+	strict_required_status_checks_policy: ["GitHub requires the branch to be up to date before merging, and the train could not bring it up to date", "No gate overrides GitHub's rule. Run the train again; if it repeats, the lead closes the PR and redoes the task on the current base"],
+	update_conflict: ["The branch conflicts with the base, so the train cannot update it", "No gate overrides GitHub's rule. The lead closes the PR and redoes the task on the current base (a seat never merges the base by hand)"],
 	// #874: the seat's patch changed during the train's update (git
 	// patch-id over the seat's range before and after differs; mergetrain
 	// train.go refusePatchProof). A seat branch is never rebased by hand:
@@ -652,6 +653,7 @@ export const TRAIN_KIND_WORDS: Record<string, string> = {
 	// the server reported (mergetrain train.go reconcileBinding; Codex on
 	// #873: not only a head mismatch)
 	reconcile: "skipped recording a merge because its task binding no longer matches",
+	reconcile_read_failed: "could not read one PR while reconciling it and continued with the others",
 };
 
 // trainRunWords is what a run did last, in words; an unmapped kind says
@@ -667,7 +669,17 @@ export function trainRunWords(kind: string): string {
 export function trainStop(refusal: string): string {
 	const m = /^refusal PR #(\d+) ([a-z_,]+):/.exec(refusal ?? "");
 	if (!m) return "the merge train stopped; its refusal is below the line";
-	const w = own(TRAIN_RULE_WORDS, m[2].split(",")[0]);
+	const rules = m[2].split(",");
+	const priority = ["update_conflict", "strict_required_status_checks_policy", "pr_state"];
+	const rule = priority.find((candidate) => rules.includes(candidate)) ?? rules[0];
+	if (rule === "strict_required_status_checks_policy") return `#${m[1]}: GitHub's up-to-date rule refused it; no gate overrides it. Run the train again; if it repeats, the lead redoes the task.`;
+	if (rule === "update_conflict") return `#${m[1]} conflicts with the base; no gate overrides it. The lead redoes the task (a seat never merges the base by hand).`;
+	if (rule === "pr_state") {
+		const detail = refusal.slice(m[0].length).trim();
+		const task = /already merged at another head[\s\S]*?lead checks task ([^'\s]+)'s record/.exec(detail)?.[1];
+		if (task) return `#${m[1]} was already merged at another head; nothing to land. The lead checks task ${task}'s record.`;
+	}
+	const w = own(TRAIN_RULE_WORDS, rule);
 	if (!w) return `the merge train stopped at PR #${m[1]}; its rule is below the line`;
 	return `the merge train stopped at PR #${m[1]}: ${w[0]}; ${w[1]}`;
 }
