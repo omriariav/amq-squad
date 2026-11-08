@@ -153,7 +153,10 @@ result is a blocker, not a warning to mention later.
 `release prepare` records the release and raises two typed gates through the core,
 `tag` and `github_release`; the owner answers each in its gate thread. `release
 publish`, run under the owner's gh outside any seat, runs the tag and then the
-release, each only with its verified answer. `--notes-file` is the release notes
+release, each only with its verified answer. The publish is the lead's own step: a
+release agent the lead starts prepares and checks (the notes, the skew check, the
+build, the evidence) and never runs `release publish`. A refused or failed step goes
+back to the owner in words, never to another session to retry. `--notes-file` is the release notes
 document, the GitHub release body; publish takes the same file:
 
 ```sh
