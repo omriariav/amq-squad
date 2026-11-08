@@ -655,7 +655,9 @@ test("row 4: a seat's stop and the train's stop say what happened and what to do
 	assert.equal(trainStop("refusal PR #812 ci_green: a required check failed"), "the merge train stopped at PR #812: its CI is not green; fix the failing check and the train tries again");
 	// the plan reviewer on #873: a seat branch is never rebased by hand; the
 	// strict up-to-date rule's remedy is the lead's
-	assert.equal(trainStop("refusal PR #9 strict_required_status_checks_policy: the branch is behind and the train cannot bring it up to date: x"), "the merge train stopped at PR #9: its branch is behind its base; the train brings it up to date and waits for its checks; if the train cannot, reset the task so a seat redoes it on the current base");
+	assert.equal(trainStop("refusal PR #9 strict_required_status_checks_policy: x"), "the merge train stopped at PR #9: GitHub requires the branch to be up to date before merging, and the train could not bring it up to date; No gate overrides GitHub's rule. Run the train again; if it repeats, the lead closes the PR and redoes the task on the current base");
+	assert.equal(trainStop("refusal PR #9 update_conflict: x"), "the merge train stopped at PR #9: The branch conflicts with the base, so the train cannot update it; No gate overrides GitHub's rule. The lead closes the PR and redoes the task on the current base (a seat never merges the base by hand)");
+	assert.equal(trainRunWords("reconcile_read_failed"), "could not read one PR while reconciling it and continued with the others");
 	// #874: the seat's patch moved during the train's update; the remedy is the lead's
 	assert.equal(trainStop("refusal PR #9 rebase_patch_changed: the seat patch changed: x"), "the merge train stopped at PR #9: its change moved during the update; reset the task so a seat redoes it on the current base");
 	for (const r of Object.keys(TRAIN_RULE_WORDS)) assert.equal(codeIn(trainStop(`refusal PR #9 ${r}: x`)), "", r);

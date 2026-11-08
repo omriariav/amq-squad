@@ -126,6 +126,40 @@ func definiteRefusal(err error) bool {
 	return false
 }
 
+// updateConflict recognizes GitHub's explicit answer that a branch update
+// cannot be performed because the PR conflicts with its base. This is kept
+// separate from definiteRefusal because its outcome is a typed, unliftable
+// refusal rather than a run-wide error.
+func updateConflict(err error) bool {
+	var ge *GHError
+	if errors.As(err, &ge) {
+		if msg, ok := refusalMessage(ge.Stderr); ok && strings.EqualFold(msg, "Pull request is not mergeable") {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "rebase conflict")
+}
+
+// transientReconcileRead is the read-error split settled for #903. A
+// per-PR transport failure, deadline, 5xx, rate limit, or killed gh is
+// audited and skipped. Definite client errors, including 404, remain fatal.
+func transientReconcileRead(err error) bool {
+	if err == nil {
+		return false
+	}
+	if rateLimited(err) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	s := strings.ToLower(err.Error())
+	if strings.Contains(s, "signal: killed") || strings.Contains(s, "(http 5") || strings.Contains(s, "http 429") {
+		return true
+	}
+	if strings.Contains(s, "connection reset") || strings.Contains(s, "failed to connect") || strings.Contains(s, "could not resolve host") || strings.Contains(s, "tls handshake") || strings.Contains(s, "unexpected eof") || strings.Contains(s, "context deadline exceeded") {
+		return true
+	}
+	return false
+}
+
 // refusalMessage strips one of gh's two documented error wrappers, each
 // only as a whole, from the last line gh printed on stderr (gh prints the
 // error last; the lines before it, such as the fake gh's sentinel line, do

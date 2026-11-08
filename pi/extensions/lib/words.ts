@@ -608,7 +608,8 @@ export const TRAIN_RULE_WORDS: Record<string, [string, string]> = {
 	// #871: the branch protection's strict up-to-date rule (mergetrain
 	// train.go applyStrict). A seat branch is never rebased by hand: the
 	// remedy is the lead's (the plan reviewer on #873)
-	strict_required_status_checks_policy: ["its branch is behind its base", "the train brings it up to date and waits for its checks; if the train cannot, reset the task so a seat redoes it on the current base"],
+	strict_required_status_checks_policy: ["GitHub requires the branch to be up to date before merging, and the train could not bring it up to date", "No gate overrides GitHub's rule. Run the train again; if it repeats, the lead closes the PR and redoes the task on the current base"],
+	update_conflict: ["The branch conflicts with the base, so the train cannot update it", "No gate overrides GitHub's rule. The lead closes the PR and redoes the task on the current base (a seat never merges the base by hand)"],
 	// #874: the seat's patch changed during the train's update (git
 	// patch-id over the seat's range before and after differs; mergetrain
 	// train.go refusePatchProof). A seat branch is never rebased by hand:
@@ -652,6 +653,7 @@ export const TRAIN_KIND_WORDS: Record<string, string> = {
 	// the server reported (mergetrain train.go reconcileBinding; Codex on
 	// #873: not only a head mismatch)
 	reconcile: "skipped recording a merge because its task binding no longer matches",
+	reconcile_read_failed: "could not read one PR while reconciling it and continued with the others",
 };
 
 // trainRunWords is what a run did last, in words; an unmapped kind says
