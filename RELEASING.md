@@ -35,15 +35,19 @@ retry.
 
 2. Merge the release PR (the lead).
 3. Tag the merge commit (the lead, through `release publish` with the owner's
-   verified `tag` answer):
+   verified `tag` answer). The lead first runs `release prepare`, which raises
+   the `tag` and `github_release` gates; once the owner has answered both, the
+   lead runs `release publish` with the same arguments. Never tag by hand.
 
    ```sh
-   git tag -a v0.5.1 -m "amq-squad v0.5.1"
-   git push origin v0.5.1
+   amq-squad release prepare --repository omriariav/amq-squad --tag v0.5.1 \
+     --commit <merge SHA> --notes-file docs/v0.5.1-release-notes.md
+   amq-squad release publish --repository omriariav/amq-squad --tag v0.5.1 \
+     --commit <merge SHA> --notes-file docs/v0.5.1-release-notes.md
    ```
 
-4. Create the GitHub release for the tag (the lead, through the same `release
-   publish` with the owner's verified `github_release` answer).
+4. Create the GitHub release for the tag (the lead: the same `release publish`
+   creates it after the tag, with the owner's verified `github_release` answer).
 5. Smoke test the published install path:
 
    ```sh
