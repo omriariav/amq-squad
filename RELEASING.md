@@ -26,15 +26,28 @@ and both real-AMQ CI matrices aligned on pinned `v0.60.0` plus `latest`.
    Confirm the doctor minimum, README and CLI-skill support text, release-policy
    checker, and both real-AMQ matrices still agree on AMQ 0.60.0 / `v0.60.0`
    plus the `latest` canary.
-2. Merge the release PR.
-3. Tag the merge commit:
+Who does each step: the lead runs the cut. A release agent the lead starts may
+prepare and check (the notes, the skew check, the tag build, the evidence) but never
+publishes. The publish (steps 3 and 4, through `amq-squad release publish` once the
+owner has answered the `tag` and `github_release` gates) is the lead's own step. A
+refused or failed step goes back to the owner in words, never to another session to
+retry.
+
+2. Merge the release PR (the lead).
+3. Tag the merge commit (the lead, through `release publish` with the owner's
+   verified `tag` answer). The lead first runs `release prepare`, which raises
+   the `tag` and `github_release` gates; once the owner has answered both, the
+   lead runs `release publish` with the same arguments. Never tag by hand.
 
    ```sh
-   git tag -a v0.5.1 -m "amq-squad v0.5.1"
-   git push origin v0.5.1
+   amq-squad release prepare --repository omriariav/amq-squad --tag v0.5.1 \
+     --commit <merge SHA> --notes-file docs/v0.5.1-release-notes.md
+   amq-squad release publish --repository omriariav/amq-squad --tag v0.5.1 \
+     --commit <merge SHA> --notes-file docs/v0.5.1-release-notes.md
    ```
 
-4. Create the GitHub release for the tag.
+4. Create the GitHub release for the tag (the lead: the same `release publish`
+   creates it after the tag, with the owner's verified `github_release` answer).
 5. Smoke test the published install path:
 
    ```sh
