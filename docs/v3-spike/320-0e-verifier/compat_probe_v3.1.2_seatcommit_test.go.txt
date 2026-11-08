@@ -1,0 +1,28 @@
+package seatcommit
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
+)
+
+// This source is intentionally specific to v3.1.2. That tag predates
+// QuarantineDir, so the probe names the historical directory explicitly.
+func TestCompatProbe(t *testing.T) {
+	root := os.Getenv("AMQSQ_0E_FIXTURE_ROOT")
+	ledger, err := ReadLedger(root, "qa")
+	t.Logf("commit error: %v", err)
+	t.Logf("commit tampered: %v", errors.Is(err, sealchain.ErrTampered))
+	t.Logf("commit handle: %s", ledger.Handle)
+	entries, qerr := os.ReadDir(filepath.Join(root, "extensions", "amq-squad", "commits", "quarantine"))
+	if qerr != nil {
+		t.Logf("commit quarantine: %v", qerr)
+		return
+	}
+	for _, entry := range entries {
+		t.Logf("commit quarantine: %s", entry.Name())
+	}
+}

@@ -112,16 +112,18 @@ type Decision struct {
 }
 
 type seat struct {
-	pool         task.Pool
-	requestID    string // the request it joined on: the identity the liveness check reads the launch ledger by
-	freeSince    time.Time
-	lastActivity time.Time
-	joinedAt     time.Time // the current SeatUp; older lapsed attempts do not exclude a relaunched seat
-	unresponsive bool      // held a lease it never claimed; no dispatch until it shows activity
-	closing      string    // a close the launcher could not do yet: counted, never dispatched, retried each tick
-	awaitGone    bool      // closed, termination not yet confirmed: counted and never dispatched until SeatGone
-	launchedAt   time.Time // when this incarnation requested the seat; zero for an adopted seat
-	firstSent    bool      // seat_first_message is logged
+	pool           task.Pool
+	requestID      string // the request it joined on: the identity the liveness check reads the launch ledger by
+	freeSince      time.Time
+	lastActivity   time.Time
+	joinedAt       time.Time // the current SeatUp; older lapsed attempts do not exclude a relaunched seat
+	unresponsive   bool      // held a lease it never claimed; no dispatch until it shows activity
+	excluded       string    // newer_writer or schema_mismatch; idleSeat consults seatExcluded
+	excludedDetail string    // authenticated writer/schema record for the one exclusion decision
+	closing        string    // a close the launcher could not do yet: counted, never dispatched, retried each tick
+	awaitGone      bool      // closed, termination not yet confirmed: counted and never dispatched until SeatGone
+	launchedAt     time.Time // when this incarnation requested the seat; zero for an adopted seat
+	firstSent      bool      // seat_first_message is logged
 }
 
 type request struct {
@@ -178,6 +180,11 @@ type Scheduler struct {
 	// exitsErr is the exits ledger's last load or write failure: dispatch
 	// stops (exits_ledger_unwritable) until a load and a write succeed.
 	exitsErr error
+	// exitsStopLogged is the typed compatibility/tamper stop already emitted
+	// for exitsErr. A persistent scheduler-wide refusal is logged once.
+	exitsStopLogged      string
+	exitsUnwritableKey   string
+	exitsUnwritableCount int // successive ticks held by this exact write/read error
 	// toRelease are gone seats whose checks were decided: their slots are
 	// released once nothing for them is queued and the ledger says so.
 	toRelease map[string]bool
@@ -449,15 +456,39 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	// N3 (b): an exits ledger that cannot be read or written stops dispatch
 	// until it can.
 	if s.exitsErr != nil {
-		if errors.Is(s.exitsErr, sealchain.ErrTampered) {
-			// A failed tag or chain: a block routed to the owner, never a
-			// silent pass (the ruling); dispatch stays stopped.
-			log(Decision{Kind: "ledger_tampered", Reason: "owner: " + s.exitsErr.Error()})
+		switch {
+		case errors.Is(s.exitsErr, sealchain.ErrNewerWriter):
+			key := "newer_writer\x00" + s.exitsErr.Error()
+			if s.exitsStopLogged != key {
+				log(Decision{Kind: "newer_writer", Reason: "owner: " + s.exitsErr.Error()})
+				s.exitsStopLogged = key
+			}
+		case errors.Is(s.exitsErr, sealchain.ErrSchemaMismatch):
+			key := "schema_mismatch\x00" + s.exitsErr.Error()
+			if s.exitsStopLogged != key {
+				log(Decision{Kind: "schema_mismatch", Reason: "lead: " + s.exitsErr.Error()})
+				s.exitsStopLogged = key
+			}
+		case errors.Is(s.exitsErr, sealchain.ErrTampered):
+			key := "ledger_tampered\x00" + s.exitsErr.Error()
+			if s.exitsStopLogged != key {
+				log(Decision{Kind: "ledger_tampered", Reason: "lead: " + s.exitsErr.Error()})
+				s.exitsStopLogged = key
+			}
 		}
-		log(Decision{Kind: "exits_ledger_unwritable", Reason: s.exitsErr.Error()})
+		key := s.exitsErr.Error()
+		if s.exitsUnwritableKey != key {
+			s.exitsUnwritableKey, s.exitsUnwritableCount = key, 0
+		}
+		s.exitsUnwritableCount++
+		if s.exitsUnwritableCount == 1 {
+			log(Decision{Kind: "exits_ledger_unwritable", Reason: key})
+		}
 		s.closeIdle(list, now, cfg, log)
 		return out, s.writeState(now, cfg)
 	}
+	s.exitsStopLogged = ""
+	s.exitsUnwritableKey, s.exitsUnwritableCount = "", 0
 	// N2: the seats a previous incarnation left running are closed and
 	// confirmed gone before the first dispatch.
 	if s.closeAdopted(log) {
@@ -819,6 +850,7 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 		s.seatBackoff = map[string]*seatBackoff{}
 	}
 	order := append([]task.Task(nil), list...)
+	s.refreshSeatExclusions(log)
 	task.DispatchOrder(order)
 	waitingFor := map[task.Pool]int{} // tasks this tick that wait on a requested seat
 	for _, c := range order {
@@ -856,11 +888,13 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 				}
 				continue
 			}
-			if s.Preparer != nil {
-				if err := s.Preparer.PrepareSeat(handle); err != nil {
-					log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()})
-					continue
-				}
+			handle, prepErr := s.preparedIdleSeat(list, t, *r.Pool, log)
+			if prepErr != nil {
+				log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: prepErr.Error()})
+				continue
+			}
+			if handle == "" {
+				continue
 			}
 			got, err := s.Store.Grant(t.ID, handle, r.Pool, cfg.LeaseDuration, now)
 			var unverified *task.VerifierUnconfiguredError
@@ -1014,7 +1048,7 @@ func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string 
 		if s.rosterMode() {
 			serves = PoolServes(st.pool, p)
 		}
-		if serves && st.closing == "" && !st.unresponsive && !lapsed[h] && task.HeldBy(h, list) == nil && !s.exitPending(h) {
+		if serves && st.closing == "" && !st.unresponsive && !s.seatExcluded(h) && !lapsed[h] && task.HeldBy(h, list) == nil && !s.exitPending(h) {
 			handles = append(handles, h)
 		}
 	}
@@ -1023,6 +1057,70 @@ func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string 
 		return ""
 	}
 	return handles[0]
+}
+
+// seatExcluded is the one dispatch boundary for seat-level holds. The #904
+// ledger-tamper hold extends this predicate instead of creating another
+// idle-seat path.
+func (s *Scheduler) seatExcluded(handle string) bool {
+	st := s.seats[handle]
+	return st != nil && (st.excluded == "newer_writer" || st.excluded == "schema_mismatch")
+}
+
+// preparedIdleSeat skips typed-incompatible seats and continues through the
+// pool until it finds a healthy one. Other prepare failures retain the old
+// per-tick behavior. The task is never blocked for another seat's ledger.
+func (s *Scheduler) preparedIdleSeat(list []task.Task, t task.Task, p task.Pool, log func(Decision)) (string, error) {
+	for {
+		handle := s.idleSeat(list, t, p)
+		if handle == "" || s.Preparer == nil {
+			return handle, nil
+		}
+		err := s.Preparer.PrepareSeat(handle)
+		if err == nil {
+			return handle, nil
+		}
+		var refusal *PrepareRefusal
+		if !errors.As(err, &refusal) || (refusal.Reason != "newer_writer" && refusal.Reason != "schema_mismatch") {
+			return handle, err
+		}
+		st := s.seats[handle]
+		if st.excluded != refusal.Reason || st.excludedDetail != refusal.Detail {
+			st.excluded, st.excludedDetail = refusal.Reason, refusal.Detail
+			log(Decision{Kind: "seat_excluded", Seat: handle, Reason: refusal.Detail, ReasonCode: refusal.Reason})
+		}
+	}
+}
+
+// refreshSeatExclusions makes an install effective without a relaunch. A
+// lead recovery also clears the fields by replacing the seat on SeatUp.
+func (s *Scheduler) refreshSeatExclusions(log func(Decision)) {
+	checker, ok := s.Preparer.(SeatCompatibilityChecker)
+	if !ok {
+		return
+	}
+	var handles []string
+	for h := range s.seats {
+		if s.seatExcluded(h) {
+			handles = append(handles, h)
+		}
+	}
+	sort.Strings(handles)
+	for _, handle := range handles {
+		err := checker.CheckSeatCompatibility(handle)
+		var refusal *PrepareRefusal
+		if errors.As(err, &refusal) && (refusal.Reason == "newer_writer" || refusal.Reason == "schema_mismatch") {
+			s.seats[handle].excludedDetail = refusal.Detail
+			continue
+		}
+		old := s.seats[handle].excluded
+		s.seats[handle].excluded, s.seats[handle].excludedDetail = "", ""
+		reason := "the commit ledger now verifies"
+		if err != nil {
+			reason = "the compatibility exclusion no longer applies; the next prepare rechecks: " + err.Error()
+		}
+		log(Decision{Kind: "seat_exclusion_cleared", Seat: handle, Reason: old + ": " + reason})
+	}
 }
 
 func (s *Scheduler) wait(t task.Task, reason string, now time.Time) error {
