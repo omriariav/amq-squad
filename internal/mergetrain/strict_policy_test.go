@@ -208,7 +208,7 @@ func TestStrictBehindConflictDryRunRefuses(t *testing.T) {
 	f.train.DryRun = true
 	plan, err := f.train.Run(context.Background(), f.req)
 	if err != nil || plan.PRs[0].Status != "refused" || !slices.ContainsFunc(plan.PRs[0].Refusals, func(r Refusal) bool {
-		return r.Rule == RuleStrictUpToDate && r.Detail == "the branch is behind and the train cannot bring it up to date: the PR conflicts with the current base" && !strings.Contains(r.Detail, RuleStrictUpToDate)
+		return r.Rule == RuleUpdateConflict && r.Detail == updateConflictDetail && !strings.Contains(r.Detail, RuleUpdateConflict)
 	}) {
 		t.Fatalf("strict conflict plan: %v %+v", err, plan.PRs)
 	}

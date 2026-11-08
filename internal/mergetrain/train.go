@@ -3,9 +3,11 @@
 // merge grant, and this Go loop lands it under the owner's identity. Per PR
 // the core checks the grant's six limits (repository, base branch, CI green,
 // size cap, no force push, no protected-path change) and the task scope (the
-// PR's diff against the task's declared_files). A refusal goes to the lead and
-// raises an owner-signed gate (the growth class, gatetarget.MergeBeyond); an
-// approval opens exactly that head past exactly those rules. The batch digest
+// PR's diff against the task's declared_files). An actionable refusal goes to
+// the lead and raises an owner-signed gate (the growth class,
+// gatetarget.MergeBeyond); GitHub-policy, conflict, and already-merged outcomes
+// remain words-only because an owner answer cannot change them. An approval
+// opens exactly that head past exactly those actionable rules. The batch digest
 // over the ordered (PR, head SHA) pairs plus the base SHA is written to the
 // audit log and signed by nobody; a rebase that changes a head recomputes it
 // and re-runs the check. Before a real run the server's branch protection must
@@ -177,6 +179,9 @@ type PlanPR struct {
 	Merged       string      `json:"merged,omitempty"`
 	title        string      // the PR's title as the forge read it, for the gate question (brief 3.1.1-1)
 	mergeable    string      // server mergeability at the checked head
+	prState      string      // server state; keeps a merged-elsewhere refusal unliftable
+	mergeCommit  string      // server merge for the merged-elsewhere words and terminal record
+	boundHead    string      // task binding whose mismatch made a merged-elsewhere refusal terminal
 }
 
 // PatchProof is the stable patch identity checked before a rebased task is
@@ -328,22 +333,42 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 	// journal before anything else (5 re-pass, P2-5); a PR the train already
 	// merged is reported merged, never re-checked and refused.
 	landed := map[int]string{}
+	terminal := map[int]PlanPR{}
+	skipped := map[int]bool{}
 	if !t.DryRun {
-		if err = t.reconcileRebinds(ctx, &req, entry); err != nil {
+		reads := &recoveryPRReader{train: t, ctx: ctx, repository: req.Repository, entry: entry,
+			terminal: terminal, skipped: skipped}
+		if err = reads.refresh(); err != nil {
+			return res, err
+		}
+		if err = t.reconcileRebinds(&req, reads); err != nil {
 			return res, t.reconcileStop(&res, entry, err)
 		}
-		if err = t.reconcileUpdates(ctx, &req, res.BaseSHA, res.CIChecks, entry); err != nil {
+		if err = reads.refresh(); err != nil {
+			return res, err
+		}
+		if err = t.reconcileUpdates(&req, res.BaseSHA, res.CIChecks, reads); err != nil {
 			return res, t.reconcileStop(&res, entry, err)
 		}
-		if landed, err = t.reconcileMerges(ctx, req, entry); err != nil {
+		if err = reads.refresh(); err != nil {
+			return res, err
+		}
+		if landed, terminal, skipped, err = t.reconcileMerges(req, reads); err != nil {
 			return res, err
 		}
 	}
 
 	// Plan: check every PR at its current head, then order and digest.
 	for _, it := range req.PRs {
+		if skipped[it.Number] {
+			continue
+		}
 		if sha, ok := landed[it.Number]; ok {
 			res.PRs = append(res.PRs, PlanPR{Number: it.Number, Task: it.Task, Status: "merged", Merged: sha})
+			continue
+		}
+		if p, ok := terminal[it.Number]; ok {
+			res.PRs = append(res.PRs, p)
 			continue
 		}
 		p, err := t.checkPR(ctx, req, it, res.BaseSHA, res.CIChecks)
@@ -449,16 +474,18 @@ func (t *Train) checkPR(ctx context.Context, req Request, it Item, base string, 
 			return PlanPR{}, fmt.Errorf("PR #%d head kept moving while it was checked (%s -> %s)", it.Number, short(pr.HeadSHA), short(again.HeadSHA))
 		}
 	}
-	p := PlanPR{Number: it.Number, Task: it.Task, Head: pr.HeadSHA, Draft: pr.Draft, Changed: Changed(pr.Files), Files: paths(pr.Files), Status: "planned", title: pr.Title, mergeable: pr.Mergeable}
+	p := PlanPR{Number: it.Number, Task: it.Task, Head: pr.HeadSHA, Draft: pr.Draft, Changed: Changed(pr.Files), Files: paths(pr.Files), Status: "planned", title: pr.Title, mergeable: pr.Mergeable,
+		prState: pr.State, mergeCommit: pr.MergeCommit, boundHead: it.BoundHead}
 	p.Refusals = check(checkInput{repository: req.Repository, base: req.Base, item: it, pr: pr, runs: runs, grant: t.Grants,
 		required: ci, trainHeads: t.Audit.trainHeads(req.Repository, it.Number)})
+	if pr.State == "MERGED" && pr.MergeCommit != "" && it.BoundHead != "" && pr.HeadSHA != it.BoundHead {
+		p.Refusals = []Refusal{{Rule: RulePRState, Detail: mergedElsewhereDetail(it, pr.HeadSHA)}}
+	}
 	return p, nil
 }
 
 func strictUnsafe(p PlanPR) string {
 	switch {
-	case p.mergeable == "CONFLICTING":
-		return "the PR conflicts with the current base"
 	case slices.ContainsFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RulePRHeadMoved }):
 		return "the PR head moved off its task binding"
 	default:
@@ -470,9 +497,13 @@ func (t *Train) applyStrict(p *PlanPR, behind bool, unsafe string) {
 	if !behind {
 		return
 	}
+	if p.mergeable == "CONFLICTING" {
+		p.Refusals = append(p.Refusals, Refusal{Rule: RuleUpdateConflict, Detail: updateConflictDetail})
+		return
+	}
 	if unsafe != "" {
 		p.Refusals = append(p.Refusals, Refusal{Rule: RuleStrictUpToDate,
-			Detail: "the branch is behind and the train cannot bring it up to date: " + unsafe})
+			Detail: strictRefusalDetail + " (" + unsafe + ")"})
 		return
 	}
 	p.Refusals = slices.DeleteFunc(p.Refusals, func(r Refusal) bool { return r.Rule == RuleCIGreen })
@@ -481,13 +512,31 @@ func (t *Train) applyStrict(p *PlanPR, behind bool, unsafe string) {
 	p.RebaseReason = "GitHub requires the branch to be up to date before merging"
 }
 
-// refuse records a refusal and escalates it: an accepted owner gate for this
-// exact head and these rules lifts it; otherwise the gate is raised (not in a
-// dry run, which raises nothing) and the PR merges nothing.
+const strictRefusalDetail = "GitHub requires the branch to be up to date before merging, and the train could not bring it up to date. No gate overrides GitHub's rule. Run the train again; if it repeats, the lead closes the PR and redoes the task on the current base."
+
+const updateConflictDetail = "The branch conflicts with the base, so the train cannot update it. No gate overrides GitHub's rule. The lead closes the PR and redoes the task on the current base (a seat never merges the base by hand)."
+
+func mergedElsewhereDetail(it Item, head string) string {
+	return fmt.Sprintf("PR #%d was already merged at another head (merge %s, bound head %s); nothing to land; the lead checks task %s's record against what merged.", it.Number, head, it.BoundHead, it.Task)
+}
+
+func unliftableRefusal(p PlanPR) bool {
+	for _, r := range p.Refusals {
+		if r.Rule == RuleStrictUpToDate || r.Rule == RuleUpdateConflict || (r.Rule == RulePRState && p.prState == "MERGED") {
+			return true
+		}
+	}
+	return false
+}
+
+// refuse records a refusal. An accepted owner gate for this exact head and
+// these rules lifts an actionable refusal; otherwise its gate is raised (not
+// in a dry run). Unliftable refusals remain words-only. The PR merges nothing.
 func (t *Train) refuse(req Request, p *PlanPR, entry func(Entry) error) {
 	rs := rules(p.Refusals)
 	target := gatetarget.MergeBeyond(req.Repository, p.Number, p.Head, rs)
-	if t.Gates != nil {
+	noGate := unliftableRefusal(*p)
+	if !noGate && t.Gates != nil {
 		if id, ok := t.Gates.Accepted("spawn", target); ok {
 			p.Lifted, p.GateID, p.Status = true, id, "planned"
 			_ = entry(Entry{Kind: "refusal", PR: p.Number, Task: p.Task, Head: p.Head, Rules: rs, GateID: id, Detail: "lifted by the owner's accepted gate"})
@@ -496,6 +545,9 @@ func (t *Train) refuse(req Request, p *PlanPR, entry func(Entry) error) {
 	}
 	p.Status = "refused"
 	switch {
+	case noGate:
+		// GitHub's own rule, a branch conflict, and an already-completed
+		// merge cannot be made actionable by an owner approval.
 	case t.DryRun:
 		p.GateError = "dry run: would raise " + target
 	case t.Escalate == nil:
@@ -519,7 +571,11 @@ func (t *Train) refuse(req Request, p *PlanPR, entry func(Entry) error) {
 	if p.GateError != "" {
 		detail += "; " + p.GateError
 	}
-	_ = entry(Entry{Kind: "refusal", PR: p.Number, Task: p.Task, Head: p.Head, Rules: rs, GateID: p.GateID, Detail: detail})
+	e := Entry{Kind: "refusal", PR: p.Number, Task: p.Task, Head: p.Head, Rules: rs, GateID: p.GateID, Detail: detail}
+	if p.prState == "MERGED" {
+		e.Merged, e.NewHead = p.mergeCommit, p.boundHead
+	}
+	_ = entry(e)
 }
 
 // order marks, for each PR, the earlier PRs of the set whose file sets
@@ -628,6 +684,12 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 			// the update, so the request stays live (update_ambiguous) and
 			// the train reads the head back as if the mutation had answered
 			// (the plan reviewer on #903).
+			if updateConflict(err) {
+				if aerr := entry(Entry{Kind: "update_failed", PR: p.Number, Task: it.Task, Head: p.Head, BaseSHA: beforeBase, Detail: "updatePullRequestBranch conflict: " + err.Error()}); aerr != nil {
+					return aerr
+				}
+				return t.refuseUpdate(res, p, entry, RuleUpdateConflict, updateConflictDetail)
+			}
 			if definiteRefusal(err) {
 				if aerr := entry(Entry{Kind: "update_failed", PR: p.Number, Task: it.Task, Head: p.Head, BaseSHA: beforeBase, Detail: "updatePullRequestBranch refused: " + err.Error()}); aerr != nil {
 					return aerr
@@ -650,6 +712,9 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 		if !moved {
 			if bound {
 				p.PatchProof = &PatchProof{Required: true, OldHead: p.Head}
+			}
+			if cur.Mergeable == "CONFLICTING" {
+				return t.refuseUpdate(res, p, entry, RuleUpdateConflict, updateConflictDetail)
 			}
 			return t.refuseUpdate(res, p, entry, RuleUpdateUnconfirmed, fmt.Sprintf("GitHub did not update the branch of PR #%d within %s (the head did not move); nothing is bound and nothing is merged", p.Number, t.updateWait()))
 		}
@@ -817,17 +882,73 @@ func (t *Train) refuseUpdate(res *Result, p *PlanPR, entry func(Entry) error, ru
 	return nil
 }
 
-// reconcileRebinds finishes a proof-backed binding write when a previous run
-// stopped after journaling it. It emits no reconcile entry: the journaled head
-// and the server head must already be the same.
-func (t *Train) reconcileRebinds(ctx context.Context, req *Request, entry func(Entry) error) error {
-	if t.Binder == nil || t.Tasks == nil {
-		return nil
-	}
-	entries, err := t.Audit.Read()
+// recoveryPRReader is the one PR-read boundary for every start-of-run
+// recovery. It replays a terminal merged-elsewhere refusal before a read and
+// makes an unreadable PR a per-PR skip unless an exact gh wrapper proves the
+// 401, 403 or 404 that ends the run. The maps live for the whole recovery
+// sequence, so a PR skipped once is not retried by a later recovery phase.
+type recoveryPRReader struct {
+	train      *Train
+	ctx        context.Context
+	repository string
+	entry      func(Entry) error
+	entries    []Entry
+	terminal   map[int]PlanPR
+	skipped    map[int]bool
+}
+
+func (r *recoveryPRReader) refresh() error {
+	entries, err := r.train.Audit.Read()
 	if err != nil {
 		return err
 	}
+	r.entries = entries
+	return nil
+}
+
+func (r *recoveryPRReader) terminalOrSkipped(it Item) bool {
+	if r.skipped[it.Number] {
+		return true
+	}
+	if p, ok := priorMergedElsewhere(r.entries, r.repository, it); ok {
+		r.terminal[it.Number] = p
+		return true
+	}
+	return false
+}
+
+func (r *recoveryPRReader) read(it Item, phase string) (PRInfo, bool, error) {
+	if r.terminalOrSkipped(it) {
+		return PRInfo{}, false, nil
+	}
+	cur, err := r.train.Forge.PR(r.ctx, r.repository, it.Number)
+	if err == nil {
+		return cur, true, nil
+	}
+	if status, definite := definiteHTTP4xx(err); definite {
+		switch status {
+		case 401, 403:
+			return PRInfo{}, false, fmt.Errorf("GitHub refused to read PR #%d with HTTP %d while %s; check the owner's gh authentication and repository access before running the train again: %w", it.Number, status, phase, err)
+		case 404:
+			return PRInfo{}, false, fmt.Errorf("read PR #%d while %s: %w", it.Number, phase, err)
+		}
+	}
+	detail := fmt.Sprintf("GitHub could not read PR #%d while %s: %v; this PR was skipped and the run continued", it.Number, phase, err)
+	if err := r.entry(Entry{Kind: "reconcile_read_failed", PR: it.Number, Task: it.Task, Head: it.BoundHead, Detail: detail}); err != nil {
+		return PRInfo{}, false, err
+	}
+	r.skipped[it.Number] = true
+	return PRInfo{}, false, nil
+}
+
+// reconcileRebinds finishes a proof-backed binding write when a previous run
+// stopped after journaling it. It emits no reconcile entry: the journaled head
+// and the server head must already be the same.
+func (t *Train) reconcileRebinds(req *Request, reads *recoveryPRReader) error {
+	if t.Binder == nil || t.Tasks == nil {
+		return nil
+	}
+	entries, entry := reads.entries, reads.entry
 	for i := range req.PRs {
 		it := &req.PRs[i]
 		if it.BoundHead == "" {
@@ -842,9 +963,12 @@ func (t *Train) reconcileRebinds(ctx context.Context, req *Request, entry func(E
 		if pending.NewHead == "" {
 			continue
 		}
-		cur, err := t.Forge.PR(ctx, req.Repository, it.Number)
+		cur, read, err := reads.read(*it, "recovering its re-bind")
 		if err != nil {
 			return err
+		}
+		if !read {
+			continue
 		}
 		if cur.HeadSHA != pending.NewHead {
 			continue
@@ -883,13 +1007,10 @@ func (t *Train) mergedAt(ctx context.Context, repository string, pr int, head st
 // reconcileMerges reads the journal at the start of a real run (5 re-pass,
 // P2-5): a merge intent with no merge entry after it is checked against the
 // server, and a PR the server merged at the intent's head gets its merge
-// entry now (the verify verb reads it). It returns every PR of the request
-// whose last journaled merge step is a merge, with its merge commit.
-func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Entry) error) (map[int]string, error) {
-	entries, err := t.Audit.Read()
-	if err != nil {
-		return nil, err
-	}
+// entry now (the verify verb reads it). It returns merged PRs, terminal
+// merged-elsewhere refusals, and PRs skipped after a per-PR read failure.
+func (t *Train) reconcileMerges(req Request, reads *recoveryPRReader) (map[int]string, map[int]PlanPR, map[int]bool, error) {
+	entries, entry := reads.entries, reads.entry
 	last := map[int]Entry{} // the last merge_intent or merge of each PR
 	for _, e := range entries {
 		if !e.DryRun && e.Repository == req.Repository && (e.Kind == "merge_intent" || e.Kind == "merge") {
@@ -897,16 +1018,23 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 		}
 	}
 	out := map[int]string{}
+	terminal, skipped := reads.terminal, reads.skipped
 	for _, it := range req.PRs {
+		if reads.terminalOrSkipped(it) {
+			continue
+		}
 		e, ok := last[it.Number]
 		switch {
 		case !ok:
 			if it.BoundHead == "" && it.Unbound == "" {
 				continue // not a real-run item populated by BindTasks
 			}
-			cur, err := t.Forge.PR(ctx, req.Repository, it.Number)
+			cur, read, err := reads.read(it, "reconciling it")
 			if err != nil {
-				return nil, fmt.Errorf("read PR #%d while reconciling: %w", it.Number, err)
+				return nil, nil, nil, err
+			}
+			if !read {
+				continue
 			}
 			if cur.State != "MERGED" || cur.MergeCommit == "" {
 				continue
@@ -914,24 +1042,32 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 			if it.BoundHead != "" {
 				recorded, err := t.reconcileTaskMerge(it, req.Repository, cur.HeadSHA, cur.MergeCommit, "server-reported merged head", entry)
 				if err != nil {
-					return nil, err
+					return nil, nil, nil, err
 				}
 				if !recorded {
+					p := mergedElsewherePlan(it, cur.HeadSHA, cur.MergeCommit)
+					t.refuse(req, &p, entry)
+					terminal[it.Number] = p
 					continue
 				}
 			}
 			if err := entry(Entry{Kind: "merge", PR: it.Number, Task: it.Task, Head: cur.HeadSHA, Merged: cur.MergeCommit,
 				Detail: "reconciled: the server already reported the PR merged"}); err != nil {
-				return nil, err
+				return nil, nil, nil, err
 			}
 			out[it.Number] = cur.MergeCommit
 		case e.Kind == "merge":
 			if it.BoundHead != "" {
 				recorded, err := t.reconcileTaskMerge(it, req.Repository, e.Head, e.Merged, "journaled merge", entry)
 				if err != nil {
-					return nil, err
+					return nil, nil, nil, err
 				}
 				if !recorded {
+					if e.Head != it.BoundHead && e.Merged != "" {
+						p := mergedElsewherePlan(it, e.Head, e.Merged)
+						t.refuse(req, &p, entry)
+						terminal[it.Number] = p
+					}
 					continue
 				}
 			}
@@ -940,20 +1076,24 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 			if it.BoundHead != "" {
 				matches, err := t.reconcileBinding(it, req.Repository, e.Head, "journaled merge intent", entry)
 				if err != nil {
-					return nil, err
+					return nil, nil, nil, err
 				}
 				if !matches {
 					continue
 				}
 			}
-			sha, merged := t.mergedAt(ctx, req.Repository, it.Number, e.Head)
-			if !merged {
+			cur, read, err := reads.read(it, "reconciling it")
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			if !read || cur.State != "MERGED" || cur.HeadSHA != e.Head || cur.MergeCommit == "" {
 				continue // not merged: the PR is checked again and a new intent journaled
 			}
+			sha := cur.MergeCommit
 			if it.BoundHead != "" {
 				recorded, err := t.reconcileTaskMerge(it, req.Repository, e.Head, sha, "journaled merge intent", entry)
 				if err != nil {
-					return nil, err
+					return nil, nil, nil, err
 				}
 				if !recorded {
 					continue
@@ -961,12 +1101,32 @@ func (t *Train) reconcileMerges(ctx context.Context, req Request, entry func(Ent
 			}
 			if err := entry(Entry{Kind: "merge", PR: it.Number, Task: e.Task, Head: e.Head, Merged: sha, Digest: e.Digest,
 				Detail: "reconciled at the next run: the server merged the journaled head (intent of run " + e.Run + ")"}); err != nil {
-				return nil, err
+				return nil, nil, nil, err
 			}
 			out[it.Number] = sha
 		}
 	}
-	return out, nil
+	return out, terminal, skipped, nil
+}
+
+func mergedElsewherePlan(it Item, head, merge string) PlanPR {
+	detail := mergedElsewhereDetail(it, head)
+	return PlanPR{Number: it.Number, Task: it.Task, Head: head, Status: "refused", Merged: merge,
+		Refusals: []Refusal{{Rule: RulePRState, Detail: detail}}, prState: "MERGED", mergeCommit: merge, boundHead: it.BoundHead}
+}
+
+// priorMergedElsewhere makes the terminal refusal idempotent. It is scoped
+// to the same task and bound head, so a later binding is checked afresh.
+func priorMergedElsewhere(entries []Entry, repository string, it Item) (PlanPR, bool) {
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
+		if e.Repository == repository && e.Kind == "refusal" && e.PR == it.Number && e.Task == it.Task && e.Merged != "" && e.NewHead == it.BoundHead && slices.Equal(e.Rules, []string{RulePRState}) {
+			detail := strings.TrimPrefix(e.Detail, RulePRState+": ")
+			return PlanPR{Number: it.Number, Task: it.Task, Head: e.Head, Status: "refused", Merged: e.Merged,
+				Refusals: []Refusal{{Rule: RulePRState, Detail: detail}}, prState: "MERGED", mergeCommit: e.Merged, boundHead: e.NewHead}, true
+		}
+	}
+	return PlanPR{}, false
 }
 
 // reconcileTaskMerge records a replay only while the task still has the

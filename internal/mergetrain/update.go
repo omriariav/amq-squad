@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -107,7 +108,7 @@ func (t *Train) sleepOrDone(ctx context.Context, d time.Duration) bool {
 // one. The wrappers are gh's own, version by version: a gh that changes
 // them falls to ambiguous, the safe side.
 func definiteRefusal(err error) bool {
-	if strings.Contains(strings.ToLower(err.Error()), "(http 4") {
+	if _, ok := definiteHTTP4xx(err); ok {
 		return true
 	}
 	var ge *GHError
@@ -124,6 +125,43 @@ func definiteRefusal(err error) bool {
 		}
 	}
 	return false
+}
+
+// definiteHTTP4xx returns an HTTP client status only when gh printed it in
+// one of the two exact wrapper forms refusalMessage accepts. Text from this
+// package's error wrapper, a bare "gh: HTTP 422" line, or an unfamiliar gh
+// shape is not enough: those forms stay on the safe, unknown side.
+func definiteHTTP4xx(err error) (int, bool) {
+	var ge *GHError
+	if !errors.As(err, &ge) {
+		return 0, false
+	}
+	msg, ok := refusalMessage(ge.Stderr)
+	if !ok {
+		return 0, false
+	}
+	m := httpStatusMessageRe.FindStringSubmatch(msg)
+	if m == nil {
+		return 0, false
+	}
+	status, parseErr := strconv.Atoi(m[1])
+	return status, parseErr == nil && status >= 400 && status <= 499
+}
+
+var httpStatusMessageRe = regexp.MustCompile(`(?i)^.+ \(HTTP ([0-9]{3})\)$`)
+
+// updateConflict recognizes GitHub's explicit answer that a branch update
+// cannot be performed because the PR conflicts with its base. This is kept
+// separate from definiteRefusal because its outcome is a typed, unliftable
+// refusal rather than a run-wide error.
+func updateConflict(err error) bool {
+	var ge *GHError
+	if errors.As(err, &ge) {
+		if msg, ok := refusalMessage(ge.Stderr); ok && strings.EqualFold(msg, "Pull request is not mergeable") {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "rebase conflict")
 }
 
 // refusalMessage strips one of gh's two documented error wrappers, each
@@ -346,14 +384,11 @@ func pushedAfter(at, since string) bool {
 // (pr_head_moved, force_push): a force push with no train request on record
 // is exactly the event pr_head_moved exists to stop, and the owner's identity
 // on the push does not tell the train's push from the owner's own hand.
-func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip string, ci []RequiredCheck, entry func(Entry) error) error {
+func (t *Train) reconcileUpdates(req *Request, baseTip string, ci []RequiredCheck, reads *recoveryPRReader) error {
 	if t.Binder == nil || t.Tasks == nil {
 		return nil
 	}
-	entries, err := t.Audit.Read()
-	if err != nil {
-		return err
-	}
+	entries, entry, ctx := reads.entries, reads.entry, reads.ctx
 	for i := range req.PRs {
 		it := &req.PRs[i]
 		if it.BoundHead == "" {
@@ -363,9 +398,12 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 		if !ok {
 			continue
 		}
-		cur, err := t.Forge.PR(ctx, req.Repository, it.Number)
+		cur, read, err := reads.read(*it, "recovering its update")
 		if err != nil {
-			return fmt.Errorf("read PR #%d while reconciling its update: %w", it.Number, err)
+			return err
+		}
+		if !read {
+			continue
 		}
 		if cur.HeadSHA == it.BoundHead {
 			continue // the update never landed (or was refused unconfirmed): the check decides
