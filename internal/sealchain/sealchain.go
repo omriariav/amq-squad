@@ -260,6 +260,7 @@ func headsExist(root string) bool {
 
 type head struct {
 	Schema  int       `json:"schema"`
+	Layout  string    `json:"layout,omitempty"`
 	Name    string    `json:"name"`
 	Seq     int       `json:"seq"`
 	Link    string    `json:"link_tag"`
@@ -326,13 +327,8 @@ func readHead(root, name string, s Seed) (head, bool, error) {
 	if err != nil {
 		return h, false, err
 	}
-	if json.Unmarshal(raw, &h) != nil || h.Schema != 1 || h.Name != name || h.Tag == "" || !hmac.Equal([]byte(h.sign(s.Key).Tag), []byte(h.Tag)) {
-		return h, true, fmt.Errorf("%w: the head of %s does not decode or its tag fails", ErrTampered, name)
-	}
-	if err := CheckSeedIdentity(SeedPath(root), h.SeedDev, h.SeedIno, s.Dev, s.Ino); err != nil {
-		return h, true, fmt.Errorf("%w: the head of %s: %v", ErrTampered, name, err)
-	}
-	return h, true, nil
+	parsed, err := parseHeadBytes(name, s, raw)
+	return parsed.head, true, err
 }
 
 // Absent checks a sealed file that is missing: with a head past link 0 it

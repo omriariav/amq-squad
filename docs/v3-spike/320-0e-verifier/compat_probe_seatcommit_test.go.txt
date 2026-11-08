@@ -1,0 +1,29 @@
+package seatcommit
+
+import (
+	"errors"
+	"os"
+	"testing"
+
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
+)
+
+// Copy this exact file to internal/seatcommit/compat_probe_test.go in the
+// detached tag worktree named by execution.md, run TestCompatProbe, then
+// remove it. AMQSQ_0E_FIXTURE_ROOT names the fixture written by the current
+// build.
+func TestCompatProbe(t *testing.T) {
+	root := os.Getenv("AMQSQ_0E_FIXTURE_ROOT")
+	ledger, err := ReadLedger(root, "qa")
+	t.Logf("commit error: %v", err)
+	t.Logf("commit tampered: %v", errors.Is(err, sealchain.ErrTampered))
+	t.Logf("commit handle: %s", ledger.Handle)
+	entries, qerr := os.ReadDir(QuarantineDir(root))
+	if qerr != nil {
+		t.Logf("commit quarantine: %v", qerr)
+		return
+	}
+	for _, entry := range entries {
+		t.Logf("commit quarantine: %s", entry.Name())
+	}
+}
