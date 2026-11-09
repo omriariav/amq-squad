@@ -468,6 +468,13 @@ const (
 	readPhasePostMutation readPhase = "post"
 )
 
+func readPhaseForRebase(rebase bool) readPhase {
+	if rebase {
+		return readPhasePostMutation
+	}
+	return readPhasePreMutation
+}
+
 func (t *Train) checkPR(ctx context.Context, req Request, it Item, base string, ci []RequiredCheck, phase readPhase) (PlanPR, error) {
 	if phase != readPhasePreMutation && phase != readPhasePostMutation {
 		return PlanPR{}, fmt.Errorf("check PR #%d: invalid read phase %q", it.Number, phase)
@@ -845,7 +852,7 @@ func (t *Train) land(ctx context.Context, req Request, res *Result, p *PlanPR, i
 		}
 		it.Unbound, it.BoundHead, it.DeclaredFiles = why, b.PRHead, b.DeclaredFiles
 	}
-	fresh, err := t.checkPR(ctx, req, it, res.BaseSHA, res.CIChecks, readPhasePostMutation)
+	fresh, err := t.checkPR(ctx, req, it, res.BaseSHA, res.CIChecks, readPhaseForRebase(rebase))
 	if err != nil {
 		if rebase {
 			return t.postMutationReadFailure(p.Number, err)

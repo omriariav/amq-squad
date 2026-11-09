@@ -390,9 +390,19 @@ func TestEveryForgeReadDeclaresItsMutationBoundary(t *testing.T) {
 					return true
 				}
 				if name == "train.go" && sel.Sel.Name == "checkPR" {
-					want := map[string]string{"Run": "readPhasePreMutation", "land": "readPhasePostMutation"}[fn.Name.Name]
-					phase, phaseOK := call.Args[len(call.Args)-1].(*ast.Ident)
-					if want == "" || !phaseOK || phase.Name != want {
+					phase := call.Args[len(call.Args)-1]
+					want := ""
+					phaseOK := false
+					switch fn.Name.Name {
+					case "Run":
+						want = "readPhasePreMutation"
+						id, ok := phase.(*ast.Ident)
+						phaseOK = ok && id.Name == want
+					case "land":
+						want = "readPhaseForRebase(rebase)"
+						phaseOK = readPhaseForRebaseExpression(phase)
+					}
+					if want == "" || !phaseOK {
 						t.Errorf("%s calls checkPR with phase %v, want %s", fn.Name.Name, call.Args[len(call.Args)-1], want)
 					} else {
 						checkPhases[fn.Name.Name] = true
@@ -424,6 +434,25 @@ func TestEveryForgeReadDeclaresItsMutationBoundary(t *testing.T) {
 	}
 	if !checkPhases["Run"] || !checkPhases["land"] {
 		t.Errorf("checkPR call phases are incomplete: %v", checkPhases)
+	}
+}
+
+func readPhaseForRebaseExpression(expr ast.Expr) bool {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return false
+	}
+	fn, fnOK := call.Fun.(*ast.Ident)
+	arg, argOK := call.Args[0].(*ast.Ident)
+	return fnOK && fn.Name == "readPhaseForRebase" && argOK && arg.Name == "rebase"
+}
+
+func TestReadPhaseForRebase(t *testing.T) {
+	if got := readPhaseForRebase(false); got != readPhasePreMutation {
+		t.Fatalf("without this run's rebase = %s, want %s", got, readPhasePreMutation)
+	}
+	if got := readPhaseForRebase(true); got != readPhasePostMutation {
+		t.Fatalf("after this run's rebase = %s, want %s", got, readPhasePostMutation)
 	}
 }
 
@@ -512,6 +541,54 @@ func TestUpdatedHeadDeadlineHasThreeOutcomes(t *testing.T) {
 				t.Fatalf("outcome = head %s moved %t err %v after %d reads", cur.HeadSHA, gotMoved, err, forge.calls)
 			}
 		})
+	}
+}
+
+type cancelDuringUpdatedHeadReadForge struct {
+	Forge
+	cancel   context.CancelFunc
+	mutated  bool
+	reads    int
+	priorErr error
+}
+
+func (f *cancelDuringUpdatedHeadReadForge) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
+	out, err := f.Forge.Rebase(ctx, repository, number, expect)
+	f.mutated = true
+	return out, err
+}
+
+func (f *cancelDuringUpdatedHeadReadForge) PR(ctx context.Context, repository string, number int) (PRInfo, error) {
+	if f.mutated {
+		f.reads++
+		if f.reads == 1 && f.priorErr != nil {
+			return PRInfo{}, f.priorErr
+		}
+		f.cancel()
+		return PRInfo{}, context.Canceled
+	}
+	return f.Forge.PR(ctx, repository, number)
+}
+
+func TestUpdatedHeadCancellationKeepsAnEarlierReadError(t *testing.T) {
+	f, _, _, req := strictBound(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	forge := &cancelDuringUpdatedHeadReadForge{Forge: f.gh, cancel: cancel, priorErr: ghFailure(errors.New("exit status 1"), "gh: Bad Gateway (HTTP 502)")}
+	f.train.Forge = forge
+	f.train.Sleep = func(time.Duration) {}
+	res, err := f.train.Run(ctx, req)
+	if err == nil || forge.reads != 2 || !strings.Contains(err.Error(), "PR #1's state after the update or merge could not be read; the next run recovers it from the journal") {
+		t.Fatalf("cancel after earlier read error = reads %d, err %v, PRs %+v", forge.reads, err, res.PRs)
+	}
+}
+
+func TestUpdatedHeadCancellationWithoutEarlierReadErrorIsUnmoved(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	forge := &cancelDuringUpdatedHeadReadForge{cancel: cancel, mutated: true}
+	train := &Train{Forge: forge}
+	cur, moved, err := train.readUpdatedHead(ctx, fixtureRepo, 1, strings.Repeat("a", 40))
+	if err != nil || moved || cur.HeadSHA != strings.Repeat("a", 40) || forge.reads != 1 {
+		t.Fatalf("cancel without earlier read error = head %s moved %t err %v reads %d", cur.HeadSHA, moved, err, forge.reads)
 	}
 }
 

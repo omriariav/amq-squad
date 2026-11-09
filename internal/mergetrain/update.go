@@ -56,7 +56,7 @@ func (t *Train) readUpdatedHead(ctx context.Context, repository string, pr int, 
 		timedOut := readCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil // the read's own deadline, whatever gh's error says (a gh killed by it returns an exit error)
 		cancel()
 		if err != nil && ctx.Err() != nil {
-			return PRInfo{HeadSHA: pinned}, false, nil
+			return PRInfo{HeadSHA: pinned}, false, nonDefiniteErr
 		}
 		if err != nil && !timedOut {
 			if _, definite := definiteHTTP4xx(err); definite {
