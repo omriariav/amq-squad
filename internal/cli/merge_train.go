@@ -165,7 +165,15 @@ func runMergeTrain(args []string) error {
 	case runErr != nil:
 		return FormatMergeTrainError(runErr)
 	case len(res.Refused()) > 0 && !*dry:
-		return fmt.Errorf("merge-train: %d PR(s) refused: %v (gates raised; the lead decides)", len(res.Refused()), res.Refused())
+		gated := slices.ContainsFunc(res.PRs, func(p mergetrain.PlanPR) bool { return p.Status == "refused" && (p.GateID != "" || p.GateError != "") })
+		ungated := slices.ContainsFunc(res.PRs, func(p mergetrain.PlanPR) bool { return p.Status == "refused" && p.GateID == "" && p.GateError == "" })
+		suffix := "gates raised; the lead decides"
+		if ungated && gated {
+			suffix = "gates raised only for actionable refusals; the plan names the refusals no gate can override"
+		} else if ungated {
+			suffix = "no gate can override these refusals; the lead follows the plan words"
+		}
+		return fmt.Errorf("merge-train: %d PR(s) refused: %v (%s)", len(res.Refused()), res.Refused(), suffix)
 	case res.Stopped != "":
 		return fmt.Errorf("merge-train: %s", res.Stopped)
 	}

@@ -941,9 +941,10 @@ func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
 		"gh:" + modified:       false, // the wrapper is exactly "gh: "
 		"GraphQL: " + modified: false, // a GraphQL line with no path is not the second form whole
 		// the 4xx rule
-		"gh: Validation Failed (HTTP 422)": true,
-		"gh: Forbidden (HTTP 403)":         true,
-		"gh: Not Found (HTTP 404)":         true,
+		"gh: Validation Failed (HTTP 422)":                        true,
+		"gh: Forbidden (HTTP 403)":                                true,
+		"gh: Not Found (HTTP 404)":                                true,
+		"GraphQL: Forbidden (HTTP 403) (updatePullRequestBranch)": true,
 		// no evidenced exact wording: ambiguous
 		"GraphQL: Pull request is not mergeable (updatePullRequestBranch)":                                           false,
 		"GraphQL: Forbidden (updatePullRequestBranch)":                                                               false, // the HTTP 403 form is the 4xx rule
@@ -985,13 +986,13 @@ func TestDefiniteRefusalClassesTheGhError(t *testing.T) {
 	if definiteRefusal(ghFailure(errors.New("signal: killed"), "")) {
 		t.Error("a killed gh is definite")
 	}
-	// an error not from gh has no gh line: the GraphQL rule never reads
-	// this package's wrapper (the 4xx rule reads the text)
+	// An error not from gh has no exact gh wrapper. Neither the GraphQL nor
+	// the HTTP rule reads this package's wrapper text.
 	if definiteRefusal(errors.New("gh api graphql: exit status 1: GraphQL: " + modified + " (updatePullRequestBranch)")) {
 		t.Error("an error not from gh was read as gh's GraphQL line")
 	}
-	if !definiteRefusal(errors.New("gh api graphql: exit status 1: gh: Validation Failed (HTTP 422)")) {
-		t.Error("a 4xx not from gh is not definite")
+	if definiteRefusal(errors.New("gh api graphql: exit status 1: gh: Validation Failed (HTTP 422)")) {
+		t.Error("a 4xx not from gh was read as an exact gh wrapper")
 	}
 	// the fake gh, through GH.run, by its own exact output (gh api
 	// graphql's `gh: <message>` form): its pinned-head mismatch is classed
