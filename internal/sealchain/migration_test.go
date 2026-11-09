@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -19,7 +20,8 @@ func TestLayoutMigrationTerminatesTornDecisionTailAndDedupes(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`{"kind":"scheduler_started"`), 0o600); err != nil {
+	torn := []byte(`{"kind":"scheduler_started","reason":"` + strings.Repeat("x", 128<<10))
+	if err := os.WriteFile(path, torn, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	appended, err := RecordLayoutMigration(path, "commits", "qa", 2, "raw layout", time.Unix(7, 0))
@@ -37,6 +39,32 @@ func TestLayoutMigrationTerminatesTornDecisionTailAndDedupes(t *testing.T) {
 	appended, err = RecordLayoutMigration(path, "commits", "qa", 2, "raw layout", time.Unix(8, 0))
 	if err != nil || appended {
 		t.Fatalf("dedupe = %t, %v", appended, err)
+	}
+	if got := bytes.Count(mustReadMigrationFile(t, path), []byte(`"kind":"ledger_layout_migrated"`)); got != 1 {
+		t.Fatalf("migration records = %d", got)
+	}
+}
+
+func TestLayoutMigrationScansOneMegabyteDecisionLineAndDedupes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scheduler", "decisions.jsonl")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	large, err := json.Marshal(map[string]string{"kind": "scheduler_started", "reason": strings.Repeat("x", 1<<20)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	large = append(large, '\n')
+	if err := os.WriteFile(path, large, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	appended, err := RecordLayoutMigration(path, "commits", "qa", 7, "raw layout", time.Unix(7, 0))
+	if err != nil || !appended {
+		t.Fatalf("append after one-megabyte line = %t, %v", appended, err)
+	}
+	appended, err = RecordLayoutMigration(path, "commits", "qa", 7, "raw layout", time.Unix(8, 0))
+	if err != nil || appended {
+		t.Fatalf("dedupe after one-megabyte line = %t, %v", appended, err)
 	}
 	if got := bytes.Count(mustReadMigrationFile(t, path), []byte(`"kind":"ledger_layout_migrated"`)); got != 1 {
 		t.Fatalf("migration records = %d", got)

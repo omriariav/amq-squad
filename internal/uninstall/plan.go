@@ -13,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -335,8 +336,16 @@ func (p *plan) commits(x *fsanchor.AnchoredDir) []wtCand {
 	defer cd.Close()
 	var cands []wtCand
 	for _, n := range sortedNames(cd) {
+		raw, err := fsanchor.ReadEntry(cd, n)
+		if err != nil {
+			continue
+		}
+		body := raw
+		if split, _, splitErr := sealchain.SplitRaw(raw); splitErr == nil {
+			body = split
+		}
 		var l seatcommit.Ledger
-		if readJSON(cd, n, &l) && l.Worktree != "" {
+		if json.Unmarshal(body, &l) == nil && l.Worktree != "" {
 			cands = append(cands, wtCand{l.Handle, l.Worktree})
 		}
 	}
