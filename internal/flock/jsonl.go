@@ -30,6 +30,29 @@ func WithJSONLFile(path string, fn func(*os.File) error) (err error) {
 	return WithFile(f, JSONLFileLockName(path), func() error { return fn(f) })
 }
 
+// TerminateJSONLTail appends a newline when an already locked JSONL file has
+// an unterminated tail. Durability is the caller's concern.
+func TerminateJSONLTail(f *os.File) error {
+	st, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if st.Size() > 0 {
+		last := make([]byte, 1)
+		if _, err := f.ReadAt(last, st.Size()-1); err != nil {
+			return err
+		}
+		if last[0] != '\n' {
+			n, err := f.Write([]byte{'\n'})
+			if err == nil && n != 1 {
+				err = io.ErrShortWrite
+			}
+			return err
+		}
+	}
+	return nil
+}
+
 // AppendJSONLLine appends line as one whole line to an already locked JSONL
 // file. If a crashed writer left a torn tail, it first terminates that tail so
 // the new record cannot be glued to it. Durability is the caller's concern.
@@ -38,22 +61,10 @@ func AppendJSONLLine(f *os.File, line []byte) error {
 	if len(line) == 0 || bytes.ContainsRune(line, '\n') {
 		return fmt.Errorf("JSONL record must be exactly one non-empty line")
 	}
-	st, err := f.Stat()
-	if err != nil {
+	if err := TerminateJSONLTail(f); err != nil {
 		return err
 	}
-	buf := make([]byte, 0, len(line)+2)
-	if st.Size() > 0 {
-		last := make([]byte, 1)
-		if _, err := f.ReadAt(last, st.Size()-1); err != nil {
-			return err
-		}
-		if last[0] != '\n' {
-			buf = append(buf, '\n')
-		}
-	}
-	buf = append(buf, line...)
-	buf = append(buf, '\n')
+	buf := append(append(make([]byte, 0, len(line)+1), line...), '\n')
 	n, err := f.Write(buf)
 	if err == nil && n != len(buf) {
 		err = io.ErrShortWrite

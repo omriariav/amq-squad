@@ -2,8 +2,10 @@ package sealchain
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -53,16 +55,27 @@ func RecordLayoutMigration(path, ledgerKind, seat string, seq int, reason string
 		if _, err := f.Seek(0, 0); err != nil {
 			return err
 		}
-		s := bufio.NewScanner(f)
-		for s.Scan() {
+		r := bufio.NewReader(f)
+		for {
+			line, readErr := r.ReadBytes('\n')
 			var prior layoutMigrationDecision
-			if json.Unmarshal(s.Bytes(), &prior) == nil && prior.Kind == LayoutMigrationDecisionKind && prior.LedgerKind == ledgerKind && prior.Seat == seat && prior.Seq == seq {
+			if json.Unmarshal(bytes.TrimSuffix(line, []byte{'\n'}), &prior) == nil && prior.Kind == LayoutMigrationDecisionKind && prior.LedgerKind == ledgerKind && prior.Seat == seat && prior.Seq == seq {
+				if !bytes.HasSuffix(line, []byte{'\n'}) {
+					if err := flock.TerminateJSONLTail(f); err != nil {
+						return err
+					}
+				}
 				return errors.Join(syncMigrationFile(f), syncMigrationDir(filepath.Dir(path)))
 			}
+			switch {
+			case readErr == nil:
+			case errors.Is(readErr, io.EOF):
+				goto scanned
+			default:
+				return readErr
+			}
 		}
-		if err := s.Err(); err != nil {
-			return err
-		}
+	scanned:
 		if afterMigrationDecisionScan != nil {
 			afterMigrationDecisionScan()
 		}

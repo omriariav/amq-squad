@@ -84,7 +84,6 @@ Observed result:
 commit error: ledger_tampered: commit ledger qa does not decode: invalid character '{' after top-level value
 commit tampered: true
 commit quarantine: no such file or directory
-exits error: invalid character '{' after top-level value
 scheduler tick error: <nil>
 decision: ledger_tampered reason=owner: ...
 decision: exits_ledger_unwritable reason=...
@@ -119,7 +118,6 @@ Observed result:
 commit error: ledger_tampered: commit ledger qa does not decode: invalid character '{' after top-level value; the refused document is quarantined at .../quarantine/commits.qa.sequnknown
 commit tampered: true
 commit quarantine: commits.qa.sequnknown
-exits error: invalid character '{' after top-level value
 scheduler tick error: <nil>
 decision: ledger_tampered reason=owner: ...
 decision: exits_ledger_unwritable reason=...
@@ -193,7 +191,7 @@ worktree. The commands are:
 ```sh
 cp docs/v3-spike/320-0e-verifier/compat_probe_v3.1.2_seatcommit_test.go.txt internal/seatcommit/compat_probe_test.go
 cp docs/v3-spike/320-0e-verifier/compat_probe_scheduler_test.go.txt internal/scheduler/compat_probe_test.go
-GOPROXY=off go test -count=1 ./internal/seatcommit ./internal/scheduler -run TestCompatProbe -v
+AMQSQ_0E_FIXTURE_ROOT=/path/to/generated/fixture GOPROXY=off go test -count=1 ./internal/seatcommit ./internal/scheduler -run TestCompatProbe -v
 ```
 
 The rc.1 run substitutes
@@ -210,15 +208,15 @@ only exercising its happy path.
 | Fix or row | Command and reverted line | First failure |
 | --- | --- | --- |
 | P2-1, commit and exits admit only the exact successor | `go test ./internal/seatcommit ./internal/scheduler -run 'TestInterrupted(Commit\|Exits)MigrationRejectsSkipAndWrongPrev' -count=1`; changed `seq != head+1 || prev != link` to `&&` | `raw_compat_test.go:176: invalid migration = <nil>`; the exits row also logged `ledger_layout_migrated` for the invalid link |
-| P2-1, the read completes the interrupted migration | `go test ./internal/scheduler -run TestInterruptedExitsMigrationCompletesHeadAndLogsOnce -count=1`; replaced the `CompleteRawHead` write with a revert-probe panic | `panic: revert probe`, from `exits.go:286` |
+| P2-1, the read stays pure and the writer completes the interrupted migration | `go test ./internal/scheduler -run TestInterruptedExitsMigrationReadersArePureAndWriterCompletesOnce -count=1`; replaced `headBytes, err = sealchain.CompleteRawHead(...)` with `panic("revert probe")` | `panic: revert probe`, from `exits.go:222`; the test frame was `raw_exits_test.go:178` |
 | P2-2 / E6a, the exclusion is the single idle-seat boundary | `go test ./internal/scheduler -run TestCompatibilityRefusalExcludesSeatUntilLedgerVerifies -count=1 -timeout=3s`; removed `!s.seatExcluded(h)` from `idleSeat` | `panic: test timed out after 3s`; `preparedIdleSeat` repeatedly selected the incompatible seat |
 | P2-3, authenticate a raw head before classifying its fields | `go test ./internal/sealchain -run TestRawHeadUnknownFieldIsClassifiedAfterItsTagVerifies -count=1`; bypassed `seal.Verify` | `raw_test.go:163: unverified unknown head = newer_writer: ... unknown field "future"` |
 | P2-3, use the caller's one head read and quarantine those bytes | `go test ./internal/seatcommit -run TestRawHeadSwapQuarantinesTheHeadThatWasChecked -count=1`; added a second `snapHead()` after the swap seam | `quarantine_test.go:506: .../commits.s1.seq1/head.json: no such file or directory` |
-| Schema, never writer-version, decides compatibility | `go test ./internal/sealchain -run TestRawSealClassifiesUnknownFieldsBySchemaNotVersion -count=1`; changed `seal.Schema > readerSchema` to a version test | `raw_test.go:101: classification = schema_mismatch: ... schema 2 written by (devel)` |
+| Schema, never writer-version, decides compatibility | `go test ./internal/sealchain -run TestRawSealClassifiesUnknownFieldsBySchemaNotVersion -count=1`; replaced the exact condition `if seal.Schema > readerSchema` with `if seal.Version > FirstRawLayoutVersion` | `raw_test.go:186: classification = schema_mismatch: fixture has unknown field "future" under schema 2 written by (devel)` |
 | P3-1, core leading zeros are invalid and build metadata has no precedence | `go test ./internal/cli -run TestRawLayoutSemverPrecedence -count=1`; restored the permissive core regex and removed `+build` | `up_raw_layout_test.go:87: compare(v3.2.0+build.1,v3.2.0+other) = 0,false; want 0,true` |
 | P3-2, writer compatibility is not seat work | `go test ./internal/routing -run TestPolicyRefusalIsNotAFailedAttempt -count=1`; made `ReasonNewerWriter` a work failure | `brief3112_test.go:56: newer_writer = {escalate:true count:true}` |
 | P3-3, screen words name the writer and exact install command | `node --test --test-reporter=spec pi/test/words.test.ts`; replaced the detailed block words with generic upgrade words | `AssertionError`: actual `the commits ledger was written by a newer build`, expected `... v9.1.0+build.7` |
-| E3, replay the 3.1.1 attempt | `go test ./internal/seatcommit -run TestRawLedgerReplaysAttemptNumber -count=1`; changed `Attempt` to `json:"-"` | `raw_compat_test.go:195: attempt replay = ... Attempt:0` |
+| E3, replay the 3.1.1 attempt | `go test ./internal/seatcommit -run TestRawLedgerReplaysAttemptNumber -count=1`; replaced `Attempt int json:"attempt,omitempty"` with `Attempt int json:"-"` | `raw_compat_test.go:285: legacy v3.1.1 JSON fixture = ...`; the fixture no longer contained `"attempt": 3` |
 | E4, a legacy unknown field remains tampering | `go test ./internal/seatcommit -run TestLegacyUnknownFieldStaysTampered -count=1`; returned `ErrSchemaMismatch` for a legacy link failure | `raw_compat_test.go:228: legacy unknown field = commit ledger s1: schema_mismatch` |
 | E7, sessions without a raw chain are unrestricted | `go test ./internal/cli -run TestUpWithoutRawChainProceeds -count=1`; removed the `if !raw { return nil }` exit | `up_raw_layout_test.go:106: (devel) without a raw chain: ledger_layout_downgrade` |
 | E11, the public CLI threads the stamped build into the seal | `go test ./internal/cli -run TestStampedMainBinaryWritesItsVersionInTheLedgerSeal -count=1`; cleared `seatcommit.BinaryVersion = version` | `version_seam_test.go:108: written seal = ... Version:v3.2.0-rc.1...;` wanted the stamped `v8.7.6` |
@@ -405,4 +403,72 @@ the exact PR head.
   checks were in sync. The command then stopped at `skills-check` because the
   host Python lacks PyYAML: `PyYAML is required for skill generation: pip3
   install pyyaml`. This is an environment dependency, not a source or test
+  failure; later make targets did not run in that invocation.
+
+## Release-gate follow-up: every sealed-file reader uses the raw split
+
+Uninstall's anchored `commitSteps` read and status's `pushURLMissing` read now
+pass the bytes through `sealchain.SplitRaw`. A split success decodes the body;
+a split failure falls back to the legacy single-JSON layout. Uninstall remains
+fail closed when neither layout parses. Status still omits an unreadable entry,
+but it no longer silently loses the D1 warning for a valid raw-layout commit
+ledger. The repository source guard lists the two external readers by file and
+function and rejects a direct decoder for either protected path. The allowed
+sealchain, seatcommit and scheduler packages remain the layout owners.
+
+The migration decision scan now uses `bufio.Reader.ReadBytes`, so a JSONL line
+has no Scanner token ceiling. A matching record at an unterminated EOF is
+terminated under the existing file lock with `flock.TerminateJSONLTail`, the
+same tail rule used by `AppendJSONLLine`, before the file and directory sync.
+It is not appended a second time.
+
+reads never write, except 0c-A's tamper quarantine
+
+That exception is the authenticated tamper refusal in
+`internal/seatcommit/ledger.go` routed into `quarantine.go`. No read path writes
+a migration decision, head or lock. `RecordLayoutMigration` remains a writer
+path under the decision log's existing lock.
+
+The lead's host measurement remains the durability decision: one locked append
+with `File.Sync` (`F_FULLFSYNC` on macOS) to a 4.5 MB log was 9.2 ms mean and
+12.2 ms p95 under gate load, versus 2.5 ms mean for plain fsync. The live v31
+log had 30 lines in its last 24 hours, below one line per two-second tick. Its
+worst burst in ten days was 11 lines in one second, about 100 ms or 5% of the
+tick. `F_FULLFSYNC` therefore stays on every line.
+
+### Release-gate follow-up revert runs
+
+Each mutation was applied alone and restored before the next command. The
+legacy-layout and malformed-layout subtests remained green during the reader
+reverts, proving that the compatibility and fail-closed behavior did not move.
+
+| Contract | Command and exact reverted line | First failure |
+| --- | --- | --- |
+| Uninstall reads idle and commit raw-layout queues | `go test ./internal/uninstall -run 'TestCommitSteps' -count=1`; removed the `sealchain.SplitRaw(raw)` body selection and restored `json.Unmarshal(raw, &q)` | `raw_exits_reader_test.go:34: idle exits queue is busy: ... exits.json cannot be parsed, so a commit step cannot be ruled out`; the raw commit row also failed at line 37 because the seat and task were lost |
+| Status preserves D1 for a raw-layout commit ledger | `go test ./internal/status -run TestStatusNamesASeatWithNoPushURL -count=1`; removed the `sealchain.SplitRaw(raw)` body selection and restored `json.Unmarshal(raw, &l)` | `pushurl_test.go:36: push_url_missing for []` |
+| Every external reader goes through the shared split | `go test ./internal/sealchain -run TestExternalSealedDocumentReadersUseSplitRaw -count=1`; planted `plantedDirectCommitReader` with the exact direct line `_ = json.Unmarshal(raw, out)` and no `SplitRaw` call | `reader_guard_test.go:62: direct sealed-document decode in ../../internal/status/planted_direct_reader.go: plantedDirectCommitReader`; the in-test exits plant is checked by the same guard |
+| A one-megabyte whole line and a torn tail over 64 KB do not stop migration | `go test ./internal/sealchain -run 'TestLayoutMigration(ScansOneMegabyteDecisionLineAndDedupes|TerminatesTornDecisionTailAndDedupes)' -count=1`; replaced the `bufio.Reader.ReadBytes` loop with `s := bufio.NewScanner(f)` and `s.Scan()` | `migration_test.go:29: append = false, bufio.Scanner: token too long`; the one-megabyte whole-line row also failed at line 63 |
+| A matching whole record without a newline becomes visible without duplication | `go test ./internal/sealchain -run TestLayoutMigrationDedupeTerminatesWholeTailForSchedulerReader -count=1`; removed the `flock.TerminateJSONLTail(f)` block from the dedupe hit | `migration_reader_test.go:37: repaired migration log = "{...}"`; the bytes had no final newline, so the scheduler reader still had no whole record |
+
+### Release-gate follow-up verification
+
+All commands ran unlocked in the seat sandbox. The lead reruns locked gates on
+the exact PR head.
+
+- The focused reader, guard and migration command passed in all four touched
+  packages: uninstall 1.329 s, status 0.596 s, sealchain 0.662 s and flock
+  0.750 s.
+- Complete touched-package tests passed: uninstall 55.458 s, status 88.675 s,
+  sealchain 1.880 s and flock 0.668 s.
+- The scrubbed `go test ./internal/cli -count=1` passed in 53.436 s with the
+  temporary Unix socket permission required by its integration rows.
+- `go build ./...`, `go vet ./...` and `git diff --check` passed. Build emitted
+  one non-fatal stat-cache warning because the host module cache is read-only
+  to the seat; its exit status was 0.
+- `make ci` passed repository-wide `go vet`, `go test -timeout 20m ./...`, and
+  both generated HTML checks. Relevant package times included sealchain 4.843
+  s, status 178.290 s, uninstall 150.664 s, seatcommit 252.396 s and mergetrain
+  270.237 s. It then stopped at `skills-check` because the host Python lacks
+  PyYAML: `PyYAML is required for skill generation: pip3 install pyyaml`.
+  This is the same environment dependency as round 4, not a source or test
   failure; later make targets did not run in that invocation.
