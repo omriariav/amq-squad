@@ -80,6 +80,15 @@ type Ledger struct {
 // its chain: routed to the owner, never a silent pass.
 const ReasonLedgerTampered = "ledger_tampered"
 
+const (
+	// ReasonNewerWriter is a valid ledger written under a newer schema. The
+	// owner installs the named build; no quarantine is created.
+	ReasonNewerWriter = "newer_writer"
+	// ReasonSchemaMismatch is a valid seal whose body disagrees with its
+	// claimed schema. The lead investigates the writer bug.
+	ReasonSchemaMismatch = "schema_mismatch"
+)
+
 const ledgerLabel = "amq-squad commits ledger v1"
 
 func ledgerHeadName(handle string) string { return "commits." + handle }
@@ -378,6 +387,11 @@ func ReadLedger(root, handle string) (Ledger, error) { return ReadLedgerAs(root,
 // ReadLedgerAs is ReadLedger with the caller's verb on the quarantine's
 // sidecar (the scheduler's prepare, each writer).
 func ReadLedgerAs(root, handle, verb string) (Ledger, error) {
+	l, _, err := readLedgerAs(root, handle, verb)
+	return l, err
+}
+
+func readLedgerAs(root, handle, verb string) (Ledger, ledgerRaw, error) {
 	l, raw, err := readLedger(root, handle)
 	if errors.Is(err, sealchain.ErrTampered) {
 		if afterLedgerRefusal != nil {
@@ -385,13 +399,18 @@ func ReadLedgerAs(root, handle, verb string) (Ledger, error) {
 		}
 		err = quarantine(root, handle, verb, err, raw)
 	}
-	return l, err
+	return l, raw, err
 }
 
 // afterLedgerRefusal is a test seam between a refusing read and its
 // quarantine (row A10: the copy is of the bytes the check refused, never a
 // re-read of a file a concurrent writer may have replaced since).
 var afterLedgerRefusal func(root, handle string)
+
+// afterLedgerHeadRead is a test seam after the one head read and before its
+// verification. Production leaves it nil. The checked and quarantined bytes
+// must remain the captured bytes if the live file changes in this window.
+var afterLedgerHeadRead func(root, handle string)
 
 // readLedger is the read and the check: the file, its schema and handle,
 // the seal under the session seed and the signed head (sealchain.Check).
@@ -429,25 +448,17 @@ func readLedger(root, handle string) (Ledger, ledgerRaw, error) {
 		if key, ok, kerr := sealchain.ReadKey(root); kerr != nil {
 			return l, raw, fmt.Errorf("commit ledger %s: %w: the session seed: %v", handle, sealchain.ErrTampered, kerr)
 		} else if ok {
-			if aerr := sealchain.Absent(root, ledgerHeadName(handle), key); aerr != nil {
+			if aerr := sealchain.AbsentBytes(ledgerHeadName(handle), key, raw.head); aerr != nil {
 				return l, raw, fmt.Errorf("commit ledger %s: %w", handle, aerr)
 			}
 		}
 		return l, raw, os.ErrNotExist
 	}
-	// A sealed record that does not decode, or carries another schema or
-	// handle, is ledger_tampered for the owner, never a deferral (the fix
-	// round's item 25).
-	if err := json.Unmarshal(body, &l); err != nil {
-		_ = snapHead()
-		return l, raw, sealchain.Tampered("commit ledger "+handle+" does not decode", err)
+	// Read the head once. These exact bytes are checked below and, on a
+	// tamper alarm, copied by the caller into quarantine.
+	if herr := snapHead(); herr != nil {
+		return l, raw, herr
 	}
-	if l.Schema != LedgerSchema || l.Handle != handle {
-		_ = snapHead()
-		return l, raw, sealchain.Tampered("commit ledger "+handle, fmt.Errorf("schema %d for %q", l.Schema, l.Handle))
-	}
-	// The seal: a hand edit, an older copy, a stripped seal or a deleted
-	// head is ledger_tampered (sealchain.ErrTampered).
 	key, ok, err := sealchain.ReadKey(root)
 	if err != nil {
 		_ = snapHead()
@@ -457,12 +468,58 @@ func readLedger(root, handle string) (Ledger, ledgerRaw, error) {
 		_ = snapHead()
 		return l, raw, fmt.Errorf("commit ledger %s: %w: the session seed that seals it is gone", handle, sealchain.ErrTampered)
 	}
+	if afterLedgerHeadRead != nil {
+		afterLedgerHeadRead(root, handle)
+	}
+	layout, err := sealchain.HeadLayout(ledgerHeadName(handle), key, raw.head)
+	if err != nil {
+		return l, raw, fmt.Errorf("commit ledger %s: %w", handle, err)
+	}
+	if layout == sealchain.RawLayout {
+		seal, err := sealchain.CheckRaw(ledgerHeadName(handle), key, ledgerLabel, "the seat's commit record", body, raw.head, LedgerSchema, &l)
+		if err != nil {
+			return l, raw, fmt.Errorf("commit ledger %s: %w", handle, err)
+		}
+		if l.Schema != LedgerSchema {
+			return l, raw, fmt.Errorf("commit ledger %s: %w", handle, sealchain.SchemaError("the seat's commit record", seal, LedgerSchema, l.Schema))
+		}
+		if l.Handle != handle {
+			return l, raw, fmt.Errorf("commit ledger %s: %w: the seat's commit record names handle %q under schema %d written by %s", handle, sealchain.ErrSchemaMismatch, l.Handle, seal.Schema, seal.Version)
+		}
+		return l, raw, nil
+	}
+	// Interrupted migration recovery: WriteRaw persisted the authenticated
+	// next raw document but stopped before replacing its verified legacy
+	// head. Only that exact successor is admitted. Complete the head from the
+	// bytes already checked. Readers accept it without writing. A writer
+	// rechecks under the ledger lock, records the decision, and completes
+	// the head before it writes a later link.
+	if _, _, splitErr := sealchain.SplitRaw(body); splitErr == nil {
+		seal, err := sealchain.CheckRawMigration(ledgerHeadName(handle), key, ledgerLabel, "the seat's commit record", body, raw.head, LedgerSchema, &l)
+		if err != nil {
+			return l, raw, fmt.Errorf("commit ledger %s: %w", handle, err)
+		}
+		if l.Schema != LedgerSchema {
+			return l, raw, fmt.Errorf("commit ledger %s: %w", handle, sealchain.SchemaError("the seat's commit record", seal, LedgerSchema, l.Schema))
+		}
+		if l.Handle != handle {
+			return l, raw, fmt.Errorf("commit ledger %s: %w: the seat's commit record names handle %q under schema %d written by %s", handle, sealchain.ErrSchemaMismatch, l.Handle, seal.Schema, seal.Version)
+		}
+		raw.migration = &seal
+		return l, raw, nil
+	}
+	// Legacy migration: decode the embedded seal, then verify the exact head
+	// bytes already read. Unknown legacy fields still fail the legacy tag and
+	// remain indistinguishable from tampering, as documented.
+	if err := json.Unmarshal(body, &l); err != nil {
+		return l, raw, sealchain.Tampered("commit ledger "+handle+" does not decode", err)
+	}
+	if l.Schema != LedgerSchema || l.Handle != handle {
+		return l, raw, sealchain.Tampered("commit ledger "+handle, fmt.Errorf("schema %d for %q", l.Schema, l.Handle))
+	}
 	sealed := l
 	sealed.Seal = nil
-	if herr := snapHead(); herr != nil {
-		return l, raw, herr
-	}
-	if err := sealchain.Check(root, ledgerHeadName(handle), key, ledgerLabel, l.Seal, sealed); err != nil {
+	if err := sealchain.CheckLegacy(ledgerHeadName(handle), key, ledgerLabel, l.Seal, sealed, raw.head); err != nil {
 		return l, raw, fmt.Errorf("commit ledger %s: %w", handle, err)
 	}
 	return l, raw, nil
@@ -479,29 +536,73 @@ func readLedger(root, handle string) (Ledger, ledgerRaw, error) {
 func writeLedger(root string, l Ledger, verb string) error {
 	l.Schema = LedgerSchema
 	l.Seal = nil
-	if _, err := ReadLedgerAs(root, l.Handle, verb); err != nil && !os.IsNotExist(err) {
-		return err
+	_, checked, readErr := readLedgerAs(root, l.Handle, verb)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return readErr
 	}
 	key, err := sealchain.SessionKey(root)
 	if err != nil {
 		return fmt.Errorf("commit ledger %s: the session seed: %w", l.Handle, err)
 	}
+	headBytes := checked.head
+	if checked.migration != nil {
+		if err := recordLayoutMigration(root, l.Handle, checked.migration.Seq); err != nil {
+			return err
+		}
+		if afterLayoutMigrationDecision != nil {
+			if err := afterLayoutMigrationDecision(root, l.Handle, checked.migration.Seq); err != nil {
+				return err
+			}
+		}
+		headBytes, err = sealchain.CompleteRawHead(root, ledgerHeadName(l.Handle), key, *checked.migration, time.Now())
+		if err != nil {
+			return fmt.Errorf("commit ledger %s: complete its raw head: %w", l.Handle, err)
+		}
+	}
+	migrating := false
+	if len(headBytes) > 0 && readErr == nil {
+		layout, lerr := sealchain.HeadLayout(ledgerHeadName(l.Handle), key, headBytes)
+		migrating = lerr == nil && layout == ""
+	}
 	dir := LedgerDir(root)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	_, err = sealchain.Write(root, ledgerHeadName(l.Handle), key, ledgerLabel, l, func(link *sealchain.Link) error {
-		sealed := l
-		sealed.Seal = link
-		raw, err := json.MarshalIndent(sealed, "", "  ")
-		if err != nil {
+	body, err := json.MarshalIndent(l, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = sealchain.WriteRawBeforeHead(root, ledgerHeadName(l.Handle), key, ledgerLabel, headBytes, body, BinaryVersion, LedgerSchema, func(raw []byte) error {
+		// One durable writer (2b-5): temp in the directory, fsync, rename, fsync.
+		return atomicfile.Write(ledgerPath(root, l.Handle), raw, 0o600)
+	}, func(seal sealchain.RawSeal) error {
+		if !migrating {
+			return nil
+		}
+		if err := recordLayoutMigration(root, l.Handle, seal.Seq); err != nil {
 			return err
 		}
-		// One durable writer (2b-5): temp in the directory, fsync, rename, fsync.
-		return atomicfile.Write(ledgerPath(root, l.Handle), append(raw, '\n'), 0o600)
+		if afterLayoutMigrationDecision != nil {
+			return afterLayoutMigrationDecision(root, l.Handle, seal.Seq)
+		}
+		return nil
 	}, time.Now())
 	return err
 }
+
+func recordLayoutMigration(root, handle string, seq int) error {
+	_, err := sealchain.RecordLayoutMigration(
+		filepath.Join(root, "extensions", "amq-squad", "scheduler", "decisions.jsonl"),
+		"commits", handle, seq,
+		fmt.Sprintf("legacy commit ledger migrated to %s at link %d", sealchain.RawLayout, seq),
+		time.Now(),
+	)
+	return err
+}
+
+// afterLayoutMigrationDecision is the crash seam after the durable decision
+// and before head completion. Production leaves it nil.
+var afterLayoutMigrationDecision func(root, handle string, seq int) error
 
 // ErrLedgerBusy is a seat's commit ledger lock held by another step (a
 // running commit step): a tick-path caller defers, never waits (v3-5-verifier

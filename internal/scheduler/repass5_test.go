@@ -1,7 +1,6 @@
 package scheduler
 
 import (
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -57,7 +56,14 @@ func TestSealedExitsQueueDetectsASameUIDEdit(t *testing.T) {
 	}
 	raw, _ := os.ReadFile(ledger)
 	// The edit: the queue emptied by hand (a deferred gone-only check lost).
-	edited := []byte(`{"schema":1,"queue":[],"seal":` + string(sealOf(t, raw)) + `}`)
+	_, seal, err := sealchain.SplitRaw(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited, err := sealchain.JoinRaw([]byte(`{"schema":1,"queue":[]}`), seal)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(ledger, edited, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -71,19 +77,6 @@ func TestSealedExitsQueueDetectsASameUIDEdit(t *testing.T) {
 	if d := g.tick(); !has(d, "ledger_tampered", "", "") || has(d, "dispatched", "", "") {
 		t.Fatalf("a removed exits queue: %+v (%v)", d, g.s.exitsErr)
 	}
-}
-
-// sealOf is the raw seal object of a sealed exits ledger.
-func sealOf(t *testing.T, raw []byte) []byte {
-	t.Helper()
-	var l struct {
-		Seal any `json:"seal"`
-	}
-	if err := json.Unmarshal(raw, &l); err != nil || l.Seal == nil {
-		t.Fatalf("no seal in the exits ledger: %v", err)
-	}
-	b, _ := json.Marshal(l.Seal)
-	return b
 }
 
 // The fix round's item 25: a sealed exits queue that does not decode, or

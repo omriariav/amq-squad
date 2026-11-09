@@ -112,10 +112,14 @@ func readFile(t *testing.T, p string) []byte {
 func headSeqOf(t *testing.T, f *fixture) (seq string, raw []byte) {
 	t.Helper()
 	raw = readFile(t, sealchain.HeadPath(f.root, ledgerHeadName(f.handle)))
+	body := raw
+	if split, _, err := sealchain.SplitRaw(raw); err == nil {
+		body = split
+	}
 	var h struct {
 		Seq int `json:"seq"`
 	}
-	if err := json.Unmarshal(raw, &h); err != nil {
+	if err := json.Unmarshal(body, &h); err != nil {
 		t.Fatal(err)
 	}
 	return strconv.Itoa(h.Seq), raw
@@ -478,6 +482,35 @@ func TestConcurrentIdenticalRefusersPublishOneSlot(t *testing.T) {
 	}
 }
 
+// The 0e head-swap row: a same-UID writer replaces the live head after the
+// reader captured it but before verification. The check and quarantine use
+// the captured bytes, never a second read of the replacement.
+func TestRawHeadSwapQuarantinesTheHeadThatWasChecked(t *testing.T) {
+	f := newFixture(t)
+	tamperBase(t, f, f.base, '0')
+	seq, checkedHead := headSeqOf(t, f)
+	headPath := sealchain.HeadPath(f.root, ledgerHeadName(f.handle))
+	replacement := []byte("replacement head\n")
+	afterLedgerHeadRead = func(root, handle string) {
+		afterLedgerHeadRead = nil
+		if err := os.WriteFile(headPath, replacement, 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { afterLedgerHeadRead = nil })
+	_, err := ReadLedgerAs(f.root, f.handle, "head-swap row")
+	if !errors.Is(err, sealchain.ErrTampered) {
+		t.Fatalf("head swap = %v", err)
+	}
+	_, quarantinedHead, _ := quarantinePaths(f, seq)
+	if got := readFile(t, quarantinedHead); !bytes.Equal(got, checkedHead) {
+		t.Fatalf("quarantine copied the replacement head: got %q, checked %q", got, checkedHead)
+	}
+	if got := readFile(t, headPath); !bytes.Equal(got, replacement) {
+		t.Fatalf("live replacement changed: %q", got)
+	}
+}
+
 // A14: the staged directory swapped for a link after its mkdir (the
 // afterTempMkdir seam stands in for a same-user process) is a named copy
 // failure: the staged writes go through the temp directory's own
@@ -762,16 +795,10 @@ func TestWriteCheckRunsUnderTheLedgerLock(t *testing.T) {
 	}
 }
 
-// A6: version skew as the tamper. A document a newer amq-squad wrote
-// carries a field this binary's Ledger schema lacks (here attempt_note on a
-// discard entry, built the way 3.1.1's attempt reached rc.1): sealed with
-// the session's key over the body with the field, its head moved to that
-// link. This binary decodes without the field and re-encodes, so the tag
-// fails: refused and quarantined like any other tamper, with that error
-// text. (This blocks the seat on version skew until the lead's recovery;
-// the verifier fix of a later brief turns it into the distinct "written by
-// a newer amq-squad" refusal.)
-func TestVersionSkewIsQuarantinedLikeATamper(t *testing.T) {
+// E2: a valid raw seal with a higher schema and an unknown field is a
+// newer_writer refusal. The original bytes stay put and no quarantine is
+// created because this is compatibility, not tampering.
+func TestVersionSkewIsNewerWriterAndNotQuarantined(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	f := newFixture(t)
 	tk := f.leased("cmd/")
@@ -783,68 +810,46 @@ func TestVersionSkewIsQuarantinedLikeATamper(t *testing.T) {
 		t.Fatalf("CleanSeat = %v, %v", discarded, err)
 	}
 	p := ledgerPath(f.root, f.handle)
-	var doc map[string]any
-	if err := json.Unmarshal(readFile(t, p), &doc); err != nil {
+	raw := readFile(t, p)
+	body, previous, err := sealchain.SplitRaw(raw)
+	if err != nil {
 		t.Fatal(err)
 	}
-	var prev sealchain.Link
-	if raw, _ := json.Marshal(doc["seal"]); json.Unmarshal(raw, &prev) != nil || prev.Seq == 0 {
-		t.Fatalf("the document's seal: %v", doc["seal"])
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
 	}
 	entry := doc["discarded"].([]any)[0].(map[string]any)
 	entry["attempt_note"] = "a field of a newer amq-squad"
-	delete(doc, "seal")
 	seed, ok, err := sealchain.ReadKey(f.root)
 	if err != nil || !ok {
 		t.Fatalf("the session seed: %v, %v", ok, err)
 	}
-	// The newer binary's seal: the next link, over its body with the field.
-	link := sealchain.Seal(seed.Key, ledgerLabel, &prev, doc)
-	if !link.Verify(seed.Key, ledgerLabel, doc) {
-		t.Fatal("the newer binary's seal does not verify over its own body")
-	}
-	doc["seal"] = link
-	skewed, err := json.MarshalIndent(doc, "", "  ")
+	skewedBody, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	skewed = append(skewed, '\n')
-	if err := os.WriteFile(p, skewed, 0o600); err != nil {
+	var skewed []byte
+	head := readFile(t, sealchain.HeadPath(f.root, ledgerHeadName(f.handle)))
+	_, err = sealchain.WriteRaw(f.root, ledgerHeadName(f.handle), seed, ledgerLabel, head, skewedBody, "v9.0.0", LedgerSchema+1, func(raw []byte) error {
+		skewed = append([]byte(nil), raw...)
+		return os.WriteFile(p, raw, 0o600)
+	}, f.now)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sealchain.WriteHead(f.root, ledgerHeadName(f.handle), seed, link, f.now); err != nil {
-		t.Fatal(err)
+	seq, _ := headSeqOf(t, f)
+	if seq != strconv.Itoa(previous.Seq+1) {
+		t.Fatalf("the head is at seq %s, want %d", seq, previous.Seq+1)
 	}
-	// This binary's reading of the same bytes drops the field, so the same
-	// link does not verify over what it re-encodes.
-	var mine Ledger
-	if err := json.Unmarshal(skewed, &mine); err != nil {
-		t.Fatal(err)
-	}
-	mine.Seal = nil
-	if link.Verify(seed.Key, ledgerLabel, mine) {
-		t.Fatal("the seal verifies over this binary's decode: the field was not dropped")
-	}
-	seq, head := headSeqOf(t, f)
-	if seq != strconv.Itoa(prev.Seq+1) {
-		t.Fatalf("the head is at seq %s, want %d", seq, prev.Seq+1)
-	}
-	bodyQ, headQ, sideQ := quarantinePaths(f, seq)
-	want := "ledger_tampered: the tag of " + ledgerHeadName(f.handle) + " link " + seq + " fails"
-	_, err = CleanSeat(f.root, f.handle, gitBin(t), nil, f.now)
-	if !errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), want) || !namesSlot(err.Error(), slotOf(f, seq, 1)) {
-		t.Fatalf("CleanSeat on the skewed document: %v (want %q and the quarantine path)", err, want)
-	}
-	if got := readFile(t, bodyQ); sha(got) != sha(skewed) {
-		t.Fatalf("the quarantine body is not the skewed body: sha256 %s, want %s", sha(got), sha(skewed))
-	}
-	if got := readFile(t, headQ); !bytes.Equal(got, head) {
-		t.Fatal("the quarantine head is not the head")
-	}
-	if side := string(readFile(t, sideQ)); !strings.Contains(side, "error: commit ledger "+f.handle+": "+want) {
-		t.Fatalf("the sidecar lacks the error text:\n%s", side)
+	_, err = ReadLedger(f.root, f.handle)
+	if !errors.Is(err, sealchain.ErrNewerWriter) || errors.Is(err, sealchain.ErrTampered) || !strings.Contains(err.Error(), "v9.0.0") || !strings.Contains(err.Error(), "attempt_note") {
+		t.Fatalf("ReadLedger on the newer document: %v", err)
 	}
 	if got := readFile(t, p); !bytes.Equal(got, skewed) {
 		t.Fatal("the skewed document was moved")
+	}
+	if _, err := os.Stat(QuarantineDir(f.root)); !os.IsNotExist(err) {
+		t.Fatalf("compatibility refusal created a quarantine: %v", err)
 	}
 }

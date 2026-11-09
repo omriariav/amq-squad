@@ -8,6 +8,9 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 )
 
 // UsageError signals a misuse of the CLI (unknown command/flag, bad
@@ -68,6 +71,11 @@ func unknownSubcommandError(verb, given string, valid ...string) error {
 // command can read them via outputPolicyCurrent. They may appear before or
 // after the subcommand but never past a literal "--" boundary.
 func Run(args []string, version string) error {
+	// Every ledger writer records the exact CLI build that produced its raw
+	// bytes. Compatibility decisions key on schema; the version is the
+	// operator-facing install instruction and evidence.
+	seatcommit.BinaryVersion = version
+	sealchain.BinaryVersion = version
 	args, policy, err := parseGlobalFlags(args)
 	if err != nil {
 		return err

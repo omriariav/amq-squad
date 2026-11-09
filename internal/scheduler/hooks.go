@@ -154,6 +154,24 @@ type SeatPreparer interface {
 	PrepareSeat(handle string) error
 }
 
+// SeatCompatibilityChecker rechecks a seat excluded for a typed ledger
+// compatibility refusal without cleaning its worktree. A newly installed
+// reader that verifies the ledger clears the exclusion on the next tick.
+type SeatCompatibilityChecker interface {
+	CheckSeatCompatibility(handle string) error
+}
+
+// PrepareRefusal is a typed ledger compatibility stop discovered before a
+// seat receives a lease. Newer-writer and schema-mismatch refusals exclude
+// the seat, not the task, so another seat of the pool can take the work.
+type PrepareRefusal struct {
+	Reason string
+	Detail string
+	Route  string
+}
+
+func (e *PrepareRefusal) Error() string { return e.Reason + ": " + e.Detail }
+
 // LeadNotifier tells the lead that the commit step refused a task (2b-2:
 // the store record is written first, then this AMQ message to the lead's
 // handle). Like the doorbell it is a hint: a lost message loses nothing,

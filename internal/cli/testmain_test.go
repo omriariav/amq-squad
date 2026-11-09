@@ -9,6 +9,14 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Preserve the caller's module cache before HOME is isolated below. A
+	// real-build row can then compile entirely offline from the same modules
+	// that compiled this test binary.
+	if os.Getenv("GOMODCACHE") == "" {
+		if out, err := exec.Command("go", "env", "GOMODCACHE").Output(); err == nil {
+			_ = os.Setenv("GOMODCACHE", strings.TrimSpace(string(out)))
+		}
+	}
 	// TMPDIR at its real path: macOS temp dirs are under /var, a symlink to
 	// /private/var, and the fsanchor anchor (the pi runtime and registry
 	// re-hash) is opened from / with O_NOFOLLOW (4-1 rebase).
