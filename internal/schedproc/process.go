@@ -147,12 +147,11 @@ func Run(ctx context.Context, o Options) error {
 		o.Router = scheduler.DefaultRouter{}
 	}
 	if o.Log == nil {
-		f, err := os.OpenFile(filepath.Join(Dir(o.Root), "decisions.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
+		path := DecisionsPath(o.Root)
+		if err := flock.WithJSONLFile(path, func(*os.File) error { return nil }); err != nil {
 			return err
 		}
-		defer f.Close()
-		o.Log = f
+		o.Log = flock.JSONLWriter{Path: path}
 	}
 	limits := o.Limits
 	if limits != nil {
@@ -269,10 +268,11 @@ func Run(ctx context.Context, o Options) error {
 	}
 }
 
-func logLine(w io.Writer, at time.Time, d scheduler.Decision) {
+func logLine(w io.Writer, at time.Time, d scheduler.Decision) error {
 	b, _ := json.Marshal(struct {
 		At string `json:"at"`
 		scheduler.Decision
 	}{at.UTC().Format(time.RFC3339Nano), d})
-	fmt.Fprintln(w, string(b))
+	_, err := fmt.Fprintln(w, string(b))
+	return err
 }

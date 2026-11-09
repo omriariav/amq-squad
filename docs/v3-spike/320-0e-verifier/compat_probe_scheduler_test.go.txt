@@ -1,0 +1,42 @@
+package scheduler
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
+)
+
+type compatProbeExits struct{}
+
+func (compatProbeExits) CheckExit(string, string, string) ExitResult {
+	return ExitResult{Deferred: true, Detail: "compatibility probe"}
+}
+
+// Copy this exact file to internal/scheduler/compat_probe_test.go in the
+// same detached tag worktree as the seatcommit probe and run TestCompatProbe.
+func TestCompatProbe(t *testing.T) {
+	root := os.Getenv("AMQSQ_0E_FIXTURE_ROOT")
+	store, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Scheduler{
+		Store: store,
+		Now:   time.Now,
+		Exits: compatProbeExits{},
+		Config: Config{
+			ExitsPath: filepath.Join(root, "exits.json"),
+			SealRoot: root,
+			IdleTimeout: time.Hour,
+		},
+	}
+	s.AdoptClosing("old-1", task.Pool{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "high"}, time.Now())
+	decisions, tickErr := s.Tick()
+	t.Logf("scheduler tick error: %v", tickErr)
+	for _, decision := range decisions {
+		t.Logf("decision: %s reason=%s", decision.Kind, decision.Reason)
+	}
+}
