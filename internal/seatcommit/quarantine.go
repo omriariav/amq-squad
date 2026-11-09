@@ -107,12 +107,30 @@ func quarantine(root, handle, verb string, refusal error, raw ledgerRaw) error {
 		return fmt.Errorf("%w; the quarantine copy failed: %v", refusal, err)
 	}
 	defer d.close()
-	slot, err := quarantineCopy(d, quarantineBase(handle, headSeq(raw.head)), handle, verb, refusal, raw)
+	seq := headSeq(raw.head)
+	slot, err := quarantineCopy(d, quarantineBase(handle, seq), handle, verb, refusal, raw)
 	if err != nil {
 		return fmt.Errorf("%w; the quarantine copy failed: %v", refusal, err)
 	}
-	return fmt.Errorf("%w; the refused document is quarantined at %s", refusal, filepath.Join(dir, slot))
+	return &QuarantinedError{Handle: handle, Seq: seq, Slot: filepath.Join(dir, slot), Err: refusal}
 }
+
+// QuarantinedError is a refusal whose document was quarantined (3.2.0-0c-B):
+// the refusal itself (Err, which wraps sealchain.ErrTampered), the seat,
+// the head seq the slot is named by (quarantineSeqUnknown when the head did
+// not decode) and the slot's path. Its text is the refusal's followed by
+// "; the refused document is quarantined at <slot>", the 0c-A form; the
+// scheduler's prepare reads the fields for its typed block.
+type QuarantinedError struct {
+	Handle, Seq, Slot string
+	Err               error
+}
+
+func (e *QuarantinedError) Error() string {
+	return fmt.Sprintf("%v; the refused document is quarantined at %s", e.Err, e.Slot)
+}
+
+func (e *QuarantinedError) Unwrap() error { return e.Err }
 
 // openQuarantineDir creates the quarantine directory when absent and opens
 // it by one descriptor (O_DIRECTORY, O_NOFOLLOW): the descriptor must be

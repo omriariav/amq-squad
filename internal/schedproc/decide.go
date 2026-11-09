@@ -100,6 +100,9 @@ type DecideOptions struct {
 	// for it (status.CurrentSeatWarnings), for the clear (brief 31-2); nil
 	// refuses every clear.
 	Warnings CurrentWarnings
+	// Recover takes the lead's recovery of a seat's quarantined commits
+	// ledger (3.2.0-0c-B, recover.go); nil refuses it (recover_unsupported).
+	Recover func(lead string, req RecoverRequest) DecideReply
 	// Rebind applies the lead's merge-train re-bind (brief 3.2.0-3a item 6:
 	// the train proves it, then writes the binding); nil refuses it
 	// (rebind_unsupported).
@@ -280,7 +283,7 @@ func (s *DecisionServer) serve() {
 				var kind struct {
 					Kind string `json:"kind"`
 				}
-				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind || kind.Kind == ClearRequestKind || kind.Kind == RebindRequestKind) {
+				if err == nil && json.Unmarshal(line, &kind) == nil && (kind.Kind == WidenRequestKind || kind.Kind == RelaunchRequestKind || kind.Kind == ClearRequestKind || kind.Kind == RecoverRequestKind || kind.Kind == RebindRequestKind) {
 					// The fourth pass: the ledger is read again and the
 					// sender proved again after the request is read; a lead
 					// record replaced meanwhile refuses it.
@@ -306,6 +309,17 @@ func (s *DecisionServer) apply(kind string, line []byte) DecideReply {
 		// brief 31-2: the owner's clear of a warning line, recorded here; it
 		// changes no seat's state, so it needs no hook of the scheduler's.
 		return applyClear(s.o.Root, s.o.Lead, line, s.o.Warnings)
+	case RecoverRequestKind:
+		// 3.2.0-0c-B: the lead's recovery of a quarantined ledger; the
+		// scheduler writes the chain (recover.go), proved like a widening.
+		var req RecoverRequest
+		if json.Unmarshal(line, &req) != nil {
+			return DecideReply{Code: RefusedRecoverMalformed, Detail: "a recovery that does not decode"}
+		}
+		if s.o.Recover == nil {
+			return DecideReply{Code: RefusedRecoverUnsupported, Detail: "this scheduler takes no ledger recovery"}
+		}
+		return s.o.Recover(s.o.Lead, req)
 	case RelaunchRequestKind:
 		var req RelaunchRequest
 		if json.Unmarshal(line, &req) != nil {

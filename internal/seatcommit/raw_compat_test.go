@@ -91,6 +91,38 @@ func TestCommitCompatibilityRefusalsAreTypedAndNotQuarantined(t *testing.T) {
 	}
 }
 
+func TestRecoveryIsTamperOnlyForCompatibilityRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name, version string
+		schema        int
+		want          error
+	}{
+		{"newer writer", "v9.0.0", LedgerSchema + 1, sealchain.ErrNewerWriter},
+		{"same schema mismatch", "v3.2.0-rc.2", LedgerSchema, sealchain.ErrSchemaMismatch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			writeUnknownCommitField(t, f, tc.version, tc.schema)
+			beforeBody := readFile(t, ledgerPath(f.root, f.handle))
+			beforeHead := f.headBytes()
+			seq, _ := headSeqOf(t, f)
+			_, err := f.recover(seq, 1)
+			if recoverCode(t, err) != RecoverIncompatible || !strings.Contains(err.Error(), "tamper-only") || !strings.Contains(err.Error(), tc.want.Error()) {
+				t.Fatalf("recovery refusal = %v", err)
+			}
+			if errors.Is(tc.want, sealchain.ErrNewerWriter) && !strings.Contains(err.Error(), "amq-squad up --binary <that build>") {
+				t.Fatalf("newer-writer refusal lacks install command: %v", err)
+			}
+			if !bytes.Equal(beforeBody, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(beforeHead, f.headBytes()) {
+				t.Fatal("compatibility recovery changed ledger bytes")
+			}
+			if _, statErr := os.Stat(QuarantineDir(f.root)); !os.IsNotExist(statErr) {
+				t.Fatalf("compatibility recovery created a quarantine: %v", statErr)
+			}
+		})
+	}
+}
+
 func installLegacyCommitLedger(t *testing.T, f *fixture, edit func(*Ledger)) (Ledger, sealchain.Seed, *sealchain.Link) {
 	t.Helper()
 	l, err := ReadLedger(f.root, f.handle)
@@ -163,6 +195,73 @@ func TestInterruptedCommitMigrationReaderIsPureAndWriterCompletesOnce(t *testing
 	decisions := readFile(t, decisionPath)
 	if got := bytes.Count(decisions, []byte(`"kind":"ledger_layout_migrated"`)); got != 1 || !bytes.Contains(decisions, []byte(fmt.Sprintf("link %d", seal.Seq))) {
 		t.Fatalf("migration decisions = %d:\n%s", got, decisions)
+	}
+}
+
+func TestRecoveryMigratesALegacyLedgerThroughTheRawWriter(t *testing.T) {
+	f := newFixture(t)
+	_, key, legacy := installLegacyCommitLedger(t, f, nil)
+	tamperBase(t, f, f.base, '0')
+	q := f.quarantined()
+	res, err := f.recover(q.Seq, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, seal, err := sealchain.SplitRaw(readFile(t, ledgerPath(f.root, f.handle)))
+	if err != nil || seal.Seq != legacy.Seq+1 || seal.Prev != legacy.Tag || !seal.Verify(key.Key, ledgerLabel, body) {
+		t.Fatalf("recovered raw link = %+v, %v", seal, err)
+	}
+	if bytes.Contains(body, []byte(`"seal"`)) || res.NewSeq != legacy.Seq+1 {
+		t.Fatalf("legacy recovery used an embedded seal or wrong link: %+v", res)
+	}
+	decisions := readFile(t, f.root+"/extensions/amq-squad/scheduler/decisions.jsonl")
+	if got := bytes.Count(decisions, []byte(`"kind":"ledger_layout_migrated"`)); got != 1 {
+		t.Fatalf("migration decisions = %d: %s", got, decisions)
+	}
+}
+
+func TestRecoveryContinuesAfterAnInterruptedRawMigration(t *testing.T) {
+	f := newFixture(t)
+	l, key, legacy := installLegacyCommitLedger(t, f, nil)
+	interrupted := writeInterruptedCommitMigration(t, f, l, key, legacy)
+	tamperBase(t, f, f.base, '0')
+	q := f.quarantined()
+	if q.Seq != fmt.Sprint(legacy.Seq) {
+		t.Fatalf("slot seq = %s, want copied legacy head %d", q.Seq, legacy.Seq)
+	}
+	res, err := f.recover(q.Seq, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, seal, err := sealchain.SplitRaw(readFile(t, ledgerPath(f.root, f.handle)))
+	if err != nil || seal.Seq != interrupted.Seq+1 || seal.Prev != interrupted.Tag {
+		t.Fatalf("recovery after interrupted migration = %+v, %v", seal, err)
+	}
+	if res.OldSeq != interrupted.Seq || res.NewSeq != interrupted.Seq+1 {
+		t.Fatalf("recovery result = %+v", res)
+	}
+}
+
+func TestVerifiedLegacyRecoveryAlsoRecordsItsRawMigration(t *testing.T) {
+	f := newFixture(t)
+	_, key, legacy := installLegacyCommitLedger(t, f, nil)
+	original := readFile(t, ledgerPath(f.root, f.handle))
+	tamperBase(t, f, f.base, '0')
+	q := f.quarantined()
+	if err := os.WriteFile(ledgerPath(f.root, f.handle), original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res, err := f.recover(q.Seq, 1)
+	if err != nil || !res.Verified {
+		t.Fatalf("verified legacy recovery = %+v, %v", res, err)
+	}
+	body, seal, err := sealchain.SplitRaw(readFile(t, ledgerPath(f.root, f.handle)))
+	if err != nil || seal.Seq != legacy.Seq+1 || seal.Prev != legacy.Tag || !seal.Verify(key.Key, ledgerLabel, body) {
+		t.Fatalf("verified legacy raw link = %+v, %v", seal, err)
+	}
+	decisions := readFile(t, f.root+"/extensions/amq-squad/scheduler/decisions.jsonl")
+	if got := bytes.Count(decisions, []byte(`"kind":"ledger_layout_migrated"`)); got != 1 {
+		t.Fatalf("migration decisions = %d: %s", got, decisions)
 	}
 }
 

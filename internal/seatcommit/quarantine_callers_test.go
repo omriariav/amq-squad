@@ -112,6 +112,34 @@ func TestEveryLedgerWriterHasAQuarantineRow(t *testing.T) {
 	}
 }
 
+// On the 0e layout every production ledger write, including recovery, goes
+// through saveRawLedger. The legacy embedded-seal and legacy-head writers are
+// fixtures only and must not reappear in non-test seatcommit code.
+func TestLedgerProductionWritersUseOnlyTheRawPath(t *testing.T) {
+	calls, _ := packageCallGraph(t, ".")
+	if !calls["writeLedger"]["saveRawLedger"] || !calls["recoverWrite"]["saveRawLedger"] {
+		t.Fatalf("raw writer callers: writeLedger=%v recoverWrite=%v", calls["writeLedger"], calls["recoverWrite"])
+	}
+	fset := token.NewFileSet()
+	for _, name := range goFiles(t, ".") {
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			sel, ok := n.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			x, ok := sel.X.(*ast.Ident)
+			if ok && x.Name == "sealchain" && (sel.Sel.Name == "Seal" || sel.Sel.Name == "WriteHead") {
+				t.Errorf("legacy ledger writer %s at %s", sel.Sel.Name, fset.Position(sel.Pos()))
+			}
+			return true
+		})
+	}
+}
+
 // packageCallGraph parses the package's non-test files: for each function
 // (a method as Type.Name) the set of plain in-package calls in its body
 // (function literals included), and the exported functions.

@@ -69,11 +69,47 @@ type Ledger struct {
 	// branch, the base tip recorded at its dispatch and the commit the
 	// worktree was put on. CleanSeat clears it at the next lease boundary.
 	Lease *LedgerLease `json:"lease,omitempty"`
+	// Recovered is the lead's recovery this ledger version starts from
+	// (3.2.0-0c-B, RecoverLedger): the quarantined seq and slot, the
+	// digests of the refused copies and the entries carried. Only the first
+	// link of a recovered chain carries it; the next write keeps it (the
+	// chain's record of where it continued from).
+	Recovered *LedgerRecovery `json:"recovered,omitempty"`
 	// Seal is the ledger's link in its chain (the ruling of the phase 5
 	// re-pass): an HMAC tag keyed by the session seed over the ledger
 	// without its seal, its seq and the previous version's tag; the signed
 	// head under the routing directory names the link the ledger must be at.
 	Seal *sealchain.Link `json:"seal,omitempty"`
+}
+
+// LedgerRecovery is the record of a lead's recovery in the new chain's
+// first link (3.2.0-0c-B rule 3): the quarantined seq N the chain continues
+// after, the slot's path, the sha256 of the quarantined body and head (the
+// sidecar's digests, checked against the copies), who decided and why, and
+// the entries carried as "task:commit".
+type LedgerRecovery struct {
+	Seq        int       `json:"quarantine_seq"`
+	Slot       string    `json:"quarantine_path"`
+	BodySHA256 string    `json:"body_sha256,omitempty"`
+	HeadSHA256 string    `json:"head_sha256,omitempty"`
+	By         string    `json:"by"`
+	Reason     string    `json:"reason,omitempty"`
+	At         time.Time `json:"at"`
+	Carried    []string  `json:"carried,omitempty"`
+	// Verified: the document verified when the lead decided (a transient
+	// alarm, or a document put back); the record was sealed into the next
+	// link of the same body, nothing restarted and nothing carried.
+	Verified bool `json:"verified,omitempty"`
+	// Link is the seq of the link that sealed this decision (the chain's
+	// next link: the quarantined seq's, or the live chain's when Verified),
+	// so a retry reports the link written, never one rebuilt from Seq (Codex
+	// on b250b951). 0 in a record written before the field.
+	Link int `json:"link,omitempty"`
+	// Alarm is the scheduler's alarm id a decision by alarm released
+	// (RecoverOptions.Alarm): set, the record names no slot and no seq; the
+	// scheduler releases exactly that alarm's hold from it (the plan
+	// reviewer's ruling on Codex's delta pass on c267382d).
+	Alarm string `json:"alarm,omitempty"`
 }
 
 // ReasonLedgerTampered blocks a step whose commits ledger fails its tag or
@@ -303,6 +339,10 @@ type LedgerCommit struct {
 	DiffDigest     string   `json:"diff_digest,omitempty"`
 	Lines          int      `json:"lines,omitempty"`
 	Changes        []Change `json:"changes,omitempty"`
+	// Note marks an entry the lead's recovery carried from a quarantined
+	// chain ("carried from quarantine seq N", 3.2.0-0c-B); "" on an entry
+	// the commit step wrote.
+	Note string `json:"note,omitempty"`
 }
 
 // LedgerDir is the ledger directory under an AMQ session root.
@@ -486,6 +526,7 @@ func readLedger(root, handle string) (Ledger, ledgerRaw, error) {
 		if l.Handle != handle {
 			return l, raw, fmt.Errorf("commit ledger %s: %w: the seat's commit record names handle %q under schema %d written by %s", handle, sealchain.ErrSchemaMismatch, l.Handle, seal.Schema, seal.Version)
 		}
+		l.Seal = &sealchain.Link{Seq: seal.Seq, Prev: seal.Prev, Tag: seal.Tag}
 		return l, raw, nil
 	}
 	// Interrupted migration recovery: WriteRaw persisted the authenticated
@@ -505,6 +546,7 @@ func readLedger(root, handle string) (Ledger, ledgerRaw, error) {
 		if l.Handle != handle {
 			return l, raw, fmt.Errorf("commit ledger %s: %w: the seat's commit record names handle %q under schema %d written by %s", handle, sealchain.ErrSchemaMismatch, l.Handle, seal.Schema, seal.Version)
 		}
+		l.Seal = &sealchain.Link{Seq: seal.Seq, Prev: seal.Prev, Tag: seal.Tag}
 		raw.migration = &seal
 		return l, raw, nil
 	}
@@ -564,18 +606,28 @@ func writeLedger(root string, l Ledger, verb string) error {
 		layout, lerr := sealchain.HeadLayout(ledgerHeadName(l.Handle), key, headBytes)
 		migrating = lerr == nil && layout == ""
 	}
-	dir := LedgerDir(root)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+	_, err = saveRawLedger(root, key, headBytes, nil, l, migrating, time.Now())
+	return err
+}
+
+// saveRawLedger is the one raw document writer for ordinary ledger updates
+// and recovery. With prev nil it derives the predecessor from the exact head
+// bytes. Recovery supplies a predecessor already authenticated from the
+// quarantine copies, so sealchain does not reread a live head.
+func saveRawLedger(root string, key sealchain.Seed, headBytes []byte, prev *sealchain.Link, l Ledger, migrating bool, now time.Time) (sealchain.RawSeal, error) {
+	l.Schema = LedgerSchema
+	l.Seal = nil
+	if err := os.MkdirAll(LedgerDir(root), 0o700); err != nil {
+		return sealchain.RawSeal{}, err
 	}
 	body, err := json.MarshalIndent(l, "", "  ")
 	if err != nil {
-		return err
+		return sealchain.RawSeal{}, err
 	}
-	_, err = sealchain.WriteRawBeforeHead(root, ledgerHeadName(l.Handle), key, ledgerLabel, headBytes, body, BinaryVersion, LedgerSchema, func(raw []byte) error {
-		// One durable writer (2b-5): temp in the directory, fsync, rename, fsync.
+	save := func(raw []byte) error {
 		return atomicfile.Write(ledgerPath(root, l.Handle), raw, 0o600)
-	}, func(seal sealchain.RawSeal) error {
+	}
+	beforeHead := func(seal sealchain.RawSeal) error {
 		if !migrating {
 			return nil
 		}
@@ -586,8 +638,11 @@ func writeLedger(root string, l Ledger, verb string) error {
 			return afterLayoutMigrationDecision(root, l.Handle, seal.Seq)
 		}
 		return nil
-	}, time.Now())
-	return err
+	}
+	if prev != nil {
+		return sealchain.WriteRawAfter(root, ledgerHeadName(l.Handle), key, ledgerLabel, prev, body, BinaryVersion, LedgerSchema, save, beforeHead, now)
+	}
+	return sealchain.WriteRawBeforeHead(root, ledgerHeadName(l.Handle), key, ledgerLabel, headBytes, body, BinaryVersion, LedgerSchema, save, beforeHead, now)
 }
 
 func recordLayoutMigration(root, handle string, seq int) error {
