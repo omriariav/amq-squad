@@ -207,7 +207,7 @@ only exercising its happy path.
 
 The earlier `TestInterruptedExitsMigrationCompletesHeadAndLogsOnce` row is
 retained as history; the pure-reader/current-writer row immediately after it
-is the current coverage.
+is the current coverage. The old test name no longer exists in the tree.
 
 | Fix or row | Command and reverted line | First failure |
 | --- | --- | --- |
@@ -237,19 +237,18 @@ rows also mutate each body, metadata field, and delimiter independently in
 ### Follow-up round 2 release-gate revert runs
 
 The uninstall planner's third reader and the path-keyed guard were checked one
-source revert at a time. The current exported path identifier list is
-`seatcommit.LedgerDir` and `scheduler.Config.ExitsPath`; this revision has no
-other exported `seatcommit` ledger/head path or exported `schedproc` exits-path
-builder. The guard deliberately cannot recognize a filename assembled from
-multiple string literals, and it scans only Go sources below `internal/`.
+source revert at a time. At that revision the exported path identifier list was
+`seatcommit.LedgerDir` and `scheduler.Config.ExitsPath`; it had no other
+exported `seatcommit` ledger/head path or exported `schedproc` exits-path
+builder.
 
 | Fix or planted row | Command and reverted line | First failure |
 | --- | --- | --- |
-| Uninstall worktree candidates read raw commit ledgers | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/uninstall -run TestCommitLedgerWorktreeCandidatesReadRawAndLegacyLayouts -count=1`; replaced `body = split` after `sealchain.SplitRaw` with `body = raw` | `raw_commits_reader_test.go:45: raw commit ledger did not contribute retired seat worktree ...` |
+| Uninstall worktree candidates read raw commit ledgers | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/uninstall -run TestCommitLedgerWorktreeCandidatesReadRawAndLegacyLayouts -count=1`; replaced `body = split` after `sealchain.SplitRaw` with `body = raw` | `raw_commits_reader_test.go:57: raw commit ledger did not contribute retired seat worktree ...` |
 | Plant: `os.ReadFile` plus `json.Unmarshal` | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/os.ReadFile_and_json.Unmarshal' -count=1`; removed `value == "commits"` from the protected-literal predicate | `reader_guard_test.go:135: guard accepted planted protected-path use: map[]` |
 | Plant: `os.Open` plus `json.NewDecoder` | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/os.Open_and_json.NewDecoder' -count=1`; removed `strings.Contains(value, "scheduler/exits.json")` from the protected-literal predicate | `reader_guard_test.go:135: guard accepted planted protected-path use: map[]` |
 | Plant: path literal in one function and decode in a helper | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/literal_and_decode_split_across_helpers' -count=1`; removed `value == "commits"` from the protected-literal predicate | `reader_guard_test.go:135: guard accepted planted protected-path use: map[]` |
-| Plant: `seatcommit.LedgerDir` and decode in a helper | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/exported_ledger_path_and_decode_helper' -count=1`; removed the `seatcommit.LedgerDir` selector clause | `reader_guard_test.go:135: guard accepted planted protected-path use: map[]` |
+| Plant: `seatcommit.LedgerDir` and decode in a helper | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/exported_ledger_path_and_decode_helper' -count=1`; removed `n.Sel.Name == "LedgerDir"` from the predicate that accepted any selector named `LedgerDir` or `ExitsPath` (and accepted a keyed field named `ExitsPath`) | `reader_guard_test.go:135: guard accepted planted protected-path use: map[]` |
 
 The focused uninstall and guard tests, the touched package suites,
 `go test ./internal/cli -count=1`, `go build ./...`, and `go vet ./...` all
@@ -259,6 +258,85 @@ and `AMQ_*` session variables removed. Before that clean run, the unmodified
 host Python stopped `skills-check` at its documented PyYAML prerequisite, and
 the pinned live-session variables made isolated Buzz fixtures refuse their
 temporary roots; neither stop was a repository failure.
+
+### Follow-up round 3: whole-file guard and receiver-qualified inventory
+
+The guard scans package-level constants and variables as well as function
+declarations. A package declaration that holds a protected literal is itself a
+declared use, and its name becomes protected throughout that package. An
+exported protected declaration is recognized through selectors in other
+packages. A package-level function literal is scanned under its variable name.
+Named functions and methods use `file:function`, `file:receiver.method`, or
+`file:(*receiver).method`, so one method can no longer hide another method with
+the same name.
+
+The exported identifier list at this head is `seatcommit.LedgerDir`,
+`seatcommit.QuarantineDir`, and `scheduler.Config.ExitsPath`. The scanner
+recognizes any selector with one of the names `LedgerDir`, `QuarantineDir`, or
+`ExitsPath`, plus a keyed field named `ExitsPath`. There is no external
+`QuarantineDir` use at this head.
+
+| Guard key | Kind | Why it holds or references the protected path |
+| --- | --- | --- |
+| `internal/mergetrain/gh.go:(*GH).Checks` | non-reader | Builds GitHub commits API URLs, not sealed-document paths. |
+| `internal/mergetrain/gh.go:(*GH).FirstParent` | non-reader | Builds a GitHub commits API URL, not a sealed-document path. |
+| `internal/releaseflow/gh.go:(*GH).CommitExists` | non-reader | Builds a GitHub commits API URL, not a sealed-document path. |
+| `internal/schedproc/process.go:Run` | non-reader | Constructs `scheduler.Config.ExitsPath`; the scheduler owns the reader. |
+| `internal/status/collect.go:pushURLMissing` | reader | Reads commit ledgers for status and calls `sealchain.SplitRaw`. |
+| `internal/uninstall/busy.go:commitSteps` | reader | Reads the exits ledger for the busy check and calls `sealchain.SplitRaw`. |
+| `internal/uninstall/plan.go:(*plan).commits` | reader | Reads commit ledgers for worktree candidates and calls `sealchain.SplitRaw`. |
+| `internal/uninstall/plan.go:(*plan).scheduler` | non-reader | Classifies `exits.json` for removal. |
+| `internal/uninstall/plan.go:discover` | non-reader | Consults the protected-name tables and classifies the commits directory for removal. |
+| `internal/uninstall/plan.go:sealNote` | non-reader declaration | Maps sealed directory names to removal-plan descriptions. |
+| `internal/uninstall/plan.go:sealedNames` | non-reader declaration | Lists sealed directory names for removal-plan classification. |
+
+The limits remain for 3.2.x beside the decision-log guard's limits. The guard
+does not recognize a filename split across literals, a path carried in a
+struct field or a variable other than the listed identifiers, or sources
+outside `internal/`. A declared non-reader's kind rests on review; the guard
+does not prove that a non-reader decodes nothing.
+
+#### Round 3 guard revert runs
+
+Each mutation was applied alone and restored before the next command. All
+eleven planted rows pass after the fixes.
+
+| Planted row | Command and reverted line | First failure |
+| --- | --- | --- |
+| Package-level const and its reading function | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/package_const_and_reading_function' -count=1`; added `true ||` to the `protectedDeclarationNames` initializer predicate | `reader_guard_test.go:177: guard problems = [stale declared protected-path use plant.go:exitsName stale declared protected-path use plant.go:read] ...; uses=map[]` |
+| Package-level var holding a function literal | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/package_var_function_literal' -count=1`; replaced `uses[name.Name] = nodeCalls(literal.Body, "sealchain", "SplitRaw")` with `_ = literal` | `reader_guard_test.go:177: guard problems = [stale declared protected-path use plant.go:read] ...; uses=map[]` |
+| Same-named methods retain their receivers | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/same-named_methods_keep_receiver' -count=1`; replaced the receiver-qualified return with `return function.Name.Name` | `reader_guard_test.go:177: guard problems = [... undeclared protected-path use plant.go:read] ...; uses=map[read:true]` |
+| Declared reader loses `SplitRaw` | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/declared_reader_loses_SplitRaw' -count=1`; changed `if entry.reader && !split` to `if false && entry.reader && !split` | `reader_guard_test.go:177: guard problems = [], want "declared reader does not call sealchain.SplitRaw plant.go:read"; uses=map[read:false]` |
+| Stale declared entry | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/stale_declared_entry' -count=1`; changed the stale check from `!ok` to `false && !ok` | `reader_guard_test.go:177: guard problems = [], want "stale declared protected-path use plant.go:read"; uses=map[]` |
+| Declared entry has no explanation | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/declared_entry_without_explanation' -count=1`; changed `if entry.note == ""` to `if false && entry.note == ""` | `reader_guard_test.go:187: guard problems = [], want "declared protected-path use has no explanation plant.go:classify"; uses=map[classify:false]` |
+| `QuarantineDir` slot reader | `env GOCACHE=/tmp/amq-reviewer-gocache go test ./internal/sealchain -run 'TestExternalSealedDocumentPathGuardRejectsPlantedUses/QuarantineDir_slot_reader' -count=1`; removed `"QuarantineDir": true` from `protectedSelectorNames` | `reader_guard_test.go:177: guard problems = [stale declared protected-path use plant.go:read] ...; uses=map[]` |
+
+### Release note
+
+The rc.2 release PR should replace #930's sentence, “Uninstall recognizes idle
+and active commit queues from the raw-layout exits ledger, and worktree
+candidates from raw-layout commit ledgers, while retaining its malformed-file
+refusal,” with: “Uninstall recognizes idle and active commit queues from the
+raw-layout exits ledger, retaining the busy check's malformed-file refusal,
+and lists worktree candidates from raw-layout commit ledgers while skipping
+malformed commit ledgers.” The refusal is `busy.go:138-139`; candidate listing
+skips a malformed commit ledger at `plan.go:348`.
+
+#### Round 3 verification
+
+All commands ran in the seat sandbox except the repository-wide test, which
+used the required temporary Unix-socket permission with the harness's `AM_*`
+and `AMQ_*` session variables removed.
+
+- `go build ./...` and `go vet ./...` exited 0. Build emitted the host's
+  non-fatal read-only module stat-cache warning and still exited 0.
+- `go test ./internal/sealchain/... ./internal/uninstall/...
+  ./internal/status/... -count=1` exited 0: sealchain 0.807 s, uninstall
+  50.623 s, and status 81.288 s.
+- `go test ./... -count=1` exited 0. Relevant package times included
+  sealchain 5.410 s, uninstall 139.554 s, status 169.550 s, seatcommit
+  240.750 s, mergetrain 285.876 s, and cli 194.013 s.
+- `git diff --check` and the declared-file scope check passed.
 
 ## Round 3 locked-writer rows
 
@@ -438,14 +516,16 @@ the exact PR head.
 
 ## Release-gate follow-up: every sealed-file reader uses the raw split
 
-Uninstall's anchored `commitSteps` read and status's `pushURLMissing` read now
-pass the bytes through `sealchain.SplitRaw`. A split success decodes the body;
-a split failure falls back to the legacy single-JSON layout. Uninstall remains
-fail closed when neither layout parses. Status still omits an unreadable entry,
-but it no longer silently loses the D1 warning for a valid raw-layout commit
-ledger. The repository source guard lists the two external readers by file and
-function and rejects a direct decoder for either protected path. The allowed
-sealchain, seatcommit and scheduler packages remain the layout owners.
+Uninstall's anchored `commitSteps` and `(*plan).commits` reads, and status's
+`pushURLMissing` read, now pass the bytes through `sealchain.SplitRaw`. A split
+success decodes the body; a split failure falls back to the legacy single-JSON
+layout. The busy check remains fail closed when neither exits layout parses.
+Worktree candidate listing and status skip a malformed commit ledger. Status
+no longer silently loses the D1 warning for a valid raw-layout commit ledger.
+The repository source guard lists the three external readers by file and
+receiver-qualified function and rejects an undeclared reader or a declared
+reader without the shared split. The allowed sealchain, seatcommit and
+scheduler packages remain the layout owners.
 
 The migration decision scan now uses `bufio.Reader.ReadBytes`, so a JSONL line
 has no Scanner token ceiling. A matching record at an unterminated EOF is
