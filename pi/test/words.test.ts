@@ -653,9 +653,24 @@ test("row 4: a seat's stop and the train's stop say what happened and what to do
 		assert.ok(l.includes("; "), `${kind} says no what to do: ${l}`);
 	}
 	assert.equal(trainStop("refusal PR #812 ci_green: a required check failed"), "the merge train stopped at PR #812: its CI is not green; fix the failing check and the train tries again");
-	// the plan reviewer on #873: a seat branch is never rebased by hand; the
-	// strict up-to-date rule's remedy is the lead's
-	assert.equal(trainStop("refusal PR #9 strict_required_status_checks_policy: the branch is behind and the train cannot bring it up to date: x"), "the merge train stopped at PR #9: its branch is behind its base; the train brings it up to date and waits for its checks; if the train cannot, reset the task so a seat redoes it on the current base");
+	// The screen is capped at 200 characters. Keep the full round-one words
+	// in the decision detail and plan text, and render these bounded lead
+	// instructions above the rule.
+	const screenStops = [
+		[trainStop("refusal PR #9 strict_required_status_checks_policy: x"), "#9: GitHub's up-to-date rule refused it; no gate overrides it. Run the train again; if it repeats, the lead redoes the task.", "no gate overrides it"],
+		[trainStop("refusal PR #9 update_conflict: x"), "#9 conflicts with the base; no gate overrides it. The lead redoes the task (a seat never merges the base by hand).", "a seat never merges the base by hand"],
+		[trainStop("refusal PR #9 pr_state: PR #9 was already merged at another head (merge abc, bound head def); nothing to land; the lead checks task t115's record against what merged."), "#9 was already merged at another head; nothing to land. The lead checks task t115's record.", "nothing to land"],
+		[trainStop("refusal PR #9 pr_head_moved,strict_required_status_checks_policy: x"), "#9: GitHub's up-to-date rule refused it; no gate overrides it. Run the train again; if it repeats, the lead redoes the task.", "no gate overrides it"],
+		[trainStop("refusal PR #9 ci_green,update_conflict: x"), "#9 conflicts with the base; no gate overrides it. The lead redoes the task (a seat never merges the base by hand).", "a seat never merges the base by hand"],
+		[trainStop("refusal PR #9 ci_green,pr_head_moved,update_conflict: x"), "#9 conflicts with the base; no gate overrides it. The lead redoes the task (a seat never merges the base by hand).", "a seat never merges the base by hand"],
+		[trainStop("refusal PR #9 ci_green,pr_state: PR #9 is CLOSED"), "the merge train stopped at PR #9: its CI is not green; fix the failing check and the train tries again", "its CI is not green"],
+	] as const;
+	for (const [got, want, phrase] of screenStops) {
+		assert.equal(got, want);
+		assert.ok(got.length < 200, got);
+		assert.ok(got.includes(phrase), got);
+	}
+	assert.equal(trainRunWords("reconcile_read_failed"), "could not read one PR while reconciling it and continued with the others");
 	// #874: the seat's patch moved during the train's update; the remedy is the lead's
 	assert.equal(trainStop("refusal PR #9 rebase_patch_changed: the seat patch changed: x"), "the merge train stopped at PR #9: its change moved during the update; reset the task so a seat redoes it on the current base");
 	for (const r of Object.keys(TRAIN_RULE_WORDS)) assert.equal(codeIn(trainStop(`refusal PR #9 ${r}: x`)), "", r);

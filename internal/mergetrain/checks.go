@@ -37,6 +37,9 @@ const (
 	// rejected asynchronously leaves the head unmoved); nothing is bound
 	// (brief 3.2.0-3a item 1).
 	RuleUpdateUnconfirmed = "branch_update_unconfirmed"
+	// RuleUpdateConflict means GitHub could not update a branch because it
+	// conflicts with the base. No owner gate can make that update safe.
+	RuleUpdateConflict = "update_conflict"
 )
 
 // Refusal is one failed rule for one PR.

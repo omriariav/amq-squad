@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -41,6 +42,7 @@ func (t *Train) updateWait() time.Duration {
 func (t *Train) readUpdatedHead(ctx context.Context, repository string, pr int, pinned string) (cur PRInfo, moved bool, err error) {
 	deadline := t.now().Add(t.updateWait())
 	backoff := time.Second
+	var nonDefiniteErr error
 	for {
 		// each read runs under the remaining wait (Codex's re-pass on #903:
 		// a stalled gh must not hang past the deadline); a read that times
@@ -53,21 +55,27 @@ func (t *Train) readUpdatedHead(ctx context.Context, repository string, pr int, 
 		cur, err = t.Forge.PR(readCtx, repository, pr)
 		timedOut := readCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil // the read's own deadline, whatever gh's error says (a gh killed by it returns an exit error)
 		cancel()
+		if err != nil && ctx.Err() != nil {
+			return PRInfo{HeadSHA: pinned}, false, nil
+		}
 		if err != nil && !timedOut {
-			return PRInfo{}, false, err
+			if _, definite := definiteHTTP4xx(err); definite {
+				return PRInfo{}, false, err
+			}
+			nonDefiniteErr = err
 		}
 		if err == nil && cur.HeadSHA != pinned {
 			return cur, true, nil
 		}
 		if err != nil {
-			cur = PRInfo{HeadSHA: pinned} // the poll timed out: unmoved for this poll
+			cur = PRInfo{HeadSHA: pinned} // a failed poll is not evidence that the head moved
 		}
 		remaining = deadline.Sub(t.now())
 		if remaining <= 0 {
-			return cur, false, nil
+			return cur, false, nonDefiniteErr
 		}
 		if !t.sleepOrDone(ctx, min(backoff, remaining)) { // the one guard on the context: a done context ends the wait here
-			return cur, false, nil
+			return cur, false, nonDefiniteErr
 		}
 		backoff = min(2*backoff, 16*time.Second)
 	}
@@ -107,7 +115,7 @@ func (t *Train) sleepOrDone(ctx context.Context, d time.Duration) bool {
 // one. The wrappers are gh's own, version by version: a gh that changes
 // them falls to ambiguous, the safe side.
 func definiteRefusal(err error) bool {
-	if strings.Contains(strings.ToLower(err.Error()), "(http 4") {
+	if _, ok := definiteHTTP4xx(err); ok {
 		return true
 	}
 	var ge *GHError
@@ -124,6 +132,43 @@ func definiteRefusal(err error) bool {
 		}
 	}
 	return false
+}
+
+// definiteHTTP4xx returns an HTTP client status only when gh printed it in
+// one of the two exact wrapper forms refusalMessage accepts. Text from this
+// package's error wrapper, a bare "gh: HTTP 422" line, or an unfamiliar gh
+// shape is not enough: those forms stay on the safe, unknown side.
+func definiteHTTP4xx(err error) (int, bool) {
+	var ge *GHError
+	if !errors.As(err, &ge) {
+		return 0, false
+	}
+	msg, ok := refusalMessage(ge.Stderr)
+	if !ok {
+		return 0, false
+	}
+	m := httpStatusMessageRe.FindStringSubmatch(msg)
+	if m == nil {
+		return 0, false
+	}
+	status, parseErr := strconv.Atoi(m[1])
+	return status, parseErr == nil && status >= 400 && status <= 499
+}
+
+var httpStatusMessageRe = regexp.MustCompile(`(?i)^.+ \(HTTP ([0-9]{3})\)$`)
+
+// updateConflict recognizes GitHub's explicit answer that a branch update
+// cannot be performed because the PR conflicts with its base. This is kept
+// separate from definiteRefusal because its outcome is a typed, unliftable
+// refusal rather than a run-wide error.
+func updateConflict(err error) bool {
+	var ge *GHError
+	if errors.As(err, &ge) {
+		if msg, ok := refusalMessage(ge.Stderr); ok && strings.EqualFold(msg, "Pull request is not mergeable") {
+			return true
+		}
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "rebase conflict")
 }
 
 // refusalMessage strips one of gh's two documented error wrappers, each
@@ -346,14 +391,11 @@ func pushedAfter(at, since string) bool {
 // (pr_head_moved, force_push): a force push with no train request on record
 // is exactly the event pr_head_moved exists to stop, and the owner's identity
 // on the push does not tell the train's push from the owner's own hand.
-func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip string, ci []RequiredCheck, entry func(Entry) error) error {
+func (t *Train) reconcileUpdates(req *Request, baseTip string, ci []RequiredCheck, reads *recoveryPRReader) error {
 	if t.Binder == nil || t.Tasks == nil {
 		return nil
 	}
-	entries, err := t.Audit.Read()
-	if err != nil {
-		return err
-	}
+	entries, entry, ctx := reads.entries, reads.entry, reads.ctx
 	for i := range req.PRs {
 		it := &req.PRs[i]
 		if it.BoundHead == "" {
@@ -363,9 +405,12 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 		if !ok {
 			continue
 		}
-		cur, err := t.Forge.PR(ctx, req.Repository, it.Number)
+		cur, read, err := reads.read(*it, "recovering its update")
 		if err != nil {
-			return fmt.Errorf("read PR #%d while reconciling its update: %w", it.Number, err)
+			return err
+		}
+		if !read {
+			continue
 		}
 		if cur.HeadSHA == it.BoundHead {
 			continue // the update never landed (or was refused unconfirmed): the check decides
@@ -388,7 +433,14 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 		bases := []baseCandidate{{requested.BaseSHA, "the journaled base tip"}, {baseTip, "the base's current tip"}}
 		proof, why, err := proveUpdate(ctx, t.Forge, req.Repository, cur, it.BoundHead, cur.HeadSHA, bases, requested.At, until)
 		if err != nil {
-			return err
+			skip, handled := t.preMutationReadFailure(entry, *it, "proving its journaled update", err)
+			if handled != nil {
+				return handled
+			}
+			if skip {
+				reads.skipped[it.Number] = true
+				continue
+			}
 		}
 		if why != "" {
 			if err := entry(Entry{Kind: "reconcile", PR: it.Number, Task: it.Task, Head: it.BoundHead, NewHead: cur.HeadSHA,
@@ -417,7 +469,9 @@ func (t *Train) reconcileUpdates(ctx context.Context, req *Request, baseTip stri
 			return bindingError(it.Task, cur.HeadSHA, err)
 		}
 		it.BoundHead = cur.HeadSHA
-		t.waitCI(ctx, req.Repository, cur.HeadSHA, ci)
+		if err := t.waitCI(ctx, req.Repository, cur.HeadSHA, ci); err != nil {
+			return t.postMutationReadFailure(it.Number, err)
+		}
 	}
 	return nil
 }
