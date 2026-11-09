@@ -240,3 +240,55 @@ exact replacement PR head after the harness creates it.
 The 12 changed paths are all inside the task's declared set. The PyYAML stop
 is a host dependency failure after the source gates above, not a product test
 failure; later make targets did not run in that invocation.
+
+## Release-gate follow-up after round four
+
+After #925 merged as `2c15bdfe`, the merge train refused #926 because one
+release-notes hunk conflicted with the base. Lead PR #927 replaced it with a
+merge of v3 into #926 head `45c950f7` that kept both bullets (`e8ad416f`), then
+changed "Four fixes" to "Five fixes" (`aad1acc4`). #927 merged as `742b63d3`.
+The plan reviewer accepted two proofs instead of another Codex pass: the merge
+tree differed from Git's plain three-way merge only by the three conflict-marker
+lines, and 11 of #926's 12 files had equal per-file patch IDs against the two
+bases, with the release notes accounted for. GitHub marked #926 merged at the
+same moment, `2026-11-09T20:53:27Z`, with merge commit `742b63d3`, because
+#927's merge contains #926's head. No train run or merge request named #926;
+t120 remains completed and bound to #926.
+
+The plan reviewer deliberately relaxed the last-round rule for the cancellation
+exit because its only effect was the wrong operator wording after cancellation:
+the journal entry remained intact and the next run recovered it. The correction
+is still a release gate before any tag.
+
+There is one deliberate safe-direction exception to the round-four boundary
+sentence. `waitCI` inside `reconcileUpdates` is a recovery path, so a
+non-definite Checks error could be skipped under the general pre-mutation rule,
+but it ends the whole run in the recovery words instead. Nothing merges.
+
+### Follow-up revert runs
+
+Each mutation was applied alone and restored before the next command.
+
+| Row | Command and exact rollback | First failing line |
+| --- | --- | --- |
+| Cancellation preserves an earlier non-definite read error | `go test ./internal/mergetrain -run '^TestUpdatedHeadCancellationKeepsAnEarlierReadError$' -count=1`; restored `return PRInfo{HeadSHA: pinned}, false, nil` on the cancelled-read exit | `train_gates_320_test.go:581: cancel after earlier read error = reads 2, err <nil>`; the run reported `branch_update_unconfirmed` instead of the recovery words |
+| land derives the check phase from this run's rebase | `go test ./internal/mergetrain -run '^TestEveryForgeReadDeclaresItsMutationBoundary$' -count=1`; replaced `readPhaseForRebase(rebase)` with the constant `readPhasePostMutation` | `train_gates_320_test.go:406: land calls checkPR with phase readPhasePostMutation, want readPhaseForRebase(rebase)` |
+
+The cancellation row also proves the unchanged inverse: cancellation with no
+earlier read error returns the pinned, unmoved outcome and no error.
+
+### Follow-up gate record
+
+Seat gates ran unlocked in the sandbox. The lead reruns locked gates on the
+exact PR head after the harness creates it.
+
+| Gate | Exit | Result |
+| --- | ---: | --- |
+| Restored cancellation rows, phase helper and source guard | 0 | `internal/mergetrain`, 1.432 s |
+| `go test ./internal/mergetrain -count=1` | 0 | `ok`, 329.057 s |
+| Scrubbed-environment `go test ./internal/cli -count=1` | 0 | `ok`, 61.480 s |
+| `go build ./...`, `go vet ./...`, `git diff --check` | 0 | passed; build emitted only the non-fatal read-only module stat-cache warning |
+| Fully AMQ-scrubbed `make ci` | 2 | repository-wide vet and every Go package passed, including `internal/mergetrain` in 294.393 s; README and skills HTML were in sync; `skills-check` then stopped because PyYAML is not installed (`pip3 install pyyaml`) |
+
+The PyYAML stop is a host dependency after the source gates, not a product
+test failure. Later make targets did not run in that invocation.
