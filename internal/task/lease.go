@@ -451,6 +451,22 @@ func (s Store) NormalizeLeasesNoWait(now time.Time) ([]LeaseNormalization, error
 	return s.normalizeLeases(s.updateNoWait, now)
 }
 
+// stampLegacyBudgetEnd gives an unstamped live attempt the later of its
+// original task allowance and one lease from the upgrade. The one-lease
+// grace is shared by normalization and a lead extension that wins the race
+// with normalization.
+func stampLegacyBudgetEnd(t *Task, now time.Time) bool {
+	if t.Lease == nil || !t.Lease.BudgetEndsAt.IsZero() {
+		return false
+	}
+	end := t.Lease.GrantedAt.Add(t.Budget)
+	if grace := now.Add(DefaultLeaseDuration); grace.After(end) {
+		end = grace
+	}
+	t.Lease.BudgetEndsAt = end
+	return true
+}
+
 func (s Store) normalizeLeases(update func(time.Time, func(*tasks) error) error, now time.Time) ([]LeaseNormalization, error) {
 	list, err := Snapshot(s.Dir)
 	if err != nil {
@@ -474,17 +490,24 @@ func (s Store) normalizeLeases(update func(time.Time, func(*tasks) error) error,
 			if t.Lease == nil || t.State != StateInProgress || (t.Lease.Attempt != 0 && !t.Lease.BudgetEndsAt.IsZero()) {
 				continue
 			}
+			changed := false
 			if t.Budget <= 0 {
 				t.Budget = DefaultTaskBudget
+				changed = true
 			}
-			if t.Lease.Attempt == 0 {
+			if t.Lease.Attempt == 0 && t.Attempt != 0 {
 				t.Lease.Attempt = t.Attempt
+				changed = true
 			}
-			if t.Lease.BudgetEndsAt.IsZero() {
-				t.Lease.BudgetEndsAt = t.Lease.GrantedAt.Add(t.Budget)
+			if stampLegacyBudgetEnd(t, now) {
+				changed = true
 			}
 			if t.Lease.ExpiresAt.After(t.Lease.BudgetEndsAt) {
 				t.Lease.ExpiresAt = t.Lease.BudgetEndsAt
+				changed = true
+			}
+			if !changed {
+				continue
 			}
 			all.touch(t.ID)
 			out = append(out, LeaseNormalization{TaskID: t.ID, Attempt: t.Attempt, BudgetEndsAt: t.Lease.BudgetEndsAt})
@@ -573,14 +596,13 @@ func (s Store) ExtendBudget(id, actor string, by time.Duration, now time.Time) (
 		if t.Budget <= 0 {
 			t.Budget = DefaultTaskBudget
 		}
+		if t.Lease != nil {
+			stampLegacyBudgetEnd(t, now)
+		}
 		t.Budget += by
 		t.BudgetExtensions = append(t.BudgetExtensions, BudgetExtension{Actor: strings.TrimSpace(actor), At: now, By: by})
 		if t.Lease != nil {
-			if t.Lease.BudgetEndsAt.IsZero() {
-				t.Lease.BudgetEndsAt = t.Lease.GrantedAt.Add(t.Budget)
-			} else {
-				t.Lease.BudgetEndsAt = t.Lease.BudgetEndsAt.Add(by)
-			}
+			t.Lease.BudgetEndsAt = t.Lease.BudgetEndsAt.Add(by)
 		}
 		return nil
 	})

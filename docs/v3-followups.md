@@ -89,7 +89,8 @@ planning sessions that made them; nothing here is a release blocker.
   (as reported by the squad's alerts). Find which writer produced them before
   anyone clears them. Source: `Record.Validate` in
   `internal/gatestore/record.go:207-211`.
-- **rc.2:** upgrade normalisation can end a live legacy attempt on the first
+- **rc.2 (done in the t126 upgrade-normalisation PR):** upgrade
+  normalisation can end a live legacy attempt on the first
   scheduler tick. Stamp its budget end as the later of grant plus the default
   budget and now plus one lease length. Source: the legacy-lease rule in
   `docs/v3.2.0-release-notes.md:66`.
