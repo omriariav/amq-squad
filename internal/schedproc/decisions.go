@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/flock"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 )
 
@@ -102,13 +103,5 @@ func readDecisionsAt(f *os.File, off int64) ([]DecisionLine, int64, error) {
 // process, such as the session it found absent and created, or what `up`
 // stopped. One O_APPEND write per line.
 func AppendDecision(root string, at time.Time, d scheduler.Decision) error {
-	if err := os.MkdirAll(Dir(root), 0o700); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(DecisionsPath(root), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	logLine(f, at, d)
-	return f.Close()
+	return logLine(flock.JSONLWriter{Path: DecisionsPath(root)}, at, d)
 }

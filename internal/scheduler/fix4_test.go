@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 )
 
 // Tests of the 2b-2 milestone B fix commit 4 (the fourth pass on 13c1fe76).
@@ -46,6 +48,9 @@ func readExitsLedger(t *testing.T, path string) exitsLedger {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if body, _, err := sealchain.SplitRaw(raw); err == nil {
+		raw = body
 	}
 	if err := json.Unmarshal(raw, &l); err != nil {
 		t.Fatal(err)

@@ -50,7 +50,7 @@ test("the screen renders from a status fixture: the lead and the root, each bloc
 	const seats = block(lines, "seats");
 	assert.ok(seats.includes("  qa  codex gpt-5.6-sol high  idle  · up in 12.4s (over the 10s ceiling), first message 57.4s"), seats.join("\n"));
 	assert.ok(seats.includes("  scribe  claude sonnet medium  working on t2: Write the notes  · up in 4.7s"), seats.join("\n"));
-	assert.equal(seats.at(-1), "  seat old-dev did not stop cleanly after t0: the commits ledger does not verify; ask the owner to inspect the commits ledger before anything commits");
+	assert.equal(seats.at(-1), "  seat old-dev did not stop cleanly after t0: the commits ledger failed its check; ask the lead to investigate before anything commits");
 	assert.ok(seats.includes("    ! it came up in 12.4s, over the 10s ceiling (slowest step: the seat's own start); nothing to do unless it repeats, and /dismiss hides it once you know"), seats.join("\n"));
 	const tasks = block(lines, "tasks");
 	assert.ok(tasks.includes("  t1 blocked: the commit step refused it, it changed files outside its task; accept them with /widen or send it back with /reset"), tasks.join("\n"));

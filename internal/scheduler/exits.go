@@ -168,7 +168,7 @@ type exitsLedger struct {
 	// Seal: with Config.SealRoot the queue is a sealed file (the ruling of
 	// the phase 5 re-pass): an HMAC tag keyed by the session seed and a
 	// signed head, so a same-UID edit of the queue, an older copy or its
-	// removal is ledger_tampered (dispatch stops, routed to the owner).
+	// removal is ledger_tampered (dispatch stops, routed to the lead).
 	Seal *sealchain.Link `json:"seal,omitempty"`
 }
 
@@ -197,23 +197,55 @@ func (s *Scheduler) writeExits() error {
 	if !s.exitsLoaded {
 		return errExitsNotLoaded
 	}
-	l := exitsLedger{Schema: 1, Queue: append([]exitItem{}, s.exitQueue...)}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
 	if root := s.Config.SealRoot; root != "" {
+		current, err := verifyExitsLedger(root, p)
+		if err != nil {
+			return err
+		}
 		key, err := sealchain.SessionKey(root)
 		if err != nil {
 			return err
 		}
-		_, err = sealchain.Write(root, exitsHeadName, key, exitsLabel, l, func(link *sealchain.Link) error {
-			sealed := l
-			sealed.Seal = link
-			raw, _ := json.MarshalIndent(sealed, "", "  ")
+		headBytes := current.head
+		if current.migration != nil {
+			if err := recordExitsLayoutMigration(root, current.migration.Seq); err != nil {
+				return err
+			}
+			if afterExitsMigrationDecision != nil {
+				if err := afterExitsMigrationDecision(root, current.migration.Seq); err != nil {
+					return err
+				}
+			}
+			headBytes, err = sealchain.CompleteRawHead(root, exitsHeadName, key, *current.migration, time.Now())
+			if err != nil {
+				return err
+			}
+		}
+		l := exitsLedger{Schema: 1, Queue: append([]exitItem{}, s.exitQueue...)}
+		body, err := json.MarshalIndent(l, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = sealchain.WriteRawBeforeHead(root, exitsHeadName, key, exitsLabel, headBytes, body, sealchain.BinaryVersion, 1, func(raw []byte) error {
 			return atomicfile.Write(p, raw, 0o600)
+		}, func(seal sealchain.RawSeal) error {
+			if !current.legacy {
+				return nil
+			}
+			if err := recordExitsLayoutMigration(root, seal.Seq); err != nil {
+				return err
+			}
+			if afterExitsMigrationDecision != nil {
+				return afterExitsMigrationDecision(root, seal.Seq)
+			}
+			return nil
 		}, time.Now())
 		return err
 	}
+	l := exitsLedger{Schema: 1, Queue: append([]exitItem{}, s.exitQueue...)}
 	raw, _ := json.MarshalIndent(l, "", "  ")
 	// The one durable writer (P2-4 of the phase 5 re-pass): an exclusive
 	// temp file, fsync, rename, then the directory fsync, so a deferred
@@ -221,25 +253,113 @@ func (s *Scheduler) writeExits() error {
 	return atomicfile.Write(p, raw, 0o600)
 }
 
-// checkExitsSeal checks the sealed exits queue against its head: a tag or
-// chain that fails, a removed queue whose head says it existed, or a
-// missing seed is ledger_tampered.
-func (s *Scheduler) checkExitsSeal(root string, l exitsLedger, present bool) error {
+type exitsRead struct {
+	ledger    exitsLedger
+	document  []byte
+	head      []byte
+	present   bool
+	legacy    bool
+	migration *sealchain.RawSeal
+}
+
+// verifyExitsLedger is the read-only exits verifier. It accepts an authenticated
+// exact-successor raw document beside a legacy head but never completes that
+// head. Only writeExits, under the scheduler process lock, may do so.
+func verifyExitsLedger(root, path string) (exitsRead, error) {
+	var out exitsRead
+	document, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return out, fmt.Errorf("the exits ledger %s cannot be read: %v", path, err)
+	}
+	out.document, out.present = document, err == nil
+	if root == "" {
+		if !out.present {
+			return out, nil
+		}
+		if err := json.Unmarshal(document, &out.ledger); err != nil {
+			return out, fmt.Errorf("the exits ledger %s cannot be parsed: %v", path, err)
+		}
+		if out.ledger.Schema != 1 {
+			return out, fmt.Errorf("the exits ledger %s cannot be parsed: schema %d", path, out.ledger.Schema)
+		}
+		return out, nil
+	}
 	key, ok, err := sealchain.ReadKey(root)
 	switch {
 	case err != nil:
-		return fmt.Errorf("%w: the exits ledger's session seed: %v", sealchain.ErrTampered, err)
-	case !ok && present:
-		return fmt.Errorf("%w: the session seed that seals the exits ledger is gone", sealchain.ErrTampered)
+		return out, fmt.Errorf("%w: the exits ledger's session seed: %v", sealchain.ErrTampered, err)
+	case !ok && out.present:
+		return out, fmt.Errorf("%w: the session seed that seals the exits ledger is gone", sealchain.ErrTampered)
 	case !ok:
-		return nil // no seed, no queue yet: the first write seals it
-	case !present:
-		return sealchain.Absent(root, exitsHeadName, key)
+		return out, nil // no seed, no queue yet: the first write seals it
 	}
-	body := l
+	headBytes, herr := os.ReadFile(sealchain.HeadPath(root, exitsHeadName))
+	if errors.Is(herr, os.ErrNotExist) {
+		headBytes = nil
+	} else if herr != nil {
+		return out, fmt.Errorf("%w: the exits ledger head: %v", sealchain.ErrTampered, herr)
+	}
+	out.head = headBytes
+	if !out.present {
+		return out, sealchain.AbsentBytes(exitsHeadName, key, headBytes)
+	}
+	layout, err := sealchain.HeadLayout(exitsHeadName, key, headBytes)
+	if err != nil {
+		return out, err
+	}
+	if layout == sealchain.RawLayout {
+		seal, err := sealchain.CheckRaw(exitsHeadName, key, exitsLabel, "the exits ledger", document, headBytes, 1, &out.ledger)
+		if err != nil {
+			return out, err
+		}
+		if out.ledger.Schema != 1 {
+			return out, sealchain.SchemaError("the exits ledger", seal, 1, out.ledger.Schema)
+		}
+		return out, nil
+	}
+	// A crash may leave the authenticated next raw document beside its
+	// verified legacy head. Admit only that exact successor without writing.
+	// The locked writer rechecks it and durably records the migration before
+	// it completes the head.
+	if _, _, splitErr := sealchain.SplitRaw(document); splitErr == nil {
+		seal, err := sealchain.CheckRawMigration(exitsHeadName, key, exitsLabel, "the exits ledger", document, headBytes, 1, &out.ledger)
+		if err != nil {
+			return out, err
+		}
+		if out.ledger.Schema != 1 {
+			return out, sealchain.SchemaError("the exits ledger", seal, 1, out.ledger.Schema)
+		}
+		out.migration = &seal
+		return out, nil
+	}
+	if err := json.Unmarshal(document, &out.ledger); err != nil {
+		return out, sealchain.Tampered("the exits ledger", err)
+	}
+	if out.ledger.Schema != 1 {
+		return out, sealchain.Tampered("the exits ledger", fmt.Errorf("schema %d", out.ledger.Schema))
+	}
+	body := out.ledger
 	body.Seal = nil
-	return sealchain.Check(root, exitsHeadName, key, exitsLabel, l.Seal, body)
+	if err := sealchain.CheckLegacy(exitsHeadName, key, exitsLabel, out.ledger.Seal, body, headBytes); err != nil {
+		return out, err
+	}
+	out.legacy = true
+	return out, nil
 }
+
+func recordExitsLayoutMigration(root string, seq int) error {
+	_, err := sealchain.RecordLayoutMigration(
+		filepath.Join(root, "extensions", "amq-squad", "scheduler", "decisions.jsonl"),
+		"exits", "", seq,
+		fmt.Sprintf("legacy exits ledger migrated to %s at link %d", sealchain.RawLayout, seq),
+		time.Now(),
+	)
+	return err
+}
+
+// afterExitsMigrationDecision is the crash seam after the durable decision
+// and before head completion. Production leaves it nil.
+var afterExitsMigrationDecision func(root string, seq int) error
 
 // loadExits rebuilds the queue once (before adoption, else at the first
 // tick): every pending check is queued again, and a gone seat's check holds
@@ -254,35 +374,12 @@ func (s *Scheduler) loadExits() {
 		s.exitsLoaded = true
 		return
 	}
-	raw, err := os.ReadFile(p)
-	if err != nil && !os.IsNotExist(err) {
-		s.exitsErr = fmt.Errorf("the exits ledger %s cannot be read: %v", p, err)
+	read, err := verifyExitsLedger(s.Config.SealRoot, p)
+	if err != nil {
+		s.exitsErr = err
 		return
 	}
-	var l exitsLedger
-	if err == nil {
-		uerr := json.Unmarshal(raw, &l)
-		if uerr == nil && l.Schema != 1 {
-			uerr = fmt.Errorf("schema %d", l.Schema)
-		}
-		switch {
-		case uerr != nil && s.Config.SealRoot != "":
-			// A sealed record that does not decode, or carries another
-			// schema, is ledger_tampered for the owner (the fix round's
-			// item 25).
-			s.exitsErr = sealchain.Tampered("the exits ledger "+p, uerr)
-			return
-		case uerr != nil:
-			s.exitsErr = fmt.Errorf("the exits ledger %s cannot be parsed: %v", p, uerr)
-			return
-		}
-	}
-	if root := s.Config.SealRoot; root != "" {
-		if serr := s.checkExitsSeal(root, l, err == nil); serr != nil {
-			s.exitsErr = serr
-			return
-		}
-	}
+	l := read.ledger
 	s.exitsLoaded = true
 	for _, it := range l.Queue {
 		if s.exitPendingItem(it) {
@@ -293,7 +390,11 @@ func (s *Scheduler) loadExits() {
 		}
 		s.exitQueue = append(s.exitQueue, it)
 	}
-	s.saveExits()
+	if err := s.saveExits(); err != nil {
+		// The next tick re-reads and retries the locked writer. This is required
+		// when the durable migration decision landed but head completion did not.
+		s.exitsLoaded = false
+	}
 }
 
 func (s *Scheduler) exitPendingItem(it exitItem) bool {

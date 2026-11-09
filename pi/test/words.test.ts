@@ -430,7 +430,7 @@ test("row 7: a stop followed by its resolving decision no longer shows", () => {
 	// the scheduler starting again resolves its stop
 	assert.deepEqual(stopLine([dec("scheduler_stopped", "", "lead_gone: x"), dec("scheduler_started", "")]), []);
 	// a cleared newest stop leaves an older unresolved one showing
-	assert.deepEqual(stopLine([dec("exit_refused", "old", "ledger_tampered at gone"), dec("seat_gone"), dec("seat_up")]), ["  seat old did not stop cleanly: the commits ledger does not verify; ask the owner to inspect the commits ledger before anything commits"]);
+	assert.deepEqual(stopLine([dec("exit_refused", "old", "ledger_tampered at gone"), dec("seat_gone"), dec("seat_up")]), ["  seat old did not stop cleanly: the commits ledger failed its check; ask the lead to investigate before anything commits"]);
 	// Codex's sequence on #866: the seat gone, then up, then a roster launch
 	assert.deepEqual(stopLine([dec("seat_gone"), dec("seat_up"), dec("roster_launched", "")]), []);
 	// a request's stop records the task: that task dispatched resolves it
@@ -645,7 +645,7 @@ test("row 4: every seat warning code in Go's list has plain words; the code is b
 // what to do, both from the tables; its record stays verbatim below the
 // rule. The train's line likewise.
 test("row 4: a seat's stop and the train's stop say what happened and what to do", () => {
-	assert.equal(decisionWords({ kind: "exit_refused", seat: "old-dev", reason: "ledger_tampered at gone" }), "seat old-dev did not stop cleanly: the commits ledger does not verify; ask the owner to inspect the commits ledger before anything commits");
+	assert.equal(decisionWords({ kind: "exit_refused", seat: "old-dev", reason: "ledger_tampered at gone" }), "seat old-dev did not stop cleanly: the commits ledger failed its check; ask the lead to investigate before anything commits");
 	assert.equal(decisionWords({ kind: "seat_launch_failed", seat: "rev-1", reason: "x", reason_code: "version_probe_failed", stage: "apply_failed" }), "seat rev-1's launch failed: AMQ's apply failed; ask the lead to relaunch the roster");
 	for (const kind of Object.keys(DECISION_WORDS)) {
 		const l = decisionWords({ kind, seat: "dev", reason: "made_up_reason: x" });
@@ -664,6 +664,14 @@ test("row 4: a seat's stop and the train's stop say what happened and what to do
 	const rule = lines.indexOf(RULE);
 	assert.ok(lines.slice(rule).includes("  exit_refused: old-dev ledger_tampered at gone"));
 	assert.ok(!lines.some((l) => l.includes("last stop")), "our own term is back");
+});
+
+test("0e: ledger compatibility words name the recorded writer and install command", () => {
+	const detail = "newer_writer: the seat's commit record was written by a newer amq-squad (v9.1.0+build.7); install it";
+	assert.deepEqual(BLOCK_WORDS.newer_writer({ block_detail: detail }), ["the commits ledger was written by v9.1.0+build.7", "ask the owner to run amq-squad up --binary <that build>"]);
+	assert.equal(decisionWords({ kind: "newer_writer", reason: `owner: ${detail}` }), "the exits ledger was written by v9.1.0+build.7; ask the owner to run amq-squad up --binary <that build>");
+	assert.equal(decisionWords({ kind: "seat_excluded", seat: "qa", reason: detail.replace(/^newer_writer: /, ""), reason_code: "newer_writer" }), "seat qa cannot take work because its commits ledger was written by v9.1.0+build.7; ask the owner to run amq-squad up --binary <that build>");
+	assert.equal(decisionWords({ kind: "seat_excluded", seat: "qa", reason: "the authenticated document has an unknown field", reason_code: "schema_mismatch" }), "seat qa cannot take work because its commits ledger does not match the schema its writer claimed; ask the lead to investigate the writer");
 });
 
 // plainAbove is a screen's lines above its rule: every line but the header

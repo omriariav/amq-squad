@@ -172,40 +172,7 @@ func DecisionPath(root string) string { return filepath.Join(Dir(root), "decisio
 // A torn last line (a crash mid-write) is terminated first, so the new line
 // stays whole and readers skip the torn one.
 func AppendJSONL(path string, v any) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return flock.WithFile(f, path, func() error {
-		st, err := f.Stat()
-		if err != nil {
-			return err
-		}
-		line := buf.Bytes()
-		if st.Size() > 0 {
-			last := make([]byte, 1)
-			if _, err := f.ReadAt(last, st.Size()-1); err != nil {
-				return err
-			}
-			if last[0] != '\n' {
-				line = append([]byte{'\n'}, line...)
-			}
-		}
-		if _, err := f.Write(line); err != nil {
-			return err
-		}
-		return f.Sync()
-	})
+	return flock.AppendJSONL(path, v)
 }
 
 // AppendRow appends one outcome row.

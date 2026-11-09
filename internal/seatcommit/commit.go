@@ -214,10 +214,12 @@ func ExitCheck(o Options, why string) Result {
 	// The exit check runs on the scheduler's tick: it never waits for the
 	// ledger a running commit step holds, it defers (P1-1 of the second pass).
 	err := withLedgerTryLock(o.Root, o.Handle, func() error {
-		if terr := verifyEvidence(o, "exit check"); errors.Is(terr, sealchain.ErrTampered) {
-			out = res.tamperedRefusal(terr)
+		if terr := verifyEvidence(o, "exit check"); isLedgerRefusal(terr) {
+			out = res.ledgerRefusal(terr)
 			out.Detail += " (at the seat's exit: " + why + ")"
 			return nil
+		} else if terr != nil {
+			return terr
 		}
 		res.OK = true
 		out = res
@@ -235,8 +237,10 @@ func run(o Options, res Result) Result {
 	}
 	// The evidence check at every step, before anything is committed.
 	if !o.DryRun {
-		if terr := verifyEvidence(o, "commit step"); errors.Is(terr, sealchain.ErrTampered) {
-			return res.tamperedRefusal(terr)
+		if terr := verifyEvidence(o, "commit step"); isLedgerRefusal(terr) {
+			return res.ledgerRefusal(terr)
+		} else if terr != nil {
+			return res.defer_(terr.Error())
 		}
 	}
 	if o.GrantsErr != nil {
@@ -251,10 +255,8 @@ func run(o Options, res Result) Result {
 	if os.IsNotExist(err) {
 		return res.refuse(ReasonBaseUnrecorded, task.RouteLead, "no core-recorded base for seat "+o.Handle+"; the launch records it (seat commit --base SHA records one as a lead decision)")
 	}
-	if errors.Is(err, sealchain.ErrTampered) {
-		// The ledger's tag or chain failed: a block for the owner, never a
-		// pass and never a retry into the same file (ruling).
-		return res.tamperedRefusal(err)
+	if isLedgerRefusal(err) {
+		return res.ledgerRefusal(err)
 	}
 	if err != nil {
 		return res.defer_(err.Error())
@@ -895,7 +897,22 @@ func verifyEvidence(o Options, verb string) error {
 // tamperedRefusal is the owner's block for a sealed ledger or an evidence
 // ref that fails its check.
 func (r Result) tamperedRefusal(err error) Result {
-	return r.refuse(ReasonLedgerTampered, task.RouteOwner, err.Error()+"; nothing is committed or pushed until the owner inspects the commits ledger and the evidence refs")
+	return r.refuse(ReasonLedgerTampered, task.RouteOwner, err.Error()+"; nothing is committed or pushed until the lead investigates the commits ledger and the evidence refs")
+}
+
+func isLedgerRefusal(err error) bool {
+	return errors.Is(err, sealchain.ErrTampered) || errors.Is(err, sealchain.ErrNewerWriter) || errors.Is(err, sealchain.ErrSchemaMismatch)
+}
+
+func (r Result) ledgerRefusal(err error) Result {
+	switch {
+	case errors.Is(err, sealchain.ErrNewerWriter):
+		return r.refuse(ReasonNewerWriter, task.RouteOwner, err.Error()+"; nothing is committed or pushed until the owner installs the named build")
+	case errors.Is(err, sealchain.ErrSchemaMismatch):
+		return r.refuse(ReasonSchemaMismatch, task.RouteLead, err.Error()+"; nothing is committed or pushed until the lead investigates the writer")
+	default:
+		return r.tamperedRefusal(err)
+	}
 }
 
 // expireEvidence deletes the evidence refs whose retention has expired (the

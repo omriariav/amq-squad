@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 )
 
 // A tamper alarm preserves its evidence (3.2.0-0c-A). On 2026-11-05 the
@@ -90,6 +92,7 @@ type ledgerRaw struct {
 	body, head         []byte
 	hasBody, hasHead   bool
 	bodyNote, headNote string
+	migration          *sealchain.RawSeal
 }
 
 // quarantine publishes the refused document (raw: the bytes the check
@@ -378,6 +381,9 @@ func sidecarStable(b []byte) []byte {
 // head's tag may be what failed); quarantineSeqUnknown when it does not
 // decode or is absent.
 func headSeq(raw []byte) string {
+	if body, _, err := sealchain.SplitRaw(raw); err == nil {
+		raw = body
+	}
 	var h struct {
 		Seq *int `json:"seq"`
 	}
