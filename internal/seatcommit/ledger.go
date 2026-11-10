@@ -638,27 +638,32 @@ func saveRawLedgerBeforeHead(root string, key sealchain.Seed, headBytes []byte, 
 		return atomicfile.Write(ledgerPath(root, l.Handle), raw, 0o600)
 	}
 	beforeHead := func(seal sealchain.RawSeal) error {
-		if !migrating {
-			return nil
-		}
-		if err := recordLayoutMigration(root, l.Handle, seal.Seq); err != nil {
-			return err
-		}
-		if afterLayoutMigrationDecision != nil {
-			return afterLayoutMigrationDecision(root, l.Handle, seal.Seq)
+		if migrating {
+			if err := recordLayoutMigration(root, l.Handle, seal.Seq); err != nil {
+				return err
+			}
+			if afterLayoutMigrationDecision != nil {
+				if err := afterLayoutMigrationDecision(root, l.Handle, seal.Seq); err != nil {
+					return err
+				}
+			}
 		}
 		if recoveryBeforeHead != nil {
 			return recoveryBeforeHead(seal)
 		}
 		return nil
 	}
-	if recoveryBeforeHead != nil {
-		beforeHead = recoveryBeforeHead
-	}
+	var seal sealchain.RawSeal
 	if prev != nil {
-		return sealchain.WriteRawAfter(root, ledgerHeadName(l.Handle), key, ledgerLabel, prev, body, BinaryVersion, LedgerSchema, save, beforeHead, now)
+		seal, err = sealchain.WriteRawAfter(root, ledgerHeadName(l.Handle), key, ledgerLabel, prev, body, BinaryVersion, LedgerSchema, save, beforeHead, now)
+	} else {
+		seal, err = sealchain.WriteRawBeforeHead(root, ledgerHeadName(l.Handle), key, ledgerLabel, headBytes, body, BinaryVersion, LedgerSchema, save, beforeHead, now)
 	}
-	return sealchain.WriteRawBeforeHead(root, ledgerHeadName(l.Handle), key, ledgerLabel, headBytes, body, BinaryVersion, LedgerSchema, save, beforeHead, now)
+	var exhausted *sealchain.ErrSeqExhausted
+	if errors.As(err, &exhausted) {
+		return sealchain.RawSeal{}, fmt.Errorf("commit ledger %s: the ledger's sequence is exhausted: %w", l.Handle, err)
+	}
+	return seal, err
 }
 
 func recordLayoutMigration(root, handle string, seq int) error {

@@ -392,6 +392,9 @@ func recordVerified(o RecoverOptions, live Ledger, slotPath string, migrationSeq
 	if at < choice.prev.Seq {
 		return out, refuseRecover(RecoverNotTampered, "the commits ledger of seat %s verifies at link %d, behind the slot's highest sequence %d; nothing to record", o.Handle, at, choice.prev.Seq)
 	}
+	if live.Seal == nil || live.Seal.Seq == math.MaxInt {
+		return out, refuseRecover(RecoverSlotInvalid, "the commits ledger of seat %s verifies at the maximum chain sequence; no successor can be written", o.Handle)
+	}
 	if len(o.Carry) > 0 {
 		return out, refuseRecover(RecoverEntryUnknown, "the commits ledger of seat %s verifies and its entries stand; a verified recovery carries nothing", o.Handle)
 	}
@@ -617,27 +620,27 @@ func (q *quarantinedSlot) link(root, handle string) (slotLinkChoice, error) {
 	bodyRaw := false
 	if q.hasBody {
 		if _, seal, splitErr := sealchain.SplitRaw(q.body); splitErr == nil {
-			body = &sealchain.Link{Seq: seal.Seq, Prev: seal.Prev, Tag: seal.Tag}
-			bodyRaw = true
+			if plausibleCopiedSeq(seal.Seq) {
+				body = &sealchain.Link{Seq: seal.Seq, Prev: seal.Prev, Tag: seal.Tag}
+				bodyRaw = true
+			}
 		} else {
 			var l struct {
 				Seal *sealchain.Link `json:"seal"`
 			}
-			if json.Unmarshal(q.body, &l) == nil && l.Seal != nil && l.Seal.Seq > 0 && l.Seal.Tag != "" {
+			if json.Unmarshal(q.body, &l) == nil && l.Seal != nil && plausibleCopiedSeq(l.Seal.Seq) && l.Seal.Tag != "" {
 				body = l.Seal
 			}
 		}
 	}
-	if q.hasBody && body == nil {
+	if q.hasBody && body == nil && head == nil {
 		return out, refuseRecover(RecoverSeqUnknown, "%s: its body copy is neither the raw layout nor a legacy ledger with an embedded seal", q.path)
 	}
-	if !hasClaimed && head != nil {
-		claimedSeq, hasClaimed = head.Seq, true
+	if hasClaimed {
+		out.namedSeq = claimedSeq
+	} else if body != nil {
+		out.namedSeq = body.Seq
 	}
-	if !hasClaimed && body != nil {
-		claimedSeq, hasClaimed = body.Seq, true
-	}
-	out.namedSeq = claimedSeq
 	maxSeq := 0
 	setMax := func(seq int, from string) {
 		if seq > maxSeq {
@@ -661,7 +664,11 @@ func (q *quarantinedSlot) link(root, handle string) (slotLinkChoice, error) {
 		return slotLinkChoice{}, refuseRecover(RecoverSeqUnknown, "%s: neither its head copy nor its body copy names a chain link to continue after", q.path)
 	}
 	out.prev.Seq = maxSeq
-	out.migrating = head == nil || headLayout == ""
+	if head != nil {
+		out.migrating = headLayout == ""
+	} else {
+		out.migrating = body != nil && !bodyRaw
+	}
 	// A raw immediate successor under a legacy head is an interrupted
 	// migration. Its original migration record is keyed by that raw seq.
 	if head != nil && headLayout == "" && bodyRaw && body.Seq == head.Seq+1 && body.Prev == head.Tag {
@@ -678,10 +685,14 @@ func copiedHeadSeq(raw []byte) (int, bool) {
 	var h struct {
 		Seq *int `json:"seq"`
 	}
-	if len(raw) == 0 || json.Unmarshal(raw, &h) != nil || h.Seq == nil || *h.Seq <= 0 {
+	if len(raw) == 0 || json.Unmarshal(raw, &h) != nil || h.Seq == nil || !plausibleCopiedSeq(*h.Seq) {
 		return 0, false
 	}
 	return *h.Seq, true
+}
+
+func plausibleCopiedSeq(seq int) bool {
+	return seq >= 1 && seq < maxPlausibleSeq
 }
 
 // carryEntries checks each named entry against the quarantined body and

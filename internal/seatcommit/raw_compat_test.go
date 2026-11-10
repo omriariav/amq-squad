@@ -202,22 +202,21 @@ func TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence(t *testing
 	}
 }
 
-func TestRecoveryRefusesTheMaximumClaimedSequence(t *testing.T) {
+func TestRecoveryTreatsTheMaximumClaimedSequenceAsUnknown(t *testing.T) {
 	f := newFixture(t)
 	editCopiedHeadSeq(t, f, math.MaxInt)
 	tamperBase(t, f, f.base, '0')
 	q := f.quarantined()
-	bodyBefore, headBefore := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
-	_, err := f.recover(q.Seq, 1)
-	if recoverCode(t, err) != RecoverSlotInvalid || !strings.Contains(err.Error(), "maximum chain sequence") {
-		t.Fatalf("maximum seq refusal = %v", err)
+	if q.Seq != quarantineSeqUnknown {
+		t.Fatalf("slot seq = %s, want unknown", q.Seq)
 	}
-	if !bytes.Equal(bodyBefore, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(headBefore, f.headBytes()) {
-		t.Fatal("maximum-seq refusal changed the ledger")
+	res, err := f.recover(q.Seq, 1)
+	if err != nil || res.SeqFrom != "body_seal" || res.NewSeq != 2 {
+		t.Fatalf("maximum claim recovery = %+v, %v", res, err)
 	}
 }
 
-func TestRecoveryRefusesASlotBodyThatIsNeitherLayout(t *testing.T) {
+func TestRecoveryUsesAUsableHeadWhenTheBodyHasNoLink(t *testing.T) {
 	f := newFixture(t)
 	raw := readFile(t, ledgerPath(f.root, f.handle))
 	body, _, err := sealchain.SplitRaw(raw)
@@ -228,13 +227,9 @@ func TestRecoveryRefusesASlotBodyThatIsNeitherLayout(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := f.quarantined()
-	bodyBefore, headBefore := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
-	_, err = f.recover(q.Seq, 1)
-	if recoverCode(t, err) != RecoverSeqUnknown || !strings.Contains(err.Error(), "neither the raw layout nor a legacy ledger") {
-		t.Fatalf("neither-layout refusal = %v", err)
-	}
-	if !bytes.Equal(bodyBefore, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(headBefore, f.headBytes()) {
-		t.Fatal("neither-layout refusal changed the ledger")
+	res, err := f.recover(q.Seq, 1)
+	if err != nil || res.SeqFrom != "verified_head" || res.NewSeq != 2 {
+		t.Fatalf("usable-head recovery = %+v, %v", res, err)
 	}
 }
 

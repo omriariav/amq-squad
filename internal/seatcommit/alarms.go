@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/flock"
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 )
@@ -44,6 +45,11 @@ import (
 // alarmDomain is the HMAC's domain string for a line of the hold release
 // file.
 const alarmDomain = "amq-squad scheduler hold release v1"
+
+var (
+	syncAlarmFile = func(f *os.File) error { return f.Sync() }
+	syncAlarmDir  = atomicfile.SyncDir
+)
 
 // AlarmsPath is a seat's hold release file.
 func AlarmsPath(root, handle string) string {
@@ -156,7 +162,7 @@ func appendAlarm(root string, d AlarmDecision) error {
 	path := AlarmsPath(root, d.Seat)
 	// one descriptor, no link followed, no FIFO blocked on, a regular file
 	// (openAppendNoFollow); the torn-tail check reads through it
-	f, err := openAppendNoFollow(path)
+	f, created, err := openAppendNoFollow(path)
 	if err != nil {
 		return err
 	}
@@ -168,5 +174,8 @@ func appendAlarm(root string, d AlarmDecision) error {
 	if err := flock.AppendJSONLLine(f, line); err != nil {
 		return err
 	}
-	return f.Sync()
+	if created {
+		return errors.Join(syncAlarmFile(f), syncAlarmDir(filepath.Dir(path)))
+	}
+	return syncAlarmFile(f)
 }

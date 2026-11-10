@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -63,6 +62,11 @@ var BinaryVersion string
 // quarantineSeqUnknown names the quarantine of a document whose head does
 // not decode (no seq to name it by).
 const quarantineSeqUnknown = "unknown"
+
+// maxPlausibleSeq is the largest integer whose predecessor can be copied
+// through JSON implementations without losing precision. A number read from
+// refused bytes is usable only when its successor is at most this value.
+const maxPlausibleSeq = 1<<53 - 1
 
 // quarantineSlots bounds the slots of one seq (a runaway edit loop cannot
 // fill the disk).
@@ -399,16 +403,11 @@ func sidecarStable(b []byte) []byte {
 // head's tag may be what failed); quarantineSeqUnknown when it does not
 // decode or is absent.
 func headSeq(raw []byte) string {
-	if body, _, err := sealchain.SplitRaw(raw); err == nil {
-		raw = body
-	}
-	var h struct {
-		Seq *int `json:"seq"`
-	}
-	if raw == nil || json.Unmarshal(raw, &h) != nil || h.Seq == nil {
+	seq, ok := copiedHeadSeq(raw)
+	if !ok {
 		return quarantineSeqUnknown
 	}
-	return strconv.Itoa(*h.Seq)
+	return strconv.Itoa(seq)
 }
 
 // sidecar is the quarantine's record: when, which writer, which binary, the
