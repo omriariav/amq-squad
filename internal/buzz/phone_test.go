@@ -943,6 +943,9 @@ func TestTestsExecAMQOnlyThroughTheHelper(t *testing.T) {
 			return true
 		})
 	}
+	for _, name := range amqIdentityEnv {
+		t.Setenv(name, "must-not-reach-scratch-amq")
+	}
 	env := amqEnv(t, nil)
 	got := map[string]string{}
 	for _, kv := range env {
@@ -950,6 +953,11 @@ func TestTestsExecAMQOnlyThroughTheHelper(t *testing.T) {
 		got[k] = v
 	}
 	real, _ := os.UserHomeDir()
+	for _, name := range amqIdentityEnv {
+		if _, exists := got[name]; exists {
+			t.Errorf("the helper leaked %s", name)
+		}
+	}
 	if got["AMQ_NO_UPDATE_CHECK"] != "1" || got["HOME"] == "" || got["HOME"] == real || !strings.HasPrefix(got["XDG_CACHE_HOME"], got["HOME"]) || !strings.HasPrefix(got["XDG_CONFIG_HOME"], got["HOME"]) {
 		t.Fatalf("the helper's environment: HOME %q, XDG cache %q, update check %q", got["HOME"], got["XDG_CACHE_HOME"], got["AMQ_NO_UPDATE_CHECK"])
 	}

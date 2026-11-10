@@ -3,6 +3,7 @@ package buzz
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -19,13 +20,58 @@ import (
 // well inside make ci's 20 minute go test timeout.
 const runBudget = 5 * time.Minute
 
+const evidenceRunBudgetEnv = "AMQ_SQUAD_EVIDENCE_RUN_BUDGET"
+
+// effectiveRunBudget permits count-table runs to fail a reproduced hang
+// sooner. It is evidence-only: ordinary tests and gates leave the variable
+// unset and retain five minutes. A requested bound can only shorten the
+// default and never falls below three passing-run lengths.
+func effectiveRunBudget(t *testing.T) time.Duration {
+	t.Helper()
+	raw := os.Getenv(evidenceRunBudgetEnv)
+	if raw == "" {
+		return runBudget
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		t.Fatalf("%s: %v", evidenceRunBudgetEnv, err)
+	}
+	if d < 2*time.Minute {
+		return 2 * time.Minute
+	}
+	if d > runBudget {
+		return runBudget
+	}
+	return d
+}
+
 // budget returns the run's context: it ends when the test ends or the
 // budget runs out, whichever is first.
 func budget(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeoutCause(t.Context(), runBudget, fmt.Errorf("the run's %s budget ran out", runBudget))
+	limit := effectiveRunBudget(t)
+	ctx, cancel := context.WithTimeoutCause(t.Context(), limit, fmt.Errorf("the run's %s budget ran out", limit))
 	t.Cleanup(cancel)
 	return ctx
+}
+
+func TestEvidenceRunBudgetIsBoundedAndDefaultsToFiveMinutes(t *testing.T) {
+	t.Setenv(evidenceRunBudgetEnv, "")
+	if got := effectiveRunBudget(t); got != 5*time.Minute {
+		t.Fatalf("unset budget = %s", got)
+	}
+	t.Setenv(evidenceRunBudgetEnv, "1s")
+	if got := effectiveRunBudget(t); got != 2*time.Minute {
+		t.Fatalf("short budget = %s", got)
+	}
+	t.Setenv(evidenceRunBudgetEnv, "130s")
+	if got := effectiveRunBudget(t); got != 130*time.Second {
+		t.Fatalf("evidence budget = %s", got)
+	}
+	t.Setenv(evidenceRunBudgetEnv, "10m")
+	if got := effectiveRunBudget(t); got != 5*time.Minute {
+		t.Fatalf("long budget = %s", got)
+	}
 }
 
 // bell wakes waiters when what it observes changes. The zero value is

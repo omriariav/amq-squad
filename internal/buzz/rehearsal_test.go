@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -142,9 +143,16 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 		}
 		stopped = true
 		attachTree.record(attach.Process.Pid) // attach and the endpoint it started, while attach links them
-		_ = attach.Process.Signal(os.Interrupt)
 		done := make(chan error, 1)
 		go func() { done <- attach.Wait() }()
+		if t.Failed() {
+			// A hung external attachment otherwise leaves only its last JSON
+			// row. SIGQUIT makes the Go binary print every goroutine before it
+			// exits, naming the exact operation that stopped the tick loop.
+			_ = attach.Process.Signal(syscall.SIGQUIT)
+		} else {
+			_ = attach.Process.Signal(os.Interrupt)
+		}
 		select {
 		case <-done:
 		case <-time.After(20 * time.Second):
@@ -186,8 +194,47 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 		return e.ID
 	}
 	prefix := strings.TrimPrefix(raised.Data.Gate.Digest, "sha256:")[:16]
-	dm("approve g45-owner-01 release "+prefix, raised.Data.QuestionEventID)
-	await(ctx, t, &relay.bell, "the attach verifies the thread answer", func() bool { return strings.Contains(aout.String(), `"outcome":"approved"`) })
+	timeline := startMailboxTimeline(ctx, filepath.Join(home, ".amq-squad", "buzz", "root"), MailboxHandle)
+	timelineLogged := false
+	t.Cleanup(func() {
+		trace := timeline.finish()
+		if t.Failed() && !timelineLogged {
+			t.Logf("mailbox timeline before the thread-answer hang (names and times only):\n%s", trace)
+		}
+	})
+	firstAnswerID := dm("approve g45-owner-01 release "+prefix, raised.Data.QuestionEventID)
+	approved := func() bool { return strings.Contains(aout.String(), `"outcome":"approved"`) }
+	if evidenceAnswerAgain() {
+		if !awaitWithin(ctx, &relay.bell, 2*time.Minute, approved) {
+			trace := timeline.finish()
+			timelineLogged = true
+			t.Logf("mailbox timeline before answer again (names and times only):\n%s", trace)
+			shareRoot := filepath.Join(home, ".amq-squad", "buzz", "root")
+			buzzDir := filepath.Join(home, ".amq-squad", "buzz")
+			connections := relay.connectionTotal()
+			captureOwnerHang(t, "before answer again", shareRoot, buzzDir, relay, attach.Process.Pid)
+			restarted := awaitWithin(ctx, &relay.bell, 10*time.Second, func() bool { return relay.connectionTotal() > connections })
+			secondTimeline := startMailboxTimeline(ctx, shareRoot, MailboxHandle)
+			secondAnswerID := dm("approve g45-owner-01 release "+prefix, raised.Data.QuestionEventID)
+			handled := awaitWithin(ctx, &relay.bell, 2*time.Minute, approved)
+			secondTrace := secondTimeline.finish()
+			captureOwnerHang(t, "after answer again", shareRoot, buzzDir, relay, 0)
+			outcomes := strings.Count(aout.String(), `"outcome":"approved"`)
+			t.Logf("answer again: first_event=%s second_event=%s serve_restarted=%t handled=%t approved_outcomes=%d mailbox timeline (names and times only):\n%s",
+				firstAnswerID, secondAnswerID, restarted, handled, outcomes, secondTrace)
+			if !handled {
+				t.Fatalf("hung: no signal for %q after the second owner answer", "the attach verifies the thread answer")
+			}
+			if outcomes != 1 {
+				t.Fatalf("answer again recorded %d approved outcomes, want exactly one", outcomes)
+			}
+		}
+	} else {
+		await(ctx, t, &relay.bell, "the attach verifies the thread answer", approved)
+	}
+	if !timelineLogged {
+		_ = timeline.finish()
+	}
 	t.Logf("MEASURED (rehearsal, local relay): raise to verified through remote attach %s (tick 1 s)", time.Since(tRaise).Round(time.Millisecond))
 	// 5.3
 	if r := sh("5.3 gate status", amqSquad, "gate", "status", "--project", p, "--session", "owner45", "--gate", "g45-owner-01", "--json"); r.rc != 0 || !strings.Contains(r.out, "accepted") {

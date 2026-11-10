@@ -119,6 +119,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the owner script is bash")
 	}
+	scrubAMQIdentity(t)
 	home := shortTempDir(t) // the endpoint socket path must fit sun_path (104 bytes)
 	pm := realTempDir(t)    // the password manager stand-in, outside HOME
 	bin := filepath.Join(home, "bin")
@@ -177,10 +178,25 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	t.Cleanup(func() { stopPID(filepath.Join(buzzDir, "enroll-up.pid")) })
 	t.Cleanup(func() {
 		if t.Failed() {
-			for _, p := range []string{filepath.Join(shareRoot, "attach", "up.log"), filepath.Join(buzzDir, "doctor.json")} {
-				data, _ := os.ReadFile(p)
-				t.Logf("%s:\n%s", p, data)
+			rows, err := (AMQInbox{Root: shareRoot, Handle: MailboxHandle}).New(context.Background())
+			t.Logf("failure-time attach inbox list: %+v, %v", rows, err)
+			for _, dir := range []string{
+				filepath.Join(shareRoot, "agents", MailboxHandle, "inbox", "new"),
+				filepath.Join(shareRoot, "agents", MailboxHandle, "inbox", "cur"),
+				filepath.Join(shareRoot, "agents", MailboxHandle, "dlq", "new"),
+				filepath.Join(shareRoot, "agents", MailboxHandle, "dlq", "cur"),
+				filepath.Join(shareRoot, "agents", CarrierHandle, "inbox", "new"),
+				filepath.Join(shareRoot, "agents", CarrierHandle, "inbox", "cur"),
+				filepath.Join(shareRoot, "extensions", "remote", "mailbox", DefaultShareSession),
+			} {
+				entries, readErr := os.ReadDir(dir)
+				var names []string
+				for _, entry := range entries {
+					names = append(names, entry.Name())
+				}
+				t.Logf("failure-time directory %s: %v, %v", dir, names, readErr)
 			}
+			captureOwnerHang(t, "failure-time", shareRoot, buzzDir, relay, 0)
 		}
 	})
 

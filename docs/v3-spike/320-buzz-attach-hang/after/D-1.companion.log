@@ -1,0 +1,86 @@
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.397s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	0.696s
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	0.966s
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	1.236s
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	1.510s
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	1.895s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	86.479s
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	2.313s
+ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	2.697s
+warning: amq-squad: --session "stream1" implies --root .agent-mail/stream1; ignoring conflicting --root "/ignored".
+warning: amq-squad: --session "stream1" implies --root .agent-mail/stream1; ignoring conflicting --root "/p/.agent-mail".
+wrote brief /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestBriefSeedFromRefusesOverwriteWithoutForce484052908/001/.amq-squad/briefs/issue-96.md
+Sent gate raise to user on gate/release-safe: q-safe
+Sent operator answer to cto on gate/release-safe: a-safe
+--- FAIL: TestContextReportsSeededRoleRulesTaskAndGates (1.64s)
+    hook_verbs_test.go:241: warnings = [rules changed since launch: recorded sha256:98ff584cad5f09c6111805482fb11addbfe2680b869e89914310d05aaed38841, now sha256:5eb2e49f18743e5caa974cab81ea4ccd2f409980ff63d745d5eaf3923e307db6]
+--- FAIL: TestContextWithoutLaunchRecordHasNoTaskAndRulesFromEnv (0.20s)
+    hook_verbs_test.go:264: warnings = [role: open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestContextWithoutLaunchRecordHasNoTaskAndRulesFromEnv2264355848/001/project/.agent-mail/s1/agents/cto/extensions/io.github.omriariav.amq-squad/role.md: no such file or directory rules changed since launch: recorded sha256:98ff584cad5f09c6111805482fb11addbfe2680b869e89914310d05aaed38841, now sha256:454349e422f05297191ead13e21d3db520e5abef52055e4964b82fb213f593a1], want the missing role only
+sh: 3: Bad file descriptor
+Added t1 "unchanged context": pending
+amq-squad lead: model ollama/qwen3.6:27b (fallback: no registry (run amq-squad doctor --write-registry))
+amq-squad lead: model ollama/qwen3.6:27b (fallback: no registry (run amq-squad doctor --write-registry))
+amq-squad lead: model ollama/qwen3.6:27b (fallback: no registry (run amq-squad doctor --write-registry))
+amq-squad lead: model ollama/qwen3.6:27b (fallback: no registry (run amq-squad doctor --write-registry))
+amq-squad lead: model ollama/qwen3.6:27b (fallback: no registry (run amq-squad doctor --write-registry))
+--- FAIL: TestSeatCommitOpenPRBindsTheTask (1.27s)
+    seat_commit_pr_test.go:32: seat commit: seat commit: harness_only: AMQ_SQUAD_SEAT is set; the commit step and its verdict are never a seat's
+--- FAIL: TestSeatCommitAndWidenThroughTheGrowthGate (1.30s)
+    seat_commit_test.go:118: seat commit: seat commit: harness_only: AMQ_SQUAD_SEAT is set; the commit step and its verdict are never a seat's
+--- FAIL: TestSeatCommitRefusesAPRBoundToAnotherTask (1.03s)
+    seat_fix1b_test.go:604: a PR bound to t1 was reused: seat commit: harness_only: AMQ_SQUAD_SEAT is set; the commit step and its verdict are never a seat's {Schema:1 ID:t2 Title:x Description: Class:implement State:in_progress Priority:0 DependsOn:[] DeclaredFiles:[cmd/] ProjectPath:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestSeatCommitRefusesAPRBoundToAnotherTask40916277/002/repo Pool:<nil> Lease:0xe839e6202c0 Attempt:1 Attempts:[] Budget:1h30m0s BudgetExtensions:[] WaitReason: BlockReason: BlockRoute: BlockDetail: BlockAttempt:0 RefusedPaths:[] Report:0xe839f22e2d0 Evidence: CancelReason: ScopeChanges:[] PRRepository: PRNumber:0 PRHead: PRMergeHead: PRMergeCommit: CreatedBy: CreatedAt:2026-11-10 16:44:06.385352 +0200 IST UpdatedAt:2026-11-10 16:44:06.456557 +0200 IST ClosedAt:<nil>}
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/cli	214.507s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	11.221s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	45.956s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	26.526s
+ok  	github.com/omriariav/amq-squad/v3/internal/fleet	9.161s
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	1.901s
+ok  	github.com/omriariav/amq-squad/v3/internal/fsanchor	4.399s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	11.538s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	5.304s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	17.428s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	4.788s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	3.518s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	5.348s
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	2.853s
+ok  	github.com/omriariav/amq-squad/v3/internal/leadsession	5.803s
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	5.882s
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	311.491s
+ok  	github.com/omriariav/amq-squad/v3/internal/migrate	22.010s
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	4.971s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	4.620s
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	4.610s
+ok  	github.com/omriariav/amq-squad/v3/internal/panechain	4.246s
+ok  	github.com/omriariav/amq-squad/v3/internal/piruntime	12.477s
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	4.330s
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	15.664s
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	146.997s
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	131.581s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	6.817s
+ok  	github.com/omriariav/amq-squad/v3/internal/role	3.189s
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	27.924s
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	4.009s
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	190.110s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	121.192s
+ok  	github.com/omriariav/amq-squad/v3/internal/sealchain	5.264s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	290.875s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	96.282s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	90.805s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	17.501s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	183.099s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	116.186s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	2.216s
+ok  	github.com/omriariav/amq-squad/v3/internal/uninstall	162.666s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	1.467s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	1.257s
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	36.844s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	0.895s
+?   	github.com/omriariav/amq-squad/v3/plugins	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/scripts	3.506s
+ok  	github.com/omriariav/amq-squad/v3/scripts/pipack	0.327s
+?   	github.com/omriariav/amq-squad/v3/scripts/redact-evidence	[no test files]
+?   	github.com/omriariav/amq-squad/v3/spike/claude-probes	[no test files]
+?   	github.com/omriariav/amq-squad/v3/spike/pi-r19	[no test files]
+FAIL
