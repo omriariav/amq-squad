@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,11 @@ func TestRecoveredSlotIsMarkedAndIdenticalRefusalTakesNextSlot(t *testing.T) {
 		if !errors.As(err, &again) || again.Slot != q.Slot+".2" {
 			t.Fatalf("refusal %d after recovery = %+v, %v", i+1, again, err)
 		}
+		if i == 0 {
+			if got := readFile(t, filepath.Join(q.Slot+".2", quarantineHeadFile)); !bytes.Equal(got, head) {
+				t.Fatal("the next slot does not hold the identical refused head")
+			}
+		}
 	}
 	if got := readFile(t, filepath.Join(q.Slot+".2", quarantineBodyFile)); !bytes.Equal(got, tampered) {
 		t.Fatal("the next slot does not hold the identical refused body")
@@ -66,16 +72,42 @@ func TestPlantedRecoveredNameRetiresSlotWithoutOpeningIt(t *testing.T) {
 			f := newFixture(t)
 			tamperBase(t, f, f.base, '0')
 			q := f.quarantined()
-			if err := tc.plant(filepath.Join(q.Slot, quarantineRecovered)); err != nil {
-				t.Skipf("cannot plant %s: %v", tc.name, err)
+			markPath := filepath.Join(q.Slot, quarantineRecovered)
+			if err := tc.plant(markPath); err != nil {
+				t.Fatalf("cannot plant %s: %v", tc.name, err)
 			}
+			var ops []string
+			quarantineTrace = func(op, name string) { ops = append(ops, op+" "+name) }
+			t.Cleanup(func() { quarantineTrace = nil })
 			_, err := ReadLedger(f.root, f.handle)
 			var again *QuarantinedError
 			if !errors.As(err, &again) || again.Slot != q.Slot+".2" {
 				t.Fatalf("identical refusal with planted mark = %+v, %v", again, err)
 			}
+			for _, op := range ops {
+				if strings.Contains(op, markPath) {
+					t.Fatalf("the planted mark was opened or read: %v", ops)
+				}
+			}
 		})
 	}
+	t.Run("unmarked control traces slot reads", func(t *testing.T) {
+		f := newFixture(t)
+		tamperBase(t, f, f.base, '0')
+		q := f.quarantined()
+		var ops []string
+		quarantineTrace = func(op, name string) { ops = append(ops, op+" "+name) }
+		t.Cleanup(func() { quarantineTrace = nil })
+		if _, err := ReadLedger(f.root, f.handle); err == nil {
+			t.Fatal("the tampered ledger verified")
+		}
+		for _, name := range []string{quarantineBodyFile, quarantineHeadFile, quarantineSidecar} {
+			want := "read " + filepath.Join(q.Slot, name)
+			if !slicesContains(ops, want) {
+				t.Fatalf("unmarked slot did not trace %q: %v", want, ops)
+			}
+		}
+	})
 }
 
 func TestRecoveryMarkFailureWritesNothingAndExistingMarkIsSuccess(t *testing.T) {
@@ -83,6 +115,8 @@ func TestRecoveryMarkFailureWritesNothingAndExistingMarkIsSuccess(t *testing.T) 
 	tamperBase(t, f, f.base, '0')
 	q := f.quarantined()
 	body, head := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
+	decisionPath := filepath.Join(f.root, "extensions", "amq-squad", "scheduler", "decisions.jsonl")
+	decisions := optionalFile(t, decisionPath)
 	slot := snapshotSlot(t, q.Slot)
 	want := errors.New("injected mark create failure")
 	old := recoveredMarkCreate
@@ -96,14 +130,51 @@ func TestRecoveryMarkFailureWritesNothingAndExistingMarkIsSuccess(t *testing.T) 
 		t.Fatal("mark failure changed the ledger or head")
 	}
 	assertSlotSnapshot(t, q.Slot, slot)
-	assertNoRecoveryDecision(t, f.root)
+	if got := optionalFile(t, decisionPath); !bytes.Equal(got, decisions) {
+		t.Fatalf("mark failure changed the decision log: before %q after %q", decisions, got)
+	}
 	recoveredMarkCreate = old
-	if err := os.WriteFile(filepath.Join(q.Slot, quarantineRecovered), []byte("planted\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	recoveredMarkCreate = func(slotDir, string, []byte) error { return fmt.Errorf("wrapped create race: %w", fs.ErrExist) }
 	if _, err := f.recover(q.Seq, 1); err != nil {
-		t.Fatalf("an existing mark was not idempotent: %v", err)
+		t.Fatalf("a wrapped create ErrExist was not idempotent: %v", err)
 	}
+}
+
+func TestExistingRecoveredMarkPathsSyncSlotBeforeRecovery(t *testing.T) {
+	t.Run("planted mark", func(t *testing.T) {
+		f := newFixture(t)
+		tamperBase(t, f, f.base, '0')
+		q := f.quarantined()
+		if err := os.WriteFile(filepath.Join(q.Slot, quarantineRecovered), []byte("planted\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var ops []string
+		quarantineTrace = func(op, name string) { ops = append(ops, op+" "+name) }
+		t.Cleanup(func() { quarantineTrace = nil })
+		if _, err := f.recover(q.Seq, 1); err != nil {
+			t.Fatal(err)
+		}
+		if sync, write := indexOf(ops, "fsync "+q.Slot), prefixIndex(ops, "recover-write "); sync < 0 || write <= sync {
+			t.Fatalf("existing mark was not synced before recovery write: %v", ops)
+		}
+	})
+	t.Run("already recovered retry", func(t *testing.T) {
+		f := newFixture(t)
+		tamperBase(t, f, f.base, '0')
+		q := f.quarantined()
+		if _, err := f.recover(q.Seq, 1); err != nil {
+			t.Fatal(err)
+		}
+		var ops []string
+		quarantineTrace = func(op, name string) { ops = append(ops, op+" "+name) }
+		t.Cleanup(func() { quarantineTrace = nil })
+		if _, err := f.recover(q.Seq, 1); err != nil {
+			t.Fatal(err)
+		}
+		if indexOf(ops, "fsync "+q.Slot) < 0 {
+			t.Fatalf("already-recovered retry did not sync its listed mark: %v", ops)
+		}
+	})
 }
 
 func TestRecoveryMarksBeforeBodyWriteAndRetrySucceeds(t *testing.T) {
@@ -192,4 +263,38 @@ func TestRecoveredMarkIsDurableBeforeRecoveryBodyWrite(t *testing.T) {
 	if create < 0 || sync <= create || write <= sync {
 		t.Fatalf("durability order create < slot sync < body write not observed: %v", ops)
 	}
+}
+
+func optionalFile(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func indexOf(items []string, want string) int {
+	for i, item := range items {
+		if item == want {
+			return i
+		}
+	}
+	return -1
+}
+
+func prefixIndex(items []string, prefix string) int {
+	for i, item := range items {
+		if strings.HasPrefix(item, prefix) {
+			return i
+		}
+	}
+	return -1
+}
+
+func slicesContains(items []string, want string) bool {
+	return indexOf(items, want) >= 0
 }

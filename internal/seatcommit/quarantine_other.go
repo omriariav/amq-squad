@@ -113,11 +113,13 @@ func (d *pathDir) create(name string, data []byte) error {
 }
 
 func (d *pathDir) read(name string) ([]byte, bool, error) {
+	trace("read", filepath.Join(d.path, name))
 	return readNoFollow(filepath.Join(d.path, name))
 }
 
 func (d *pathDir) open(name string) (slotDir, error) {
 	p := filepath.Join(d.path, name)
+	trace("open", p)
 	fi, err := os.Lstat(p)
 	if err != nil {
 		return nil, err

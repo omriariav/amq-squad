@@ -214,7 +214,10 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 			return DecideReply{Code: RefusedRecoverUnrecorded, Detail: "the chain is written and the scheduler releases the seat from it at its next tick, but the decision line could not be appended (send the decision again to record it): " + err.Error()}
 		}
 		data, _ := json.Marshal(res)
-		detail := fmt.Sprintf("seat %s recovered from quarantine seq %d: the chain continues at seq %d; %d entries carried; the scheduler releases the seat at its next tick", req.Seat, res.OldSeq, res.NewSeq, len(res.Carried))
+		detail := fmt.Sprintf("seat %s recovered from quarantine seq %d: the chain continues at seq %d; %d entries carried", req.Seat, res.OldSeq, res.NewSeq, len(res.Carried))
+		if holdAdvice == "" {
+			detail += "; the scheduler releases the seat at its next tick"
+		}
 		if res.AlreadyRecovered {
 			detail = fmt.Sprintf("seat %s was already recovered from quarantine seq %d (the chain is at seq %d or past it); the decision is recorded now", req.Seat, res.OldSeq, res.NewSeq)
 		}

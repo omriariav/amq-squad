@@ -91,7 +91,8 @@ order through a trace seam). A test seam `afterTempMkdir` sits between
 the mkdir and the open.
 
 **Identical is a no-op, different is the next k.** Before the rename the
-slot is looked at: absent, the rename is tried (and a rename that finds
+slot is looked at, except a marked slot, which is passed over before its
+files are looked at: absent, the rename is tried (and a rename that finds
 the slot taken by a concurrent refuser looks once more); present, the
 whole published set is compared, the presence of each file and its bytes,
 the sidecar without its `time:`, `leftover:` and `writer:` lines.

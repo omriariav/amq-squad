@@ -146,6 +146,7 @@ func (d *atDir) create(name string, data []byte) error {
 }
 
 func (d *atDir) read(name string) ([]byte, bool, error) {
+	trace("read", d.path+"/"+name)
 	fd, err := unix.Openat(d.fd(), name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		err = linkError(d.path+"/"+name, err)
@@ -168,6 +169,7 @@ func (d *atDir) read(name string) ([]byte, bool, error) {
 }
 
 func (d *atDir) open(name string) (slotDir, error) {
+	trace("open", d.path+"/"+name)
 	fd, err := unix.Openat(d.fd(), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, linkError(d.path+"/"+name, err)
