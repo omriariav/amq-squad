@@ -1,0 +1,43 @@
+package scheduler
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
+)
+
+type rollbackProbeExits struct{}
+
+func (rollbackProbeExits) CheckExit(string, string, string) ExitResult {
+	return ExitResult{Deferred: true, Detail: "rollback compatibility probe"}
+}
+
+// This file is copied unchanged into either old tag tree.
+func TestRollbackProbe(t *testing.T) {
+	root, phase := os.Getenv("AMQSQ_ROLLBACK_ROOT"), os.Getenv("AMQSQ_ROLLBACK_PHASE")
+	if root == "" || phase == "" {
+		t.Skip("set AMQSQ_ROLLBACK_ROOT and AMQSQ_ROLLBACK_PHASE")
+	}
+	store, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Scheduler{Store: store, Now: time.Now, Exits: rollbackProbeExits{}, Config: Config{ExitsPath: filepath.Join(root, "exits.json"), SealRoot: root, IdleTimeout: time.Hour}}
+	if phase == "write" {
+		s.AdoptClosing("old-1", task.Pool{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "high"}, time.Unix(10, 0))
+		s.AdoptClosing("old-2", task.Pool{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "high"}, time.Unix(20, 0))
+		t.Logf("old exits writer error: %v", s.exitsErr)
+		if s.exitsErr != nil {
+			t.Fatal(s.exitsErr)
+		}
+		return
+	}
+	decisions, tickErr := s.Tick()
+	t.Logf("scheduler tick error: %v", tickErr)
+	for _, decision := range decisions {
+		t.Logf("decision: %s reason=%s", decision.Kind, decision.Reason)
+	}
+}

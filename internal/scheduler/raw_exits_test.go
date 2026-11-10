@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 func readRawExitsFile(t *testing.T, path string) []byte {
@@ -114,6 +115,63 @@ func TestWriteRawExitsCompatibilityFixture(t *testing.T) {
 		t.Fatal(s.exitsErr)
 	}
 	t.Logf("exits fixture: %s", path)
+}
+
+// TestContinueRollbackExitsFixture is the exits half of the rollback fixture.
+// A tag-local writer created the legacy queue before this current-build write.
+func TestContinueRollbackExitsFixture(t *testing.T) {
+	root := os.Getenv("AMQSQ_ROLLBACK_FIXTURE_ROOT")
+	mode := os.Getenv("AMQSQ_ROLLBACK_MODE")
+	if root == "" || mode == "" {
+		t.Skip("set AMQSQ_ROLLBACK_FIXTURE_ROOT and AMQSQ_ROLLBACK_MODE")
+	}
+	path := filepath.Join(root, "exits.json")
+	s := &Scheduler{Config: Config{ExitsPath: path, SealRoot: root}, Exits: &deferringExits{}}
+	if mode == "f2" {
+		crash := errors.New("rollback exits fixture crash after migration decision")
+		afterExitsMigrationDecision = func(string, int) error { return crash }
+		t.Cleanup(func() { afterExitsMigrationDecision = nil })
+		s.loadExits()
+		if !errors.Is(s.exitsErr, crash) {
+			t.Fatalf("interrupted exits migration = %v", s.exitsErr)
+		}
+		afterExitsMigrationDecision = nil
+	} else {
+		s.AdoptClosing("current-1", sonnet, time.Unix(30, 0))
+		if s.exitsErr != nil {
+			t.Fatal(s.exitsErr)
+		}
+	}
+	current, err := verifyExitsLedger(root, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("current exits fixture mode=%s legacy=%v migration=%+v queue=%d", mode, current.legacy, current.migration, len(current.ledger.Queue))
+}
+
+// TestRollbackRollForwardSchedulerCompatibility runs the current scheduler
+// after an old tag probe and records the complete one-tick decision list.
+func TestRollbackRollForwardSchedulerCompatibility(t *testing.T) {
+	root := os.Getenv("AMQSQ_ROLLFORWARD_ROOT")
+	if root == "" {
+		t.Skip("set AMQSQ_ROLLFORWARD_ROOT")
+	}
+	store, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Scheduler{Store: store, Now: func() time.Time { return time.Unix(60, 0) }, Exits: &deferringExits{}, Config: Config{ExitsPath: filepath.Join(root, "exits.json"), SealRoot: root, IdleTimeout: time.Hour}}
+	decisions, tickErr := s.Tick()
+	t.Logf("roll-forward scheduler tick error: %v", tickErr)
+	for _, decision := range decisions {
+		t.Logf("roll-forward decision: %s reason=%s", decision.Kind, decision.Reason)
+		if decision.Kind == "ledger_tampered" {
+			t.Fatalf("roll-forward wrote ledger_tampered: %+v", decision)
+		}
+	}
+	if errors.Is(s.exitsErr, sealchain.ErrTampered) {
+		t.Fatalf("roll-forward exits ledger_tampered: %v", s.exitsErr)
+	}
 }
 
 func installLegacyExits(t *testing.T, root, path string) (exitsLedger, sealchain.Seed, *sealchain.Link) {

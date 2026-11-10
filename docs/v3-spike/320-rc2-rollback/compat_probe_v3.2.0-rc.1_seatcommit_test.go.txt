@@ -1,0 +1,58 @@
+package seatcommit
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
+)
+
+// This evidence probe is intentionally specific to v3.2.0-rc.1.
+func TestRollbackProbe(t *testing.T) {
+	root, phase := os.Getenv("AMQSQ_ROLLBACK_ROOT"), os.Getenv("AMQSQ_ROLLBACK_PHASE")
+	if root == "" || phase == "" {
+		t.Skip("set AMQSQ_ROLLBACK_ROOT and AMQSQ_ROLLBACK_PHASE")
+	}
+	if phase == "write" {
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		for _, handle := range []string{"qa", "legacy"} {
+			l := Ledger{Schema: LedgerSchema, Handle: handle, Worktree: filepath.Join(root, "worktree", handle), Branch: "seat/" + handle, Base: strings.Repeat("a", 40), At: time.Unix(10, 0)}
+			if err := writeLedger(root, l, "rollback tag fixture"); err != nil {
+				t.Fatal(err)
+			}
+			l.At = time.Unix(20, 0)
+			if err := writeLedger(root, l, "rollback tag fixture"); err != nil {
+				t.Fatal(err)
+			}
+			t.Logf("old writer handle=%s path=%s", handle, ledgerPath(root, handle))
+		}
+		return
+	}
+	for _, handle := range []string{"qa", "legacy"} {
+		if _, err := os.Stat(ledgerPath(root, handle)); errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		l, err := ReadLedger(root, handle)
+		t.Logf("commit handle=%s error=%v", handle, err)
+		t.Logf("commit handle=%s tampered=%v", handle, errors.Is(err, sealchain.ErrTampered))
+		if phase == "read_and_commit_legacy" && handle == "legacy" && err == nil {
+			l.At = time.Unix(70, 0)
+			err = writeLedger(root, l, "rollback old-tag commit")
+			t.Logf("legacy commit error: %v", err)
+		}
+	}
+	entries, err := os.ReadDir(QuarantineDir(root))
+	if err != nil {
+		t.Logf("commit quarantine: %v", err)
+		return
+	}
+	for _, entry := range entries {
+		t.Logf("commit quarantine: %s", entry.Name())
+	}
+}
