@@ -29,16 +29,22 @@ type memRelay struct {
 	forge   bool
 	stall   bool
 	onQuery func()
+	// onPublishLocked decides whether an event is withheld while mu is held.
+	onPublishLocked func(nostr.Event) bool
 	// onPublish runs after an event is stored (the websocket relay's live
 	// subscriptions and its bell).
 	onPublish func(raw []byte)
 }
 
 func (r *memRelay) queryLocked(f gateverify.Filter) [][]byte {
+	return r.queryLockedVisibility(f, true)
+}
+
+func (r *memRelay) queryLockedVisibility(f gateverify.Filter, hideFromClients bool) [][]byte {
 	var out [][]byte
 	for _, raw := range r.stored {
 		e, err := nostr.ParseEvent(raw)
-		if err != nil || r.hidden[e.ID] || !matches(e, f) {
+		if err != nil || hideFromClients && r.hidden[e.ID] || !matches(e, f) {
 			continue
 		}
 		out = append(out, raw)
@@ -56,9 +62,13 @@ func (r *memRelay) Publish(_ context.Context, raw []byte) error {
 	}
 	r.mu.Lock()
 	r.stored = append(r.stored, append([]byte(nil), raw...))
+	withheld := false
+	if r.onPublishLocked != nil {
+		withheld = r.onPublishLocked(e)
+	}
 	hook := r.onPublish
 	r.mu.Unlock()
-	if hook != nil {
+	if hook != nil && !withheld {
 		hook(raw)
 	}
 	return nil
@@ -94,7 +104,11 @@ func (r *memRelay) Query(_ context.Context, f gateverify.Filter) ([][]byte, erro
 }
 
 func (r *memRelay) events(kind int, author string) []nostr.Event {
-	got, _ := r.Query(context.Background(), gateverify.Filter{Kinds: []int{kind}, Authors: []string{author}})
+	// Test helpers see both withheld owner events and planted rejection rows;
+	// client Query, replay and live delivery see neither.
+	r.mu.Lock()
+	got := r.queryLockedVisibility(gateverify.Filter{Kinds: []int{kind}, Authors: []string{author}}, false)
+	r.mu.Unlock()
 	var out []nostr.Event
 	for _, raw := range got {
 		e, _ := nostr.ParseEvent(raw)
@@ -150,11 +164,15 @@ type wsRelay struct {
 	// afterReplayUnlock is a test seam immediately after the store lock is
 	// released. The live subscription must already be visible here.
 	afterReplayUnlock func()
-	plantMu           sync.Mutex
-	plantOwner        string
-	plantBody         string
-	plantMatch        func(nostr.Event) bool
-	planted           map[string]bool
+	// onSubscriptionInstall is called at the subscription-map assignment.
+	onSubscriptionInstall func()
+	// onPlantDecision is called when an armed owner event matches.
+	onPlantDecision func()
+	plantMu         sync.Mutex
+	plantOwner      string
+	plantBody       string
+	plantMatch      func(nostr.Event) bool
+	planted         map[string]bool
 }
 
 type wsConn struct {
@@ -174,13 +192,10 @@ func newWSRelay(t *testing.T) *wsRelay {
 	t.Helper()
 	selfKey, _ := nostr.NewSecretKey()
 	r := &wsRelay{self: selfKey.PublicHex(), selfKey: selfKey, conns: map[*wsConn]bool{}, traceAt: time.Now()}
+	r.mem.onPublishLocked = r.plantRejectionLocked
 	r.mem.onPublish = func(raw []byte) {
 		e, _ := nostr.ParseEvent(raw)
 		r.tracef("store kind=%d id=%s author=%s", e.Kind, shortID(e.ID), shortID(e.PubKey))
-		if r.plantRejection(e) {
-			r.bell.ring()
-			return
-		}
 		r.broadcast(raw)
 		r.bell.ring()
 	}
@@ -202,16 +217,21 @@ func newWSRelay(t *testing.T) *wsRelay {
 	return r
 }
 
-// plantRejection is c1's test-only AMQ failure surface. The signed owner event
+// plantRejectionLocked is c1's test-only AMQ failure surface. The signed owner event
 // remains in relay storage but is withheld from replay and live websocket
 // clients. An unsigned body row is stored directly for the ordinary
 // serveRejected query; memRelay.Publish would correctly refuse it because the
-// test does not own the body's key.
-func (r *wsRelay) plantRejection(e nostr.Event) bool {
+// test does not own the body's key. mem.mu is always taken before plantMu;
+// helper reads include both hidden rows, while every client read excludes them.
+func (r *wsRelay) plantRejectionLocked(e nostr.Event) bool {
+	// Publish holds mem.mu here. No path holding plantMu acquires mem.mu.
 	r.plantMu.Lock()
 	defer r.plantMu.Unlock()
 	if r.plantMatch == nil || e.PubKey != r.plantOwner || !r.plantMatch(e) {
 		return false
+	}
+	if r.onPlantDecision != nil {
+		r.onPlantDecision()
 	}
 	r.plantMatch = nil
 	rejected := nostr.Event{
@@ -225,18 +245,18 @@ func (r *wsRelay) plantRejection(e nostr.Event) bool {
 	id := rejected.ComputeID()
 	rejected.ID = fmt.Sprintf("%x", id[:])
 	raw := rejected.Marshal()
-	r.mem.mu.Lock()
 	if r.mem.hidden == nil {
 		r.mem.hidden = map[string]bool{}
 	}
 	r.mem.hidden[e.ID] = true
+	r.mem.hidden[rejected.ID] = true
 	r.mem.stored = append(r.mem.stored, raw)
-	r.mem.mu.Unlock()
 	if r.planted == nil {
 		r.planted = map[string]bool{}
 	}
 	r.planted[e.ID] = true
 	r.tracef("plant rejected owner=%s row=%s", shortID(e.ID), shortID(rejected.ID))
+	r.bell.ring()
 	return true
 }
 
@@ -302,12 +322,85 @@ func (r *wsRelay) snapshotAndSubscribe(c *wsConn, sub string, filters []gateveri
 	}
 	c.mu.Lock()
 	c.subs[sub] = filters
+	if r.onSubscriptionInstall != nil {
+		r.onSubscriptionInstall()
+	}
 	c.mu.Unlock()
 	r.mem.mu.Unlock()
 	if r.afterReplayUnlock != nil {
 		r.afterReplayUnlock()
 	}
 	return stored
+}
+
+func TestRelayPlantIsInvisibleToReplayQueryAndLiveClients(t *testing.T) {
+	r := &wsRelay{}
+	r.mem.onPublishLocked = r.plantRejectionLocked
+	owner, _ := nostr.NewSecretKey()
+	body, _ := nostr.NewSecretKey()
+	e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Content: "approve"}
+	if err := owner.Sign(&e); err != nil {
+		t.Fatal(err)
+	}
+	filter := gateverify.Filter{Kinds: []int{9}}
+	before := &wsConn{subs: map[string][]gateverify.Filter{}}
+	if got := r.snapshotAndSubscribe(before, "before", []gateverify.Filter{filter}); len(got) != 0 {
+		t.Fatalf("pre-publish replay = %d events, want 0", len(got))
+	}
+	live := 0
+	r.mem.onPublish = func(raw []byte) {
+		got, _ := nostr.ParseEvent(raw)
+		before.mu.Lock()
+		defer before.mu.Unlock()
+		for _, f := range before.subs["before"] {
+			if matches(got, f) {
+				live++
+			}
+		}
+	}
+	r.rejectNextOwnerEvent(owner.PublicHex(), body.PublicHex(), func(got nostr.Event) bool { return got.ID == e.ID })
+	if err := r.mem.Publish(context.Background(), e.Marshal()); err != nil {
+		t.Fatal(err)
+	}
+	after := &wsConn{subs: map[string][]gateverify.Filter{}}
+	if got := r.snapshotAndSubscribe(after, "after", []gateverify.Filter{filter}); len(got) != 0 {
+		t.Fatalf("post-publish replay exposed %d hidden events", len(got))
+	}
+	if got, _ := r.mem.Query(context.Background(), filter); len(got) != 0 {
+		t.Fatalf("client query exposed %d hidden events", len(got))
+	}
+	if live != 0 {
+		t.Fatalf("pre-publish live subscription received %d hidden events", live)
+	}
+	if _, ok := serveRejectedEvent(r, body.PublicHex(), e.ID); !ok || !r.rejectionWasPlanted(e.ID) {
+		t.Fatalf("helper did not find planted rejection: found=%t planted=%t", ok, r.rejectionWasPlanted(e.ID))
+	}
+}
+
+func TestRelayPlantDecisionHoldsStoreLock(t *testing.T) {
+	r := &wsRelay{}
+	r.mem.onPublishLocked = r.plantRejectionLocked
+	owner, _ := nostr.NewSecretKey()
+	body, _ := nostr.NewSecretKey()
+	e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Content: "approve"}
+	if err := owner.Sign(&e); err != nil {
+		t.Fatal(err)
+	}
+	called, held := false, false
+	r.onPlantDecision = func() {
+		called = true
+		held = !r.mem.mu.TryLock()
+		if !held {
+			r.mem.mu.Unlock()
+		}
+	}
+	r.rejectNextOwnerEvent(owner.PublicHex(), body.PublicHex(), func(got nostr.Event) bool { return got.ID == e.ID })
+	if err := r.mem.Publish(context.Background(), e.Marshal()); err != nil {
+		t.Fatal(err)
+	}
+	if !called || !held {
+		t.Fatalf("plant decision called=%t store lock held=%t", called, held)
+	}
 }
 
 func TestRelayReplayAndLiveSubscriptionHaveNoLossWindow(t *testing.T) {
@@ -381,6 +474,23 @@ func TestRelaySubscriptionIsLiveWhenReplayLockIsReleased(t *testing.T) {
 	}
 	if !delivered {
 		t.Fatal("event published immediately after replay lock release was lost")
+	}
+}
+
+func TestRelaySubscriptionInstallHoldsStoreLock(t *testing.T) {
+	r := &wsRelay{}
+	c := &wsConn{subs: map[string][]gateverify.Filter{}}
+	called, held := false, false
+	r.onSubscriptionInstall = func() {
+		called = true
+		held = !r.mem.mu.TryLock()
+		if !held {
+			r.mem.mu.Unlock()
+		}
+	}
+	r.snapshotAndSubscribe(c, "live", []gateverify.Filter{{Kinds: []int{9}}})
+	if !called || !held {
+		t.Fatalf("subscription install called=%t store lock held=%t", called, held)
 	}
 }
 

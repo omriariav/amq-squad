@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -32,6 +33,8 @@ func (s *syncBuffer) Write(p []byte) (int, error) {
 	return n, err
 }
 func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+func (s *syncBuffer) Len() int       { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Len() }
+func (s *syncBuffer) Truncate(n int) { s.mu.Lock(); defer s.mu.Unlock(); s.b.Truncate(n) }
 
 // rehearseOwnerRun runs the commands of docs/v3-buzz/owner-run.md steps 0.3
 // to 7 through the amq-squad binary, after the dry-run enrollment, with the
@@ -287,7 +290,21 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 		t.Fatalf("the lead's inbox: rc %d\n%s", r.rc, r.out)
 	}
 	t.Logf("real resends: %d", realResends)
-	t.Log("approved outcomes: 1")
+	approvedOutcomes := strings.Count(aout.String(), `"outcome":"approved"`)
+	checkApprovedOutcomes("rehearsal", approvedOutcomes, func(message string) { t.Fatal(message) })
+	t.Logf("approved outcomes: %d", approvedOutcomes)
+	// The ruling's plant writes where this end-of-flow count reads: the
+	// test-owned attach output buffer, after the route. Restore it immediately
+	// so the rest of the full-flow assertions inspect only process output.
+	beforePlant := aout.Len()
+	_, _ = aout.Write([]byte("{\"outcome\":\"approved\"}\n"))
+	var countFailures []string
+	plantedOutcomes := strings.Count(aout.String(), `"outcome":"approved"`)
+	checkApprovedOutcomes("rehearsal", plantedOutcomes, func(message string) { countFailures = append(countFailures, message) })
+	aout.Truncate(beforePlant)
+	if !slices.Equal(countFailures, []string{"rehearsal recorded 2 approved outcomes, want exactly one"}) {
+		t.Fatalf("planted end-of-flow count = %d, failures=%v", plantedOutcomes, countFailures)
+	}
 	// 7 presence off
 	stopRefresh()
 	if strings.Contains(aout.String(), `"action":"stopped"`) {

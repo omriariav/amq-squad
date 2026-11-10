@@ -1,6 +1,6 @@
-run	exit	seconds	answers_rejected	routes_rejected	dry_run_approved_outcomes	rehearsal_approved_outcomes
-1	0	31.003	0	0	1	1
-2	0	31.711	1	0	1	1
-3	0	31.731	1	0	1	1
-4	0	31.698	0	1	1	1
-5	0	32.006	0	0	1	1
+run	exit	seconds	answers_rejected	routes_rejected	dry_run_approved_outcomes	rehearsal_approved_outcomes	log
+1	0	32.37	1	0	1	1	run-1.log
+2	0	34.01	1	1	1	1	run-2.log
+3	1	28.76	2	0	1	not_reached	run-3.log
+4	0	33.28	1	1	1	1	run-4.log
+5	0	31.40	0	0	1	1	run-5.log
