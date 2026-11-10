@@ -169,7 +169,17 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	widen_snapshot_missing: () => ["the widening found no snapshot of the stopped attempt", RESET],
 	widen_snapshot_attempt_mismatch: () => ["the widening's snapshot is of another attempt", RESET],
 	push_target_unacknowledged: () => ["the push target is not the one the owner's grant names now", "ask the owner to acknowledge the push target in the grant"],
-	ledger_tampered: () => ["the commits ledger failed its check", "ask the lead to investigate before anything commits"],
+	// 3.2.0-0c-B rule 7: the tamper alarm's typed block (the scheduler's
+	// prepare, the commit step's write-time refusal), with the seat and the
+	// quarantine path on the record line below the rule (blockWords); the
+	// prepare's hold names its alarm id, and the words name the decision by
+	// alarm that releases it.
+	ledger_tampered: (d) => {
+		const a = tamperAlarm(d.block_detail);
+		return a
+			? [`seat ${a.seat}'s commit record failed its check (alarm ${a.alarm})`, `after investigating, the lead runs amq-squad scheduler recover --seat ${a.seat} --alarm ${a.alarm} --reason "REASON"`]
+			: ["the seat's commit record failed its check", "the lead investigates before the seat works again"];
+	},
 	newer_writer: (d) => [`the commits ledger was written by ${writerVersion(d.block_detail)}`, "ask the owner to run amq-squad up --binary <that build>"],
 	schema_mismatch: () => ["the commits ledger does not match the schema its writer claimed", "ask the lead to investigate the writer"],
 	tool_pin_mismatch: () => ["a pinned tool is not the pinned version", "ask the owner to check the pin"],
@@ -300,7 +310,11 @@ export function blockWords(t: TaskWords, d: BlockDetail = {}, c: WaitContext = {
 	const f = own(BLOCK_WORDS, r);
 	if (f) {
 		const [happened, todo] = f(d);
-		return { line: `${t.id} blocked: ${happened}; ${todo}` };
+		// the tamper alarm's record (3.2.0-0c-B): the seat and the
+		// quarantine path, from the block's own detail (tamper.go's
+		// "seat H: quarantined at PATH (seq N): ...")
+		const record = r === "ledger_tampered" && d.block_detail ? `${t.id}: ${tamperRecord(d.block_detail)}` : undefined;
+		return { line: `${t.id} blocked: ${happened}; ${todo}`, record };
 	}
 	// the task's own record marks a launch failure's block: Go's
 	// blockOnLaunchFailure writes "the launch of seat ... failed N times in a
@@ -330,10 +344,38 @@ export function launchBlock(detail: string | undefined, reason: string): { stage
 }
 
 // blockNeedsRecord reports whether a block's words read the task's own
-// record (task show's block_detail): the size cap's numbers, and a reason
-// no table maps, which may be a launch failure's AMQ code.
+// record (task show's block_detail): the size cap's numbers, the tamper
+// alarm's seat and quarantine path, and a reason no table maps, which may
+// be a launch failure's AMQ code.
 export function blockNeedsRecord(reason: string): boolean {
-	return reason === "size_cap_exceeded" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
+	return reason === "size_cap_exceeded" || reason === "ledger_tampered" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
+}
+
+// TAMPER_DETAIL is the tamper alarm's detail, in both forms Go writes:
+// the prepare's (internal/scheduler tamper.go tamperDetail, "seat H:
+// quarantined at PATH (seq N): ...") and the commit step's write-time
+// refusal (internal/seatcommit commit.go writeOutcome, "the commits ledger
+// refused the write: commit ledger H: ...; the refused document is
+// quarantined at PATH; ..."): the seat and the slot.
+const TAMPER_DETAIL = /(?:seat|commit ledger) (\S+):.*?quarantined at ([^\s;]+)/;
+
+// TAMPER_ALARM is the hold's alarm id in the prepare's detail (tamper.go
+// tamperDetail, "seat H: ... (seq N; alarm ID): ..."), with its seat.
+const TAMPER_ALARM = /^seat (\S+): .*?\(seq \S+; alarm ([0-9a-f]{8})\)/;
+
+// tamperAlarm is the seat and the alarm id a tamper block's detail names
+// (the prepare's hold), or undefined (the commit step's write-time
+// refusal names none).
+export function tamperAlarm(detail: string | undefined): { seat: string; alarm: string } | undefined {
+	const m = TAMPER_ALARM.exec(detail ?? "");
+	return m ? { seat: m[1], alarm: m[2] } : undefined;
+}
+
+// tamperRecord is the record line of a tamper block: the seat and the
+// quarantine path when the detail names them, else the detail itself.
+export function tamperRecord(detail: string): string {
+	const m = TAMPER_DETAIL.exec(detail ?? "");
+	return m ? `seat ${m[1]}, quarantined at ${m[2]}` : clean(detail, 200);
 }
 
 // blockHappened is a block's first half alone (a dialog label).
@@ -403,6 +445,15 @@ export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]
 		? [`${seatOf(d)} cannot take work because its commits ledger does not match the schema its writer claimed`, "ask the lead to investigate the writer"]
 		: [`${seatOf(d)} cannot take work because its commits ledger was written by ${writerVersion(d.reason)}`, "ask the owner to run amq-squad up --binary <that build>"],
 	seat_exclusion_cleared: (d) => [`${seatOf(d)}'s ledger compatibility hold cleared`, "nothing to do"],
+	// 3.2.0-0c-B rule 2: the count line after a prepare failure repeats
+	seat_prepare_suppressed: (d) => [`${seatOf(d)}'s prepare failure${d.task_id ? ` for ${d.task_id}` : ""} repeats`, "further repeats are counted, not shown, until the task, the seat or the reason changes"],
+	// Codex on c9826c31: the release after the lead's recovery could not
+	// read or return a task; the hold stays and the next tick tries again
+	// 3.2.0-0c-B: a line of a seat's hold release file that does not
+	// verify (a torn tail, an edited or forged line); it releases nothing
+	hold_release_line_skipped: (d) => [`${seatOf(d)}'s hold release file has a line that does not verify`, "that line releases nothing and the others still count; the record is below the line"],
+	ledger_release_failed: (d) => [`${seatOf(d)}'s release after the lead's recovery could not update ${d.task_id || "its task"}`, "the hold stays and the next tick tries again; the error is below the line"],
+	ledger_release_suppressed: (d) => [`${seatOf(d)}'s release keeps failing for ${d.task_id || "its task"}`, "further repeats are counted, not shown, until the reason changes; the error is below the line"],
 	// Go records the task and no seat (scheduler.go): the sentence names it
 	seat_request_failed: (d) => [`a seat could not be requested${d.task_id ? ` for ${d.task_id}` : ""}`, "check the task's pool, or /reset it onto another"],
 	seat_refused: (d) => [`${seatOf(d)} was refused`, "ask the lead why; the record is below the line"],
@@ -457,6 +508,10 @@ export const ROUTINE_DECISIONS: Record<string, true> = Object.fromEntries(
 		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing",
 		"seat_first_message", "seat_launch_retry", "seat_request_cancel_pending", "seat_request_cancelled", "seat_requested", "seat_up", "session_created",
 		"merge_train_rebound", "task_budget_extended", "task_reset", "usage_limit", "warning_cleared",
+		// 3.2.0-0c-B: the lead's recovery of a quarantined ledger (its own
+		// decision; the task's return to pending is a task_reset) and the
+		// restart's restore of held seats
+		"ledger_recovered", "ledger_tampers_restored", "ledger_hold_released",
 	].map((k) => [k, true]),
 ) as Record<string, true>;
 
@@ -486,6 +541,10 @@ export const RESOLVED_BY: Record<string, { kinds: readonly string[]; match: "sea
 	seat_not_up: SEAT_RESOLVED,
 	seat_launch_failed: SEAT_RESOLVED,
 	seat_prepare_failed: SEAT_RESOLVED,
+	seat_prepare_suppressed: SEAT_RESOLVED,
+	hold_release_line_skipped: { kinds: ["ledger_hold_released", "seat_up", "roster_launched"], match: "seat" },
+	ledger_release_failed: { kinds: ["ledger_hold_released", "seat_up", "roster_launched"], match: "seat" },
+	ledger_release_suppressed: { kinds: ["ledger_hold_released", "seat_up", "roster_launched"], match: "seat" },
 	seat_refused: SEAT_RESOLVED,
 	seat_gone: SEAT_RESOLVED,
 	seat_liveness_unknown: SEAT_RESOLVED,
@@ -540,7 +599,9 @@ export function decisionWords(d: { kind: string; seat?: string; task_id?: string
 	const l = own(LAUNCH_WORDS, code) ?? own(LAUNCH_WORDS, d.stage);
 	if (!f && l) return `${happened}: ${l}; ${todo}`;
 	if (!f) return `${happened}; ${todo}`;
-	const [why, then] = f({});
+	// the tamper alarm's decision carries its detail (the alarm id) as its
+	// reason: the words read it as the block's own record
+	const [why, then] = f(code === "ledger_tampered" ? { block_detail: d.reason } : {});
 	return `${happened}: ${why}; ${then}`;
 }
 
@@ -741,7 +802,7 @@ export function plainDetail(text: string): string {
 }
 
 // The verb names a refusal starts with ("task reset: ...").
-const VERB_HEADS = new Set(["task add", "task reset", "task widen", "task show", "scheduler clear", "scheduler relaunch", "gate status", "gate post", "team propose", "team apply", "error"]);
+const VERB_HEADS = new Set(["task add", "task reset", "task widen", "task show", "scheduler clear", "scheduler relaunch", "scheduler recover", "gate status", "gate post", "team propose", "team apply", "error"]);
 
 // sentence is "<what happened>: <detail>." or "<what happened>." when the
 // detail has nothing plain to add.

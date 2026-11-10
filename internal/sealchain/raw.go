@@ -191,6 +191,16 @@ func HeadLayout(name string, s Seed, headBytes []byte) (string, error) {
 	return h.Layout, nil
 }
 
+// HeadLink verifies the exact head bytes supplied by the caller and returns
+// the chain link and layout they name. It never reopens the head.
+func HeadLink(name string, s Seed, headBytes []byte) (Link, string, error) {
+	h, err := parseHeadBytes(name, s, headBytes)
+	if err != nil {
+		return Link{}, "", err
+	}
+	return Link{Seq: h.Seq, Tag: h.Link}, h.Layout, nil
+}
+
 // SchemaError classifies a validly sealed document whose declared document
 // schema is not the reader's schema.
 func SchemaError(what string, seal RawSeal, readerSchema, documentSchema int) error {
@@ -387,6 +397,25 @@ func WriteRawBeforeHead(root, name string, s Seed, label string, headBytes, body
 		h = parsed.head
 	}
 	prev := &Link{Seq: h.Seq, Tag: h.Link}
+	return writeRawAfter(root, name, s, label, prev, body, version, schema, save, beforeHead, now)
+}
+
+// WriteRawAfter writes a raw-layout document after the authenticated link the
+// caller already obtained from exact document/head bytes. Recovery uses it
+// when a quarantined head is damaged or when an interrupted migration's raw
+// document is newer than its legacy head. It never reads a head.
+func WriteRawAfter(root, name string, s Seed, label string, prev *Link, body []byte, version string, schema int, save func([]byte) error, beforeHead func(RawSeal) error, now time.Time) (RawSeal, error) {
+	if prev == nil || prev.Seq <= 0 || prev.Tag == "" {
+		return RawSeal{}, fmt.Errorf("sealed head %q has no authenticated predecessor", name)
+	}
+	return writeRawAfter(root, name, s, label, prev, body, version, schema, save, beforeHead, now)
+}
+
+func writeRawAfter(root, name string, s Seed, label string, prev *Link, body []byte, version string, schema int, save func([]byte) error, beforeHead func(RawSeal) error, now time.Time) (RawSeal, error) {
+	var zero RawSeal
+	if !headName.MatchString(name) || schema <= 0 {
+		return zero, fmt.Errorf("sealed head %q or schema %d", name, schema)
+	}
 	seal := NewRawSeal(s.Key, label, prev, body, version, schema)
 	raw, err := JoinRaw(body, seal)
 	if err != nil {

@@ -502,6 +502,10 @@ func TestRawHeadSwapQuarantinesTheHeadThatWasChecked(t *testing.T) {
 	if !errors.Is(err, sealchain.ErrTampered) {
 		t.Fatalf("head swap = %v", err)
 	}
+	var q *QuarantinedError
+	if !errors.As(err, &q) || q.Seq != seq || q.Slot != slotOf(f, seq, 1) {
+		t.Fatalf("head swap quarantine names the wrong captured bytes: %+v, %v", q, err)
+	}
 	_, quarantinedHead, _ := quarantinePaths(f, seq)
 	if got := readFile(t, quarantinedHead); !bytes.Equal(got, checkedHead) {
 		t.Fatalf("quarantine copied the replacement head: got %q, checked %q", got, checkedHead)

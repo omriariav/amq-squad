@@ -164,6 +164,12 @@ type Scheduler struct {
 	// press and the reload) waiting for the next tick (RequestRelaunch,
 	// RequestRelaunchReload); set under mu.
 	relaunchAsk *relaunchAsk
+	// heldAlarms is the held seats' alarm ids as the last change left them
+	// (publishHolds), read by the decision socket (HeldAlarm); set under mu.
+	heldAlarms map[string]string
+	// releaseLines are the hold release file problems already logged, by
+	// seat and problem (the tick's own).
+	releaseLines map[string]bool
 
 	seats       map[string]*seat
 	requests    []request
@@ -233,6 +239,13 @@ type Scheduler struct {
 	// budgetWarned remembers the absolute end already warned for an attempt.
 	// An extension changes the end and permits one new warning.
 	budgetWarned map[string]time.Time
+	// tampered are the seats held by a tamper alarm (3.2.0-0c-B,
+	// tamper.go): never idle, never prepared, never granted until the
+	// lead's recovery is in the seat's ledger; prepareFails the last
+	// non-tamper prepare failure of each task on each seat, for the
+	// once-then-count log.
+	tampered     map[string]*LedgerTamper
+	prepareFails map[string]*prepareFailure
 }
 
 // WaitNoRosterSeat is the wait of a pending task whose route names a pool
@@ -638,6 +651,9 @@ func (s *Scheduler) applyEvents(now time.Time, cfg Config, log func(Decision)) e
 			// lease renewal and writes its first-renewal decision itself.
 		}
 	}
+	if err := s.applyRecoveries(now, log); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	ask := s.relaunchAsk
 	s.relaunchAsk = nil
@@ -890,12 +906,21 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 			}
 			handle, prepErr := s.preparedIdleSeat(list, t, *r.Pool, log)
 			if prepErr != nil {
-				log(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: prepErr.Error()})
+				// A tamper is the typed block, raised once (tamper.go);
+				// any other failure is logged once, then counted.
+				got, perr := s.prepareFailed(t, handle, prepErr, now, log)
+				if perr != nil {
+					return perr
+				}
+				if got != nil {
+					list = replace(list, *got)
+				}
 				continue
 			}
 			if handle == "" {
 				continue
 			}
+			s.preparePassed(handle)
 			got, err := s.Store.Grant(t.ID, handle, r.Pool, cfg.LeaseDuration, now)
 			var unverified *task.VerifierUnconfiguredError
 			if errors.As(err, &unverified) {
@@ -1064,7 +1089,7 @@ func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string 
 // idle-seat path.
 func (s *Scheduler) seatExcluded(handle string) bool {
 	st := s.seats[handle]
-	return st != nil && (st.excluded == "newer_writer" || st.excluded == "schema_mismatch")
+	return st != nil && (st.excluded == "newer_writer" || st.excluded == "schema_mismatch" || s.tamperedSeat(handle))
 }
 
 // preparedIdleSeat skips typed-incompatible seats and continues through the
@@ -1100,8 +1125,8 @@ func (s *Scheduler) refreshSeatExclusions(log func(Decision)) {
 		return
 	}
 	var handles []string
-	for h := range s.seats {
-		if s.seatExcluded(h) {
+	for h, st := range s.seats {
+		if st.excluded == "newer_writer" || st.excluded == "schema_mismatch" {
 			handles = append(handles, h)
 		}
 	}
@@ -1220,6 +1245,9 @@ type State struct {
 	// RouteWaits are the tasks that wait no_roster_seat, with the pool no
 	// roster seat serves (brief 3.1.1-2): status names it on the task row.
 	RouteWaits []RouteWait `json:"route_waits,omitempty"`
+	// LedgerTampered are the seats held by a tamper alarm until the lead's
+	// recovery (3.2.0-0c-B): restored at a restart (RestoreLedgerTampers).
+	LedgerTampered []LedgerTamper `json:"ledger_tampered,omitempty"`
 }
 
 // RouteWait is one task's named route wait.
@@ -1329,6 +1357,7 @@ func (s *Scheduler) writeState(now time.Time, cfg Config) error {
 		st.RouteWaits = append(st.RouteWaits, RouteWait{TaskID: id, Reason: WaitNoRosterSeat, Pool: p})
 	}
 	sort.Slice(st.RouteWaits, func(i, j int) bool { return st.RouteWaits[i].TaskID < st.RouteWaits[j].TaskID })
+	st.LedgerTampered = s.ledgerTamperList()
 	raw, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
 		return err

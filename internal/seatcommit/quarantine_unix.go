@@ -182,3 +182,30 @@ func (d *atDir) remove(name string, isDir bool) error {
 	}
 	return unix.Unlinkat(d.fd(), name, flags)
 }
+
+// openAppendNoFollow opens a seat's hold release file for appending,
+// created 0600 when absent, without following a link and without blocking
+// on a FIFO (O_NOFOLLOW|O_NONBLOCK, Codex on 50986a71): the descriptor
+// must be a regular file. It is opened for reading too, so the caller
+// checks the file's last byte through the same descriptor it writes
+// with; nothing is checked by path.
+func openAppendNoFollow(path string) (*os.File, error) {
+	fd, err := unix.Open(path, unix.O_RDWR|unix.O_APPEND|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
+	if err != nil {
+		if errors.Is(err, unix.ENXIO) {
+			return nil, fmt.Errorf("%s is not a regular file", path)
+		}
+		return nil, linkError(path, err)
+	}
+	f := os.NewFile(uintptr(fd), path)
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	return f, nil
+}

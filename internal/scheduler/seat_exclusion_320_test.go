@@ -13,6 +13,46 @@ type compatibilitySeatPreparer struct {
 	calls  map[string]int
 }
 
+type mixedLedgerPreparer struct{}
+
+func (mixedLedgerPreparer) PrepareSeat(handle string) error {
+	switch handle {
+	case "seat-a":
+		return tamperErr(handle, "7")
+	case "seat-b":
+		return &PrepareRefusal{Reason: "newer_writer", Detail: "written by v9.0.0", Route: task.RouteOwner}
+	default:
+		return nil
+	}
+}
+
+func (mixedLedgerPreparer) CheckSeatCompatibility(handle string) error {
+	return mixedLedgerPreparer{}.PrepareSeat(handle)
+}
+
+func TestOneTickSeparatesTamperedIncompatibleAndHealthySeats(t *testing.T) {
+	h := newHarness(t, Config{MaxSeats: 3, LeaseDuration: time.Hour, IdleTimeout: time.Hour})
+	h.s.Preparer = mixedLedgerPreparer{}
+	blocked := h.add("blocked on tamper", &sonnet)
+	healthy := h.add("healthy dispatch", &sonnet)
+	h.up("seat-a", sonnet)
+	h.up("seat-b", sonnet)
+	h.up("seat-c", sonnet)
+	all := h.tick()
+	if countOf(all, "seat_prepare_failed", "seat-a") != 1 || countOf(all, "blocked", "seat-a") != 1 {
+		t.Fatalf("tampered seat did not raise exactly one alarm and block: %+v", all)
+	}
+	if countOf(all, "seat_excluded", "seat-b") != 1 || has(all, "seat_prepare_failed", "", "seat-b") {
+		t.Fatalf("incompatible seat raised a tamper alarm or was not excluded: %+v", all)
+	}
+	if !has(all, "dispatched", healthy.ID, "seat-c") {
+		t.Fatalf("healthy seat did not dispatch in the same tick: %+v", all)
+	}
+	if got := h.get(blocked.ID); got.State != task.StateBlocked || got.BlockReason != ReasonLedgerTampered {
+		t.Fatalf("tampered task = %+v", got)
+	}
+}
+
 func (p *compatibilitySeatPreparer) compatibility(handle string) error {
 	p.calls[handle]++
 	if handle == "seat-a" && p.bad {
