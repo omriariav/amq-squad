@@ -23,6 +23,7 @@ import (
 type memRelay struct {
 	mu     sync.Mutex
 	stored [][]byte
+	hidden map[string]bool
 	// forge returns a fetched event with its signature broken; stall makes
 	// a fetch wait for its context; onQuery runs at each fetch (tests).
 	forge   bool
@@ -31,6 +32,21 @@ type memRelay struct {
 	// onPublish runs after an event is stored (the websocket relay's live
 	// subscriptions and its bell).
 	onPublish func(raw []byte)
+}
+
+func (r *memRelay) queryLocked(f gateverify.Filter) [][]byte {
+	var out [][]byte
+	for _, raw := range r.stored {
+		e, err := nostr.ParseEvent(raw)
+		if err != nil || r.hidden[e.ID] || !matches(e, f) {
+			continue
+		}
+		out = append(out, raw)
+	}
+	if f.Limit > 0 && len(out) > f.Limit {
+		out = out[len(out)-f.Limit:]
+	}
+	return out
 }
 
 func (r *memRelay) Publish(_ context.Context, raw []byte) error {
@@ -74,18 +90,7 @@ func (r *memRelay) FetchByID(ctx context.Context, id string) ([]byte, error) {
 func (r *memRelay) Query(_ context.Context, f gateverify.Filter) ([][]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var out [][]byte
-	for _, raw := range r.stored {
-		e, err := nostr.ParseEvent(raw)
-		if err != nil || !matches(e, f) {
-			continue
-		}
-		out = append(out, raw)
-	}
-	if f.Limit > 0 && len(out) > f.Limit {
-		out = out[len(out)-f.Limit:]
-	}
-	return out, nil
+	return r.queryLocked(f), nil
 }
 
 func (r *memRelay) events(kind int, author string) []nostr.Event {
@@ -137,9 +142,23 @@ type wsRelay struct {
 	// (the verifier's fetch); stallIDs leaves such a REQ unanswered.
 	idsSeen  []int
 	stallIDs bool
+	traceAt  time.Time
+	traceMu  sync.Mutex
+	trace    []string
+	// afterReplay is a test seam inside the replay/live critical section.
+	afterReplay func()
+	// afterReplayUnlock is a test seam immediately after the store lock is
+	// released. The live subscription must already be visible here.
+	afterReplayUnlock func()
+	plantMu           sync.Mutex
+	plantOwner        string
+	plantBody         string
+	plantMatch        func(nostr.Event) bool
+	planted           map[string]bool
 }
 
 type wsConn struct {
+	id   int
 	mu   sync.Mutex
 	ws   *websocket.Conn
 	subs map[string][]gateverify.Filter
@@ -154,8 +173,14 @@ func (c *wsConn) write(raw []byte) {
 func newWSRelay(t *testing.T) *wsRelay {
 	t.Helper()
 	selfKey, _ := nostr.NewSecretKey()
-	r := &wsRelay{self: selfKey.PublicHex(), selfKey: selfKey, conns: map[*wsConn]bool{}}
+	r := &wsRelay{self: selfKey.PublicHex(), selfKey: selfKey, conns: map[*wsConn]bool{}, traceAt: time.Now()}
 	r.mem.onPublish = func(raw []byte) {
+		e, _ := nostr.ParseEvent(raw)
+		r.tracef("store kind=%d id=%s author=%s", e.Kind, shortID(e.ID), shortID(e.PubKey))
+		if r.plantRejection(e) {
+			r.bell.ring()
+			return
+		}
 		r.broadcast(raw)
 		r.bell.ring()
 	}
@@ -175,6 +200,188 @@ func newWSRelay(t *testing.T) *wsRelay {
 	}))
 	t.Cleanup(r.srv.Close)
 	return r
+}
+
+// plantRejection is c1's test-only AMQ failure surface. The signed owner event
+// remains in relay storage but is withheld from replay and live websocket
+// clients. An unsigned body row is stored directly for the ordinary
+// serveRejected query; memRelay.Publish would correctly refuse it because the
+// test does not own the body's key.
+func (r *wsRelay) plantRejection(e nostr.Event) bool {
+	r.plantMu.Lock()
+	defer r.plantMu.Unlock()
+	if r.plantMatch == nil || e.PubKey != r.plantOwner || !r.plantMatch(e) {
+		return false
+	}
+	r.plantMatch = nil
+	rejected := nostr.Event{
+		PubKey:    r.plantBody,
+		CreatedAt: time.Now().Unix(),
+		Kind:      9,
+		Tags:      [][]string{{"e", e.ID, "", "reply"}},
+		Content:   "amq-squad: rejected (native_error)",
+		Sig:       strings.Repeat("0", 128),
+	}
+	id := rejected.ComputeID()
+	rejected.ID = fmt.Sprintf("%x", id[:])
+	raw := rejected.Marshal()
+	r.mem.mu.Lock()
+	if r.mem.hidden == nil {
+		r.mem.hidden = map[string]bool{}
+	}
+	r.mem.hidden[e.ID] = true
+	r.mem.stored = append(r.mem.stored, raw)
+	r.mem.mu.Unlock()
+	if r.planted == nil {
+		r.planted = map[string]bool{}
+	}
+	r.planted[e.ID] = true
+	r.tracef("plant rejected owner=%s row=%s", shortID(e.ID), shortID(rejected.ID))
+	return true
+}
+
+func (r *wsRelay) rejectNextOwnerEvent(owner, body string, match func(nostr.Event) bool) {
+	r.plantMu.Lock()
+	defer r.plantMu.Unlock()
+	r.plantOwner, r.plantBody, r.plantMatch = owner, body, match
+}
+
+func (r *wsRelay) rejectionWasPlanted(id string) bool {
+	r.plantMu.Lock()
+	defer r.plantMu.Unlock()
+	return r.planted[id]
+}
+
+func (r *wsRelay) plantedRejectionCount() int {
+	r.plantMu.Lock()
+	defer r.plantMu.Unlock()
+	return len(r.planted)
+}
+
+func shortID(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
+}
+
+func (r *wsRelay) tracef(format string, args ...any) {
+	r.traceMu.Lock()
+	defer r.traceMu.Unlock()
+	if len(r.trace) == 4096 {
+		return
+	}
+	prefix := time.Since(r.traceAt).Round(time.Millisecond)
+	r.trace = append(r.trace, fmt.Sprintf("%s ", prefix)+fmt.Sprintf(format, args...))
+}
+
+func (r *wsRelay) eventTrace() string {
+	r.traceMu.Lock()
+	defer r.traceMu.Unlock()
+	return strings.Join(r.trace, "\n")
+}
+
+func (r *wsRelay) connectionTotal() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.total
+}
+
+func (r *wsRelay) snapshotAndSubscribe(c *wsConn, sub string, filters []gateverify.Filter) [][]byte {
+	// Unlike a real relay, this fake may deliver an event both from the
+	// snapshot and live when it was stored just before the snapshot (clients
+	// deduplicate by id), and a live event may reach the socket before replay's
+	// EOSE. What it must never have is a replay-to-live loss window.
+	r.mem.mu.Lock()
+	var stored [][]byte
+	for _, wf := range filters {
+		stored = append(stored, r.mem.queryLocked(wf)...)
+	}
+	if r.afterReplay != nil {
+		r.afterReplay()
+	}
+	c.mu.Lock()
+	c.subs[sub] = filters
+	c.mu.Unlock()
+	r.mem.mu.Unlock()
+	if r.afterReplayUnlock != nil {
+		r.afterReplayUnlock()
+	}
+	return stored
+}
+
+func TestRelayReplayAndLiveSubscriptionHaveNoLossWindow(t *testing.T) {
+	r := &wsRelay{}
+	c := &wsConn{subs: map[string][]gateverify.Filter{}}
+	key, _ := nostr.NewSecretKey()
+	e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Content: "during subscribe"}
+	if err := key.Sign(&e); err != nil {
+		t.Fatal(err)
+	}
+	filter := gateverify.Filter{Kinds: []int{9}}
+	delivered := make(chan struct{}, 1)
+	r.mem.onPublish = func(raw []byte) {
+		got, _ := nostr.ParseEvent(raw)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		for _, f := range c.subs["live"] {
+			if matches(got, f) {
+				delivered <- struct{}{}
+			}
+		}
+	}
+	published := make(chan error, 1)
+	r.afterReplay = func() {
+		if r.mem.mu.TryLock() {
+			r.mem.mu.Unlock()
+			t.Fatal("the stored replay and live subscription are not one critical section")
+		}
+		go func() { published <- r.mem.Publish(context.Background(), e.Marshal()) }()
+	}
+	if got := r.snapshotAndSubscribe(c, "live", []gateverify.Filter{filter}); len(got) != 0 {
+		t.Fatalf("stored replay = %d events, want 0", len(got))
+	}
+	if err := <-published; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-delivered:
+	default:
+		t.Fatal("an event published at the replay/live boundary was lost")
+	}
+}
+
+func TestRelaySubscriptionIsLiveWhenReplayLockIsReleased(t *testing.T) {
+	r := &wsRelay{}
+	c := &wsConn{subs: map[string][]gateverify.Filter{}}
+	key, _ := nostr.NewSecretKey()
+	e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Content: "after replay unlock"}
+	if err := key.Sign(&e); err != nil {
+		t.Fatal(err)
+	}
+	filter := gateverify.Filter{Kinds: []int{9}}
+	delivered := false
+	r.mem.onPublish = func(raw []byte) {
+		got, _ := nostr.ParseEvent(raw)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		for _, f := range c.subs["live"] {
+			if matches(got, f) {
+				delivered = true
+			}
+		}
+	}
+	r.afterReplayUnlock = func() {
+		if err := r.mem.Publish(context.Background(), e.Marshal()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := r.snapshotAndSubscribe(c, "live", []gateverify.Filter{filter}); len(got) != 0 {
+		t.Fatalf("stored replay = %d events, want 0", len(got))
+	}
+	if !delivered {
+		t.Fatal("event published immediately after replay lock release was lost")
+	}
 }
 
 func (r *wsRelay) url() string {
@@ -246,6 +453,7 @@ func (r *wsRelay) broadcast(raw []byte) {
 		c.mu.Unlock()
 		for _, sub := range hits {
 			sj, _ := json.Marshal(sub)
+			r.tracef("conn=%d live sub=%s event=%s", c.id, sub, shortID(e.ID))
 			c.write([]byte(`["EVENT",` + string(sj) + `,` + string(raw) + `]`))
 		}
 	}
@@ -253,16 +461,18 @@ func (r *wsRelay) broadcast(raw []byte) {
 
 func (r *wsRelay) serve(ws *websocket.Conn) {
 	ctx := context.Background()
-	c := &wsConn{ws: ws, subs: map[string][]gateverify.Filter{}}
 	r.mu.Lock()
-	r.conns[c] = true
 	r.total++
+	c := &wsConn{id: r.total, ws: ws, subs: map[string][]gateverify.Filter{}}
+	r.conns[c] = true
 	r.mu.Unlock()
+	r.tracef("conn=%d open", c.id)
 	r.bell.ring()
 	defer func() {
 		r.mu.Lock()
 		delete(r.conns, c)
 		r.mu.Unlock()
+		r.tracef("conn=%d close", c.id)
 		r.bell.ring()
 	}()
 	send := func(v any) { raw, _ := json.Marshal(v); c.write(raw) }
@@ -291,6 +501,7 @@ func (r *wsRelay) serve(ws *websocket.Conn) {
 				r.mu.Unlock()
 				r.bell.ring()
 			}
+			r.tracef("conn=%d auth ok=%t author=%s", c.id, ok, shortID(e.PubKey))
 			send([]any{"OK", e.ID, ok, map[bool]string{true: "", false: "restricted: bad auth"}[ok]})
 		case "EVENT":
 			e, err := nostr.ParseEvent(f[1])
@@ -302,6 +513,7 @@ func (r *wsRelay) serve(ws *websocket.Conn) {
 				send([]any{"OK", e.ID, false, "invalid: " + err.Error()})
 				continue
 			}
+			r.tracef("conn=%d publish ok id=%s kind=%d", c.id, shortID(e.ID), e.Kind)
 			send([]any{"OK", e.ID, true, ""})
 		case "CLOSE":
 			var sub string
@@ -332,17 +544,17 @@ func (r *wsRelay) serve(ws *websocket.Conn) {
 					continue
 				}
 			}
-			for _, wf := range filters {
-				got, _ := r.mem.Query(ctx, wf)
-				for _, ev := range got {
-					sj, _ := json.Marshal(sub)
-					c.write([]byte(`["EVENT",` + string(sj) + `,` + string(ev) + `]`))
-				}
+			// Snapshot stored events and install the live subscription under
+			// the same relay lock. The former query-then-install order lost an
+			// event published between those operations, which made the owner
+			// dry run hang only under an unlucky schedule.
+			stored := r.snapshotAndSubscribe(c, sub, filters)
+			r.tracef("conn=%d req sub=%s replay=%d live=installed", c.id, sub, len(stored))
+			for _, ev := range stored {
+				sj, _ := json.Marshal(sub)
+				c.write([]byte(`["EVENT",` + string(sj) + `,` + string(ev) + `]`))
 			}
 			send([]any{"EOSE", sub})
-			c.mu.Lock()
-			c.subs[sub] = filters
-			c.mu.Unlock()
 		}
 	}
 }

@@ -1,0 +1,62 @@
+ok  	github.com/omriariav/amq-squad/v3/cmd/amq-squad	0.380s
+ok  	github.com/omriariav/amq-squad/v3/internal/activity	0.716s
+ok  	github.com/omriariav/amq-squad/v3/internal/adoptionseam	1.036s
+ok  	github.com/omriariav/amq-squad/v3/internal/agentcatalog	1.312s
+ok  	github.com/omriariav/amq-squad/v3/internal/amqexec	1.599s
+ok  	github.com/omriariav/amq-squad/v3/internal/atomicfile	1.974s
+?   	github.com/omriariav/amq-squad/v3/internal/attention	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	82.733s
+ok  	github.com/omriariav/amq-squad/v3/internal/catalog	2.388s
+ok  	github.com/omriariav/amq-squad/v3/internal/claudeseat	2.806s
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	200.041s
+ok  	github.com/omriariav/amq-squad/v3/internal/commandevidence	7.783s
+ok  	github.com/omriariav/amq-squad/v3/internal/compoundrelease	40.382s
+ok  	github.com/omriariav/amq-squad/v3/internal/drafter	27.884s
+ok  	github.com/omriariav/amq-squad/v3/internal/fleet	8.976s
+ok  	github.com/omriariav/amq-squad/v3/internal/flock	4.535s
+ok  	github.com/omriariav/amq-squad/v3/internal/fsanchor	4.970s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatestore	10.464s
+ok  	github.com/omriariav/amq-squad/v3/internal/gatetarget	5.353s
+ok  	github.com/omriariav/amq-squad/v3/internal/gateverify	22.536s
+ok  	github.com/omriariav/amq-squad/v3/internal/grants	6.116s
+ok  	github.com/omriariav/amq-squad/v3/internal/hostcheck	5.892s
+ok  	github.com/omriariav/amq-squad/v3/internal/launch	6.544s
+ok  	github.com/omriariav/amq-squad/v3/internal/launchintent	5.887s
+ok  	github.com/omriariav/amq-squad/v3/internal/leadsession	5.845s
+ok  	github.com/omriariav/amq-squad/v3/internal/ledger	5.862s
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	297.094s
+ok  	github.com/omriariav/amq-squad/v3/internal/migrate	17.046s
+ok  	github.com/omriariav/amq-squad/v3/internal/namespace	4.800s
+ok  	github.com/omriariav/amq-squad/v3/internal/nostr	4.682s
+ok  	github.com/omriariav/amq-squad/v3/internal/operatorauth	3.838s
+ok  	github.com/omriariav/amq-squad/v3/internal/panechain	3.866s
+ok  	github.com/omriariav/amq-squad/v3/internal/piruntime	10.709s
+ok  	github.com/omriariav/amq-squad/v3/internal/procinfo	3.537s
+ok  	github.com/omriariav/amq-squad/v3/internal/redact	15.481s
+ok  	github.com/omriariav/amq-squad/v3/internal/registry	136.113s
+ok  	github.com/omriariav/amq-squad/v3/internal/releaseflow	121.813s
+ok  	github.com/omriariav/amq-squad/v3/internal/reviewrebind	7.592s
+ok  	github.com/omriariav/amq-squad/v3/internal/role	3.988s
+ok  	github.com/omriariav/amq-squad/v3/internal/routing	28.550s
+ok  	github.com/omriariav/amq-squad/v3/internal/rules	4.231s
+ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	177.843s
+ok  	github.com/omriariav/amq-squad/v3/internal/scheduler	111.241s
+ok  	github.com/omriariav/amq-squad/v3/internal/sealchain	5.578s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	277.242s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatexec	87.772s
+ok  	github.com/omriariav/amq-squad/v3/internal/seatlaunch	83.342s
+ok  	github.com/omriariav/amq-squad/v3/internal/state	17.423s
+ok  	github.com/omriariav/amq-squad/v3/internal/status	170.472s
+ok  	github.com/omriariav/amq-squad/v3/internal/task	104.220s
+ok  	github.com/omriariav/amq-squad/v3/internal/team	2.251s
+ok  	github.com/omriariav/amq-squad/v3/internal/uninstall	151.853s
+ok  	github.com/omriariav/amq-squad/v3/internal/usagelimit	1.072s
+ok  	github.com/omriariav/amq-squad/v3/internal/userconfig	1.502s
+ok  	github.com/omriariav/amq-squad/v3/internal/worktreeplan	33.607s
+ok  	github.com/omriariav/amq-squad/v3/internal/yamlsub	0.886s
+?   	github.com/omriariav/amq-squad/v3/plugins	[no test files]
+ok  	github.com/omriariav/amq-squad/v3/scripts	3.540s
+ok  	github.com/omriariav/amq-squad/v3/scripts/pipack	0.326s
+?   	github.com/omriariav/amq-squad/v3/scripts/redact-evidence	[no test files]
+?   	github.com/omriariav/amq-squad/v3/spike/claude-probes	[no test files]
+?   	github.com/omriariav/amq-squad/v3/spike/pi-r19	[no test files]
