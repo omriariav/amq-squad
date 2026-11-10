@@ -92,6 +92,9 @@ func runSchedulerRecover(args []string, out io.Writer) error {
 			for _, c := range res.Carried {
 				fmt.Fprintf(out, "  carried %s %s (%s)\n", c.Task, c.Commit, c.Note)
 			}
+			if res.Note != "" {
+				fmt.Fprintf(out, "  note: %s\n", res.Note)
+			}
 		}
 	}
 	if !reply.OK {

@@ -26,6 +26,18 @@ type tamperPreparer struct {
 	ledgers map[string]recoveryRecord
 }
 
+func TestHeldTamperPublishesAlarmAndSlotTogether(t *testing.T) {
+	s := &Scheduler{}
+	s.RestoreLedgerTampers(State{LedgerTampered: []LedgerTamper{{Handle: "seat-a", Quarantine: "/q/commits.seat-a.seq1", Alarm: "a0000001"}}})
+	hold, ok := s.HeldTamper("seat-a")
+	if !ok || hold.Alarm != "a0000001" || hold.Slot != "/q/commits.seat-a.seq1" {
+		t.Fatalf("published hold = %+v, %v", hold, ok)
+	}
+	if alarm, ok := s.HeldAlarm("seat-a"); !ok || alarm != hold.Alarm {
+		t.Fatalf("published alarm = %q, %v", alarm, ok)
+	}
+}
+
 type recoveryRecord struct {
 	seq      int
 	slot     string

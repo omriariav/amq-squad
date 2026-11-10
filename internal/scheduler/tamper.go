@@ -75,6 +75,13 @@ type LedgerTamper struct {
 	Alarm string `json:"alarm"`
 }
 
+// HeldTamper is the decision socket's snapshot of a held seat. Slot is empty
+// when the refusal could not be quarantined.
+type HeldTamper struct {
+	Alarm string
+	Slot  string
+}
+
 // RecoveryMark is what a seat's sealed ledger records of the lead's
 // recoveries, as the scheduler reads it: the ledger's own chain record
 // (the quarantined seq and slot it continued from), the alarm id of every
@@ -211,15 +218,15 @@ func tamperDetail(handle string, e *LedgerTamperedError, alarm string) string {
 	return fmt.Sprintf("seat %s: quarantined at %s (seq %s; alarm %s): %v", handle, e.Quarantine, seq, alarm, e.Err)
 }
 
-// publishHolds copies the held seats' alarm ids where the decision
-// socket reads them (HeldAlarm), under mu: the hold map is the tick's own.
+// publishHolds copies the held seats' alarm ids and slots where the decision
+// socket reads them, under mu: the hold map is the tick's own.
 func (s *Scheduler) publishHolds() {
-	m := make(map[string]string, len(s.tampered))
+	m := make(map[string]HeldTamper, len(s.tampered))
 	for h, tm := range s.tampered {
-		m[h] = tm.Alarm
+		m[h] = HeldTamper{Alarm: tm.Alarm, Slot: tm.Quarantine}
 	}
 	s.mu.Lock()
-	s.heldAlarms = m
+	s.heldTampers = m
 	s.mu.Unlock()
 }
 
@@ -228,8 +235,18 @@ func (s *Scheduler) publishHolds() {
 func (s *Scheduler) HeldAlarm(handle string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	a, ok := s.heldAlarms[handle]
-	return a, ok
+	h, ok := s.heldTampers[handle]
+	return h.Alarm, ok
+}
+
+// HeldTamper returns the alarm id and slot of handle's current hold. The
+// decision socket uses the slot only to explain when a recorded recovery does
+// not release that hold; covers remains the release authority.
+func (s *Scheduler) HeldTamper(handle string) (HeldTamper, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h, ok := s.heldTampers[handle]
+	return h, ok
 }
 
 // tamperedSeat reports whether a seat is held by a tamper alarm (never

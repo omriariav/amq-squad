@@ -60,6 +60,7 @@ and the sidecar says `body: absent (<path> is a symlink (not copied))`
         body.json        the refused body, byte for byte (when present)
         head.json        its head, byte for byte (when present)
         quarantine.txt   the sidecar
+        recovered.txt    written by recovery; its presence retires the slot
 
 N is the head file's `seq`, decoded without verifying the head (its tag
 may be what failed); `unknown` when the head does not decode or is
@@ -68,6 +69,11 @@ a fresh temp directory beside the slots (`.copying-<hex>/`) and published
 by one rename to the slot name, so no reader ever sees a partial set. A
 rename onto a directory that is not empty fails, which is what makes
 publication exclusive.
+
+`recovered.txt` is created only by the recovery writer through the opened
+slot descriptor. It records the time, the lead and the link for a person;
+no code reads its content. It is never removed, and the three original slot
+files remain byte for byte unchanged.
 
 **The staged copy is written through the temp directory's own
 descriptor** (Codex's P2 on `6c2b48fc`, commit `90dd2e77`): right after
@@ -89,10 +95,12 @@ slot is looked at: absent, the rename is tried (and a rename that finds
 the slot taken by a concurrent refuser looks once more); present, the
 whole published set is compared, the presence of each file and its bytes,
 the sidecar without its `time:`, `leftover:` and `writer:` lines.
-Identical drops the temp directory and names the published slot (the read
+Identical drops the temp directory and names the published slot unless a
+recovery marked it with `recovered.txt` (the read
 path refuses on every tick: one copy; a prepare and then a writer refusing
 the same bytes with the same error are one refusal, and the slot records
-the first's verb and time). Different tries `commits.<h>.seq<N>.2`, then
+the first's verb and time). A marked or different slot tries
+`commits.<h>.seq<N>.2`, then
 `.3`, up to 100 slots per seq. A slot that is present but is not a
 published set (an empty directory, a set without `quarantine.txt`) is a
 named copy failure, never compared through, never renamed over (row A9).
