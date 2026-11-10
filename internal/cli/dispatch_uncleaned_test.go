@@ -1,11 +1,16 @@
 package cli
 
 import (
-	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -239,12 +244,12 @@ func TestDispatchWithNoLiveSchedulerKeepsTheCompatGrant(t *testing.T) {
 func TestDispatchWithLiveSchedulerFollowsCancelCleaning(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
-		cleanErr   error
 		runTick    bool
+		realFail   bool
 		wantRefuse bool
 	}{
 		{name: "after cancel before tick", wantRefuse: true},
-		{name: "after failed clean", runTick: true, cleanErr: errors.New("clean failed"), wantRefuse: true},
+		{name: "after failed clean", runTick: true, realFail: true, wantRefuse: true},
 		{name: "after successful clean", runTick: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -258,8 +263,13 @@ func TestDispatchWithLiveSchedulerFollowsCancelCleaning(t *testing.T) {
 			if _, err := store.Grant("t1", "qa", nil, time.Hour, now); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := store.Claim("t1", "qa", nil, time.Hour, now); err != nil {
+			claimed, err := store.Claim("t1", "qa", nil, time.Hour, now)
+			if err != nil {
 				t.Fatal(err)
+			}
+			var preparer scheduler.SeatPreparer = &dispatchCancelCleaner{}
+			if tc.realFail {
+				preparer = realDispatchFailingCleaner(t, store.Dir, claimed, now)
 			}
 			if _, err := store.Cancel("t1", "cto", "stop", now.Add(time.Second)); err != nil {
 				t.Fatal(err)
@@ -268,18 +278,28 @@ func TestDispatchWithLiveSchedulerFollowsCancelCleaning(t *testing.T) {
 				s, err := scheduler.New(scheduler.Options{
 					Store: store, Now: func() time.Time { return now.Add(2 * time.Second) },
 					Launcher: dispatchCancelLauncher{}, Exits: dispatchExitOK{},
-					Preparer: &dispatchCancelCleaner{err: tc.cleanErr}, Liveness: dispatchGoneLiveness{},
+					Preparer: preparer, Liveness: dispatchGoneLiveness{},
 					Config: scheduler.Config{IdleTimeout: time.Hour}, Incarnation: "liveclean",
 				})
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := s.Tick(); err != nil {
+				decisions, err := s.Tick()
+				if err != nil {
 					t.Fatal(err)
+				}
+				if tc.realFail {
+					found := false
+					for _, d := range decisions {
+						found = found || (d.Kind == "seat_clean_deferred" && strings.Contains(d.Reason, seatcommit.RefusalSeatHeadDetachedUnmerged))
+					}
+					if !found {
+						t.Fatalf("real failed clean decision = %+v", decisions)
+					}
 				}
 			}
 			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg to qa\n")
-			_, _, err := captureOutput(t, func() error {
+			_, _, err = captureOutput(t, func() error {
 				return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "next", "--body", "run", "--create-task", "--task-class", "script"})
 			})
 			if tc.wantRefuse {
@@ -303,6 +323,42 @@ func TestDispatchWithLiveSchedulerFollowsCancelCleaning(t *testing.T) {
 			}
 		})
 	}
+}
+
+func realDispatchFailingCleaner(t *testing.T, root string, tk taskstore.Task, now time.Time) *schedproc.CleanSeats {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(base, "repo")
+	worktree := filepath.Join(base, "wt-qa")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, repo, "init", "-q", "-b", "main")
+	mustWrite(t, filepath.Join(repo, "a.txt"), "base\n")
+	gitT(t, repo, "add", "-A")
+	gitT(t, repo, "commit", "-q", "-m", "base")
+	gitT(t, repo, "worktree", "add", "-q", "-b", "seat/qa", worktree, "main")
+	staged := launch.StagedDir(root, "qa")
+	if err := os.MkdirAll(staged, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	baseCommit := gitT(t, worktree, "rev-parse", "HEAD")
+	if err := launch.WriteFile(filepath.Join(staged, launch.FileName), launch.Record{Handle: "qa", Root: root, Session: "issue-96", Runtime: "codex", Worktree: worktree, Branch: "seat/qa", Base: baseCommit}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seatcommit.RecordWorktreeBase("git", root, "qa", worktree, "seat/qa", seatcommit.Target{BaseBranch: "main"}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := seatcommit.StartTask(root, "qa", "git", nil, tk, "", now); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(worktree, "a.txt"), "unrecorded local commit\n")
+	gitT(t, worktree, "add", "-A")
+	gitT(t, worktree, "commit", "-q", "-m", "unrecorded")
+	return &schedproc.CleanSeats{Root: root, Git: "git"}
 }
 
 func TestDispatchWithLiveSchedulerReturnsTheReservationRefusalUnwrapped(t *testing.T) {
@@ -335,5 +391,69 @@ func TestDispatchWithLiveSchedulerReturnsTheReservationRefusalUnwrapped(t *testi
 	}
 	if got, _ := store.Get("t2"); got.State != taskstore.StatePending || got.Lease != nil {
 		t.Fatalf("reserved dispatch leased t2: %+v", got)
+	}
+}
+
+// With no scheduler process, dispatch still meets both reservation marker
+// forms at the store boundary. A cancel marker keeps the reviewer's words;
+// a plain cleaner marker keeps the typed seat_unclean words. Neither path
+// creates a lease or sends AMQ.
+func TestDispatchWithNoLiveSchedulerRefusesReservationMarkers(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cancel bool
+	}{
+		{name: "cancel reservation", cancel: true},
+		{name: "plain cleaner marker"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withDispatchSchedulerLive(t, false)
+			now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+			dir := t.TempDir()
+			chdir(t, dir)
+			writeDispatchTeam(t, dir)
+			store := dispatchTestStore(t, dir, "issue-96")
+			cancelled := mustTask(t, store, "cancelled on qa")
+			if _, err := store.Grant(cancelled.ID, "qa", nil, time.Hour, now); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Cancel(cancelled.ID, "cto", "stop", now.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			next := mustTask(t, store, "next")
+			var nonce string
+			if tc.cancel {
+				later, gotNonce, _, err := store.ReserveCancel("qa", cancelled.ID, 1, now.Add(2*time.Second))
+				if err != nil || later != "" || gotNonce == "" {
+					t.Fatalf("cancel reservation = later %q nonce %q err %v", later, gotNonce, err)
+				}
+				nonce = gotNonce
+			} else {
+				_, gotNonce, err := store.ReserveSeat("qa", now.Add(2*time.Second))
+				if err != nil || gotNonce == "" {
+					t.Fatalf("cleaner reservation = nonce %q err %v", gotNonce, err)
+				}
+				nonce = gotNonce
+			}
+			t.Cleanup(func() { _ = store.ReleaseSeat("qa", nonce) })
+
+			previousNow := taskNow
+			taskNow = func() time.Time { return now.Add(3 * time.Second) }
+			t.Cleanup(func() { taskNow = previousNow })
+			calls := withAMQCommandSeams(t, amqEnv{Root: ".agent-mail/{session}", BaseRoot: ".agent-mail"}, "Sent msg to qa\n")
+			_, _, err := captureOutput(t, func() error {
+				return runDispatch([]string{"--session", "issue-96", "--role", "qa", "--subject", "next", "--body", "run", "--task", next.ID})
+			})
+			want := "seat qa is being closed and cleaned; dispatch again after it finishes"
+			if !tc.cancel {
+				want = "lease task " + next.ID + " before dispatch: seat_unclean: seat qa's worktree is not known clean since " + now.Add(2*time.Second).Format(time.RFC3339) + " (a CleanSeat runs, or did not finish)"
+			}
+			if err == nil || err.Error() != want || len(*calls) != 0 {
+				t.Fatalf("dispatch = %v, want %q, sends=%d", err, want, len(*calls))
+			}
+			if got, getErr := store.Get(next.ID); getErr != nil || got.State != taskstore.StatePending || got.Lease != nil {
+				t.Fatalf("refused task = %+v, %v", got, getErr)
+			}
+		})
 	}
 }

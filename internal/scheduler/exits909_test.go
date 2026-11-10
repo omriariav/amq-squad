@@ -266,6 +266,33 @@ func TestSecondCancelledAttemptOfTheSameTaskIsQueuedBesideTheFirst(t *testing.T)
 	if len(s.exitQueue) != 2 {
 		t.Fatalf("queued exits = %+v", s.exitQueue)
 	}
+
+	// The product path cannot create that shape today: Cancel is terminal,
+	// and the only requeue operation, Reset, accepts blocked tasks only. The
+	// first cancelled attempt therefore has to resolve before any later task
+	// incarnation can be granted; the matcher above remains attempt-specific
+	// for persisted ledgers and forward compatibility.
+	store, err := task.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tk, err := store.Add(task.AddInput{Title: "one task", Class: "script", Pool: &sonnet}, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Grant(tk.ID, "seat-a", &sonnet, time.Hour, t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Cancel(tk.ID, "lead", "stop", t0.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Reset(tk.ID, nil, t0.Add(2*time.Second)); err == nil || err.Error() != "task "+tk.ID+" is cancelled; reset takes a blocked task" {
+		t.Fatalf("requeue of the cancelled task = %v", err)
+	}
+	got, err := store.Get(tk.ID)
+	if err != nil || got.State != task.StateCancelled || len(got.Attempts) != 1 || got.Attempts[0].N != 1 || got.Attempts[0].CleanedAt != nil {
+		t.Fatalf("refused requeue changed the task: %+v, %v", got, err)
+	}
 }
 
 // P2-c (exits_test.go:156: the restart rows had no ExitsPath): the Close
