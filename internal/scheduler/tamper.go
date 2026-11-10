@@ -138,7 +138,7 @@ func (s *Scheduler) prepareFailed(t task.Task, handle string, err error, now tim
 	}
 	s.logOnce(Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()},
 		Decision{Kind: "seat_prepare_suppressed", TaskID: t.ID, Seat: handle, Reason: "the same prepare failure repeats; further repeats are counted, not logged, until the task, the seat or the reason changes: " + err.Error()},
-		t.UpdatedAt.UTC().Format(time.RFC3339Nano), reasonIdentity(err.Error()), log)
+		t.UpdatedAt.UTC().Format(time.RFC3339Nano), prepareIdentity(err.Error()), log)
 	return nil, nil
 }
 
@@ -362,6 +362,15 @@ var (
 // changed reason is logged again).
 func reasonIdentity(reason string) string {
 	return reasonDigits.ReplaceAllString(reasonPath.ReplaceAllString(reason, "<path>"), "#")
+}
+
+// prepareIdentity uses a refusal's typed code when one is present, while
+// retaining the base scheduler's path and digit masking for untyped errors.
+func prepareIdentity(reason string) string {
+	if code := refusalCode(reason); code != reason {
+		return code
+	}
+	return reasonIdentity(reason)
 }
 
 // covers reports whether a recovery answers this hold (the plan

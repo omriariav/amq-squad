@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -14,6 +15,19 @@ type compatibilitySeatPreparer struct {
 }
 
 type mixedLedgerPreparer struct{}
+
+type typedPlainHealthyPreparer struct{}
+
+func (typedPlainHealthyPreparer) PrepareSeat(handle string) error {
+	switch handle {
+	case "seat-a":
+		return &PrepareRefusal{Reason: "newer_writer", Detail: "written by v9.0.0", Route: task.RouteOwner}
+	case "seat-b":
+		return errors.New("seat_worktree_dirty: local changes remain")
+	default:
+		return nil
+	}
+}
 
 func (mixedLedgerPreparer) PrepareSeat(handle string) error {
 	switch handle {
@@ -50,6 +64,39 @@ func TestOneTickSeparatesTamperedIncompatibleAndHealthySeats(t *testing.T) {
 	}
 	if got := h.get(blocked.ID); got.State != task.StateBlocked || got.BlockReason != ReasonLedgerTampered {
 		t.Fatalf("tampered task = %+v", got)
+	}
+}
+
+func TestTypedRefusalExcludesWhileAPlainRefusalLogsOnce(t *testing.T) {
+	h := newHarness(t, Config{MaxSeats: 3, LeaseDuration: time.Hour, IdleTimeout: time.Hour})
+	h.s.Preparer = typedPlainHealthyPreparer{}
+	tk := h.add("healthy fallback", &sonnet)
+	h.up("seat-a", sonnet)
+	h.up("seat-b", sonnet)
+	h.up("seat-c", sonnet)
+	first := h.tick()
+	if countOf(first, "seat_excluded", "seat-a") != 1 || countOf(first, "seat_prepare_failed", "seat-b") != 1 || !has(first, "dispatched", tk.ID, "seat-c") {
+		t.Fatalf("typed, plain and healthy seats were not separated in one tick: %+v", first)
+	}
+	for range 9 {
+		first = append(first, h.tick()...)
+	}
+	if got := countOf(first, "seat_excluded", "seat-a"); got != 1 {
+		t.Fatalf("typed exclusion decisions = %d, want 1: %+v", got, first)
+	}
+
+	// Keep one ordinary failure pending for ten ticks so reverting the
+	// caller's suppression produces ten failure lines.
+	plain := newHarness(t, Config{MaxSeats: 1, LeaseDuration: time.Hour, IdleTimeout: time.Hour})
+	plain.s.Preparer = &tamperPreparer{seat: "seat-b", err: errors.New("seat_worktree_dirty: local changes remain")}
+	plain.add("plain failure", &sonnet)
+	plain.up("seat-b", sonnet)
+	var all []Decision
+	for range 10 {
+		all = append(all, plain.tick()...)
+	}
+	if got := countOf(all, "seat_prepare_failed", "seat-b"); got != 1 {
+		t.Fatalf("plain prepare failure lines = %d, want 1: %+v", got, all)
 	}
 }
 

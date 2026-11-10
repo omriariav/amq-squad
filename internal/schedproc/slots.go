@@ -1,6 +1,7 @@
 package schedproc
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -30,6 +31,8 @@ type Slots struct {
 	// Target is the launch's record of the owner's grant for each seat's
 	// commit step: repository, base branch and push URL (R2).
 	Target seatcommit.Target
+	// LogDecision records launch-time repairs such as a stale index refresh.
+	LogDecision func(scheduler.Decision)
 
 	mu    sync.Mutex
 	inUse map[string]string // handle -> request id
@@ -187,6 +190,13 @@ func (s *Slots) ensureWorktree(seat seatlaunch.Seat) (seatlaunch.Seat, error) {
 		}
 	}
 	if statErr == nil {
+		refreshed, err := cleanWorktree(g, gd, seat)
+		if err != nil {
+			return seat, err
+		}
+		if refreshed && s.LogDecision != nil {
+			s.LogDecision(scheduler.Decision{Kind: "seat_index_refreshed", Seat: seat.Handle, Reason: fmt.Sprintf("seat %s's index was stale; refreshed", seat.Handle)})
+		}
 		if err := moveWorktree(g, gd, common, seat, head, tip, cur); err != nil {
 			return seat, fmt.Errorf("seat %s worktree to the base tip %s: %v", seat.Handle, short(tip), err)
 		}
@@ -223,6 +233,17 @@ const ReasonSeatHeadUnreadable = "seat_head_unreadable"
 // branch's checked value (a detached HEAD's local commit): the harness never
 // discards a local commit.
 const ReasonSeatHeadDetachedUnmerged = "seat_head_detached_unmerged"
+
+// ReasonSeatWorktreeDirty refuses a roster plan of a seat whose worktree
+// has local changes, tracked or untracked (3.2.0-2b-1 item 2): the plan's
+// own check, after an index refresh, with the seat named; never read-tree's
+// text, which appears below the rule only when read-tree fails anyway.
+const ReasonSeatWorktreeDirty = "seat_worktree_dirty"
+
+// ReasonSeatWorktreeCheckFailed refuses a roster plan whose cleanliness
+// check could not run (git's diff-index or ls-files failed, or the refresh
+// failed on a tree the two then called clean).
+const ReasonSeatWorktreeCheckFailed = "seat_worktree_check_failed"
 
 // ReasonSeatBranchUnpushed refuses a seat's launch when its local resting
 // branch holds commits the base tip does not: the harness never discards a
@@ -375,6 +396,37 @@ func moveWorktree(g seatcommit.BaseGit, gd, common string, seat seatlaunch.Seat,
 // baseGit, baseShadow and newBaseShadow moved to seatcommit (BaseGit,
 // BaseShadow, NewBaseShadow) so the recovery's carry check uses the same
 // shadow and credentials as this fetch (the plan reviewer on #904).
+
+// cleanWorktree is the roster plan's own dirty-worktree check (3.2.0-2b-1
+// item 2, the instances of 2026-11-05: a stale index refused three plans
+// with "Entry 'MIGRATION.md' not uptodate"): the index is refreshed first
+// through the hardened git (stat data only, never content), then the
+// tracked diff against HEAD and the untracked, non-ignored files are read.
+// A tree clean after the refresh proceeds; it reports whether the refresh
+// changed the index (the caller logs that once). A tree still dirty refuses
+// with ReasonSeatWorktreeDirty and the seat named, before any read-tree.
+// update-index's nonzero exit is read only after the two listings: it
+// exits nonzero for a file that needs an update, which the listings then
+// name as dirty; a failed refresh on a clean tree is the check failing.
+func cleanWorktree(g seatcommit.BaseGit, gd string, seat seatlaunch.Seat) (bool, error) {
+	index := filepath.Join(gd, "index")
+	before, _ := os.ReadFile(index)
+	env := []string{"GIT_DIR=" + gd, "GIT_WORK_TREE=" + seat.Worktree, "GIT_INDEX_FILE=" + index}
+	_, refreshErr := g.Run(seat.Worktree, env, "update-index", "--refresh")
+	tracked, trackedErr := g.Run(seat.Worktree, env, "diff-index", "--name-only", "HEAD", "--")
+	untracked, untrackedErr := g.Run(seat.Worktree, env, "ls-files", "--others", "--exclude-standard")
+	if trackedErr != nil || untrackedErr != nil {
+		return false, fmt.Errorf("%s: seat %s: the worktree cleanliness check failed", ReasonSeatWorktreeCheckFailed, seat.Handle)
+	}
+	if tracked != "" || untracked != "" {
+		return false, fmt.Errorf("%s: seat %s: the worktree has local changes; archive or remove them before launch", ReasonSeatWorktreeDirty, seat.Handle)
+	}
+	if refreshErr != nil {
+		return false, fmt.Errorf("%s: seat %s: the index refresh failed", ReasonSeatWorktreeCheckFailed, seat.Handle)
+	}
+	after, _ := os.ReadFile(index)
+	return !bytes.Equal(before, after), nil
+}
 
 // commonDir is a checkout's common git directory, read from its .git.
 func commonDir(root string) (string, error) {
