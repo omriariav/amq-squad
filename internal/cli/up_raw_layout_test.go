@@ -30,14 +30,68 @@ func rawLayoutUpRun(t *testing.T) *upRun {
 	return &upRun{q: seatlaunch.Squad{BaseRoot: base, Session: "s"}}
 }
 
-func TestUpRefusesEveryBinaryBeforeTheRawLayout(t *testing.T) {
-	u := rawLayoutUpRun(t)
-	for _, version := range []string{"v3.1.2", "v3.2.0-rc.1"} {
-		err := u.checkLedgerDowngrade(version)
-		if err == nil || !strings.Contains(err.Error(), "predates that layout") || !strings.Contains(err.Error(), "roll forward or start a new session") {
-			t.Fatalf("%s: %v", version, err)
+func migratedRawLayoutUpRun(t *testing.T) *upRun {
+	return migratedRawLayoutUpRunWithLegacySibling(t, false)
+}
+
+func mixedRawAndLegacyUpRun(t *testing.T) *upRun {
+	return migratedRawLayoutUpRunWithLegacySibling(t, true)
+}
+
+func migratedRawLayoutUpRunWithLegacySibling(t *testing.T, sibling bool) *upRun {
+	t.Helper()
+	base := t.TempDir()
+	root := filepath.Join(base, "s")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed, err := sealchain.SessionKey(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const name, label = "commits.qa", "test"
+	if _, err := sealchain.Write(root, name, seed, label, nil, struct {
+		Schema int `json:"schema"`
+	}{Schema: 1}, func(*sealchain.Link) error { return nil }, time.Unix(1, 0)); err != nil {
+		t.Fatal(err)
+	}
+	head, err := os.ReadFile(sealchain.HeadPath(root, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sealchain.WriteRawBeforeHead(root, name, seed, label, head, []byte(`{"schema":1}`), "v3.2.0-rc.2", 1, func([]byte) error { return nil }, nil, time.Unix(2, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if sibling {
+		if _, err := sealchain.Write(root, "commits.legacy", seed, label, nil, struct {
+			Schema int `json:"schema"`
+		}{Schema: 1}, func(*sealchain.Link) error { return nil }, time.Unix(2, 0)); err != nil {
+			t.Fatal(err)
 		}
 	}
+	return &upRun{q: seatlaunch.Squad{BaseRoot: base, Session: "s"}}
+}
+
+func TestUpRefusesEveryBinaryBeforeTheRawLayout(t *testing.T) {
+	for _, fixture := range []struct {
+		name string
+		run  func(*testing.T) *upRun
+	}{
+		{name: "fresh raw chain", run: rawLayoutUpRun},
+		{name: "migrated legacy chain", run: migratedRawLayoutUpRun},
+		{name: "migrated chain with legacy sibling", run: mixedRawAndLegacyUpRun},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			u := fixture.run(t)
+			for _, version := range []string{"v3.1.2", "v3.2.0-rc.1"} {
+				err := u.checkLedgerDowngrade(version)
+				if err == nil || !strings.Contains(err.Error(), "predates that layout") || !strings.Contains(err.Error(), "roll forward or start a new session") {
+					t.Fatalf("%s: %v", version, err)
+				}
+			}
+		})
+	}
+	u := migratedRawLayoutUpRun(t)
 	for _, version := range []string{"v3.2.0-rc.2", "v3.2.0", "v4.0.0"} {
 		if err := u.checkLedgerDowngrade(version); err != nil {
 			t.Fatalf("%s: %v", version, err)

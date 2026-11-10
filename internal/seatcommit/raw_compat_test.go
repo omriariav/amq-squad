@@ -69,6 +69,102 @@ func TestWriteRawCompatibilityFixture(t *testing.T) {
 	t.Logf("commit fixture: %s", ledgerPath(root, "qa"))
 }
 
+// TestContinueRollbackCompatibilityFixture is the current-build half of the
+// rc.2 rollback measurement. A tag-local probe writes the legacy chain first;
+// this test performs the first rc.2 write or recovery in that same root.
+func TestContinueRollbackCompatibilityFixture(t *testing.T) {
+	root := os.Getenv("AMQSQ_ROLLBACK_FIXTURE_ROOT")
+	mode := os.Getenv("AMQSQ_ROLLBACK_MODE")
+	if root == "" || mode == "" {
+		t.Skip("set AMQSQ_ROLLBACK_FIXTURE_ROOT and AMQSQ_ROLLBACK_MODE")
+	}
+	l, err := ReadLedger(root, "qa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.At = time.Unix(30, 0)
+	switch mode {
+	case "f1", "f3":
+		if err := writeLedger(root, l, "rollback compatibility fixture"); err != nil {
+			t.Fatal(err)
+		}
+	case "f2":
+		crash := errors.New("rollback fixture crash after migration decision")
+		afterLayoutMigrationDecision = func(string, string, int) error { return crash }
+		t.Cleanup(func() { afterLayoutMigrationDecision = nil })
+		if err := writeLedger(root, l, "rollback interrupted migration fixture"); !errors.Is(err, crash) {
+			t.Fatalf("interrupted migration = %v", err)
+		}
+		afterLayoutMigrationDecision = nil
+	case "f4":
+		path := ledgerPath(root, "qa")
+		original := readFile(t, path)
+		edited := bytes.Replace(original, []byte(l.Base), []byte(strings.Repeat("0", len(l.Base))), 1)
+		if bytes.Equal(edited, original) {
+			t.Fatal("the legacy base was not present")
+		}
+		if err := os.WriteFile(path, edited, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := ReadLedger(root, "qa")
+		var q *QuarantinedError
+		if !errors.As(err, &q) {
+			t.Fatalf("tampered legacy fixture = %v", err)
+		}
+		if err := os.WriteFile(path, original, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		res, err := RecoverLedger(RecoverOptions{Root: root, Handle: "qa", Seq: q.Seq, Slot: 1, Lead: "cto", Reason: "rollback compatibility fixture", Now: time.Unix(40, 0)})
+		if err != nil || !res.Verified || res.SeqFrom != "verified_head" {
+			t.Fatalf("verified recovery = %+v, %v", res, err)
+		}
+	default:
+		t.Fatalf("unknown rollback fixture mode %q", mode)
+	}
+	got, err := ReadLedger(root, "qa")
+	if mode == "f2" {
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("current fixture mode=%s handle=%s seq=%d recovered=%+v", mode, got.Handle, got.Seal.Seq, got.Recovered)
+}
+
+// TestRollbackRollForwardCompatibility is run after an old tag probe has
+// read or written the fixture. Every current read must avoid ledger_tampered;
+// an F3 legacy seat advanced by the old writer is migrated by this write.
+func TestRollbackRollForwardCompatibility(t *testing.T) {
+	root := os.Getenv("AMQSQ_ROLLFORWARD_ROOT")
+	if root == "" {
+		t.Skip("set AMQSQ_ROLLFORWARD_ROOT")
+	}
+	for _, handle := range []string{"qa", "legacy"} {
+		path := ledgerPath(root, handle)
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		l, err := ReadLedger(root, handle)
+		t.Logf("roll-forward read handle=%s error=%v", handle, err)
+		if errors.Is(err, sealchain.ErrTampered) {
+			t.Fatalf("roll-forward raised ledger_tampered for %s: %v", handle, err)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if handle == "legacy" {
+			l.At = time.Unix(50, 0)
+			if err := writeLedger(root, l, "rollback roll-forward fixture"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := ReadLedger(root, handle); err != nil {
+				t.Fatalf("migrated legacy seat = %v", err)
+			}
+		}
+	}
+}
+
 func TestCommitCompatibilityRefusalsAreTypedAndNotQuarantined(t *testing.T) {
 	for _, tc := range []struct {
 		name, version, reason, route string
