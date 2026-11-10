@@ -639,7 +639,7 @@ func TestADocumentVerifyingAgainIsReleasedByARecordedDecision(t *testing.T) {
 	if err != nil || after.Seal.Seq != before.Seal.Seq+1 || after.Seal.Prev != before.Seal.Tag {
 		t.Fatalf("the next link: %v %+v", err, after.Seal)
 	}
-	if after.Recovered == nil || !after.Recovered.Verified || after.Recovered.Slot != q.Slot || after.Recovered.Seq != before.Seal.Seq || after.Recovered.BodySHA256 != digestOf(slotBody) {
+	if after.Recovered == nil || !after.Recovered.Verified || after.Recovered.Slot != q.Slot || after.Recovered.Seq != before.Seal.Seq || after.Recovered.SeqFrom != "verified_head" || after.Recovered.BodySHA256 != digestOf(slotBody) {
 		t.Fatalf("the record: %+v", after.Recovered)
 	}
 	if len(after.Commits) != 1 || after.Commits[0].Commit != before.Commits[0].Commit || after.Commits[0].Note != "" || after.Base != before.Base || after.Rest != before.Rest {

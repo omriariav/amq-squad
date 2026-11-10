@@ -148,29 +148,36 @@ func TestLedgerProductionWritersUseOnlyTheRawPath(t *testing.T) {
 
 func TestRawWriterGuardListsEveryCallerAndRejectsAThirdRecoveryCaller(t *testing.T) {
 	want := map[string]bool{
-		"ledger.go:writeLedger:saveRawLedger":                            true,
-		"ledger.go:saveRawLedger:saveRawLedgerBeforeHead":                true,
-		"recover.go:recoverWrite:saveRawLedgerBeforeHead":                true,
-		"ledger.go:saveRawLedgerBeforeHead:sealchain.WriteRawAfter":      true,
-		"ledger.go:saveRawLedgerBeforeHead:sealchain.WriteRawBeforeHead": true,
-		"exits.go:writeExits:sealchain.WriteRawBeforeHead":               true,
+		"seatcommit/ledger.go:writeLedger:saveRawLedger":                            true,
+		"seatcommit/ledger.go:saveRawLedger:saveRawLedgerBeforeHead":                true,
+		"seatcommit/recover.go:recoverWrite:saveRawLedgerBeforeHead":                true,
+		"seatcommit/ledger.go:saveRawLedgerBeforeHead:sealchain.WriteRawAfter":      true,
+		"seatcommit/ledger.go:saveRawLedgerBeforeHead:sealchain.WriteRawBeforeHead": true,
+		"scheduler/exits.go:writeExits:sealchain.WriteRawBeforeHead":                true,
 	}
 	got := map[string]bool{}
-	for _, name := range goFiles(t, ".") {
-		source, err := os.ReadFile(name)
+	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			t.Fatal(err)
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		name, err := filepath.Rel("..", path)
+		if err != nil {
+			return err
 		}
 		for _, call := range rawWriterCalls(t, name, source) {
 			got[call] = true
 		}
-	}
-	exitsSource, err := os.ReadFile("../scheduler/exits.go")
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	for _, call := range rawWriterCalls(t, "exits.go", exitsSource) {
-		got[call] = true
 	}
 	for call := range want {
 		if !got[call] {
@@ -182,9 +189,13 @@ func TestRawWriterGuardListsEveryCallerAndRejectsAThirdRecoveryCaller(t *testing
 			t.Errorf("unreviewed raw writer caller %s", call)
 		}
 	}
-	plant := []byte(`package seatcommit; func planted() { _, _ = saveRawLedgerBeforeHead("", sealchain.Seed{}, nil, nil, Ledger{}, false, nil, time.Time{}) }`)
-	if calls := rawWriterCalls(t, "plant.go", plant); len(calls) != 1 || !strings.Contains(calls[0], "plant.go:planted:saveRawLedgerBeforeHead") {
-		t.Fatalf("planted third caller passed: %v", calls)
+	plant := []byte(`package schedproc
+
+	import "github.com/omriariav/amq-squad/v3/internal/sealchain"
+
+	func planted() { _, _ = sealchain.WriteRawAfter("", sealchain.Seed{}, nil, nil) }`)
+	if calls := rawWriterCalls(t, "schedproc/plant.go", plant); len(calls) != 1 || calls[0] != "schedproc/plant.go:planted:sealchain.WriteRawAfter" {
+		t.Fatalf("planted schedproc caller passed: %v", calls)
 	}
 }
 
@@ -230,7 +241,7 @@ func rawWriterCalls(t *testing.T, name string, source []byte) []string {
 				}
 			}
 			if callee != "" {
-				out = append(out, filepath.Base(name)+":"+fd.Name.Name+":"+callee)
+				out = append(out, filepath.ToSlash(name)+":"+fd.Name.Name+":"+callee)
 			}
 			return true
 		})

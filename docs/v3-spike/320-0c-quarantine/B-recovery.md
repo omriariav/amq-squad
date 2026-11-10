@@ -2758,14 +2758,20 @@ listed with output in Round 2, and no unrun revert is presented as a result.
 |---|---|
 | R1 | `TestRecoveryContinuesTheChainAfterTheQuarantinedSeq` |
 | R2 | `TestRecoveryMigratesALegacyLedgerThroughTheRawWriter` |
-| R3 | `TestRecoveryContinuesAfterAnInterruptedRawMigration` |
-| R4 | `TestRecoveredLedgerRemainsStrictSchemaOne` |
-| R5 | `TestRecoveryIsTamperOnlyForCompatibilityRefusals` |
-| R6 | `TestLedgerProductionWritersUseOnlyTheRawPath` |
-| R7 | scheduler tamper and compatibility exclusion rows |
-| R8 | alarm torn-tail rows |
-| R9 | carry and replay rows |
-| R10 | recovery immutability and uninstall rows |
+| R3 | `TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm` |
+| R4 | `TestRecoveryRefusesASlotBodyThatIsNeitherLayout`; `TestRecoveryRefusesANeitherLayoutHeadWithNoBody` |
+| R6 | `TestOneTickSeparatesTamperedIncompatibleAndHealthySeats` |
+| R7 | `TestRecoveredLedgerRemainsStrictSchemaOne` |
+| R8 | `TestRawHeadSwapQuarantinesTheHeadThatWasChecked` |
+| R9/P5 | `TestLedgerProductionWritersUseOnlyTheRawPath`; `TestRawWriterGuardListsEveryCallerAndRejectsAThirdRecoveryCaller` |
+| R11 | `TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence` |
+| R11 max | `TestRecoveryTreatsTheMaximumClaimedSequenceAsUnknown` |
+| R12 | `TestInterruptedMigrationRecoveryDedupesTheOriginalDecision` |
+| R13 | `TestRetryCompletesARecoveredRawBodyAboveALegacyHead` |
+| R14 | `TestRecoveryRefusesWhenEvidenceRefsCannotBeObserved` |
+| P1/R5 | `TestRecoveryIsTamperOnlyForCompatibilityRefusals` |
+| P3 | `TestRecoveryMigratesALegacyBodyWithNoUsableHead` |
+| P4 | `TestPrepareErrorWrapsOnlyTamperingAsALedgerAlarm` |
 
 The schema stays 1: `Ledger.Recovered` and `LedgerCommit.Note` are known
 schema-1 fields. Any other authenticated unknown field under seal schema 1 is
@@ -2774,9 +2780,9 @@ Recovery is tamper-only for both classifications.
 
 The lock order is the seat ledger lock first, then the scheduler decision
 JSONL lock when a legacy-to-raw migration record is appended. No inverse path
-was found. Outside `internal/seatcommit`, there is no production quarantine
-path builder: CLI, schedproc, and scheduler only describe or pass through the
-slot identity; uninstall owns only the top-level directory classification.
+was found. Outside `internal/seatcommit`, uninstall's generic extension walk
+builds paths that can name the quarantine directory. CLI, schedproc, and
+scheduler only describe or pass through the slot identity.
 
 Focused runs on this port passed:
 
@@ -2847,11 +2853,11 @@ including its two blank separator lines.
 | R3 | `TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm`, `internal/seatcommit/raw_compat_test.go:806`; five slot forms assert chosen seq, tag source, migration flag, and migration sequences | round 3 focused suite |
 | R4 | `TestRecoveryRefusesASlotBodyThatIsNeitherLayout`, `internal/seatcommit/raw_compat_test.go:535`; `TestRecoveryRefusesANeitherLayoutHeadWithNoBody`, `internal/seatcommit/raw_compat_test.go:562` | round 3 focused suite |
 | R6 | `TestOneTickSeparatesTamperedIncompatibleAndHealthySeats`, `internal/scheduler/seat_exclusion_320_test.go:33` | round 3 focused suite |
-| R7 | `TestRecoveredLedgerRemainsStrictSchemaOne`, `internal/seatcommit/recover_test.go:515` | round 3 focused suite |
+| R7 | `TestRecoveredLedgerRemainsStrictSchemaOne`, `internal/seatcommit/recover_test.go:520` | round 3 focused suite |
 | R8 | `TestRawHeadSwapQuarantinesTheHeadThatWasChecked`, `internal/seatcommit/quarantine_test.go:505` | round 3 focused suite |
 | R9/P5 | `TestLedgerProductionWritersUseOnlyTheRawPath`, `internal/seatcommit/quarantine_callers_test.go:118`; `TestRawWriterGuardListsEveryCallerAndRejectsAThirdRecoveryCaller`, line 149 | round 3 focused suite |
 | R11 | `TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence`, `internal/seatcommit/raw_compat_test.go:206` | round 3 focused suite |
-| R11 max | replaced by R19's named bound tests in `internal/seatcommit/raw_compat_test.go:319` | round 3 focused suite |
+| R11 max | `TestRecoveryTreatsTheMaximumClaimedSequenceAsUnknown`, `internal/seatcommit/raw_compat_test.go:269`; the wider copied-input bounds are R19 | round 3 focused suite |
 | R12 | `TestInterruptedMigrationRecoveryDedupesTheOriginalDecision`, `internal/seatcommit/raw_compat_test.go:744` | round 3 focused suite |
 | R13 | `TestRetryCompletesARecoveredRawBodyAboveALegacyHead`, `internal/seatcommit/raw_compat_test.go:776` | round 3 focused suite |
 | R14 | `TestRecoveryRefusesWhenEvidenceRefsCannotBeObserved`, `internal/seatcommit/recover_test.go:224` | round 3 focused suite |
@@ -2945,7 +2951,7 @@ sockets). CLI context tests also observe this live seat's role/rules digest,
 and seat-commit tests correctly refuse from inside a seat. No focused changed
 row failed. The lead reruns the locked full gates on the PR head.
 
-## Round 3
+## Round 3b
 
 Round 3 starts from the saved t131/#935 patch at
 `/Users/omri/.claude/jobs/6dd424c9/tmp/t131-pr935.patch`. Its SHA-256 is
@@ -2958,7 +2964,7 @@ add` of the declared paths. The staged binary diff had the same SHA-256 and
 `ef4e3a6d3a96a26e323e7624ba9a80b8fee2cd6c`. Thus the applied diff equals
 the saved patch before this round's additions.
 
-### Round 3 sequence, layout, and durability rules
+### Round 3b sequence, layout, and durability rules
 
 A sequence copied from refused head or body bytes is plausible only from 1
 through 9007199254740990. This leaves a successor no greater than
@@ -2972,10 +2978,13 @@ verifies.
 
 No released binary wrote a `seq0` or negative-sequence quarantine slot. The
 new reader treats such edited claims as unknown. At the platform integer
-maximum, raw writers return `sealchain.ErrSeqExhausted` before their save
-callback. The seat writer names the seat and says "the ledger's sequence is
-exhausted". Verified recovery at that maximum uses D1.c's slot-invalid
-refusal before a write.
+maximum, raw writers ordinarily return `sealchain.ErrSeqExhausted` before
+their save callback. The exception is an interrupted migration with a legacy
+head at MaxInt-1 and its raw successor body at MaxInt: the same write completes
+the head and records the migration before returning the exhaustion refusal, so
+the refusal is not before every byte change; the body does not change. The seat
+writer names the seat and says "the ledger's sequence is exhausted". Verified
+recovery at that maximum uses D1.c's slot-invalid refusal before a write.
 
 Recovery records a layout migration only for legacy evidence. A usable head
 decides the evidence layout. Without one, the body decides it: a legacy body
@@ -3002,14 +3011,14 @@ same pre-head closure. The measured R15 migration sequences are:
 | interrupted migration | 2 | 2, 4 |
 
 The two refused forms can record migration decisions at different sequences.
-This is the measured, admitted result; deduplication remains per ledger kind,
-seat, and sequence.
+This is the measured result submitted for the plan reviewer's ruling;
+deduplication remains per ledger kind, seat, and sequence.
 
 The alarm append's open reports whether it created the file. The first append
 syncs the file and the ledger directory once each. A later append syncs only
 the file. A directory-sync failure is returned through the recovery decision.
 
-### Round 3 rows
+### Round 3b rows
 
 | Row | Named test |
 |---|---|
@@ -3049,7 +3058,8 @@ walks all non-test Go under `internal`, not only `internal/seatcommit`.
 
 ### Revert evidence
 
-The lead's revert runs, pasted as supplied:
+An abbreviated excerpt from the lead's first revert record follows. Round 3c
+pastes both source files whole and supersedes this excerpt:
 
 ```text
 Revert runs on PR #934 head fa6bb69998f48e607ec7a4e76b4f3761e889d53f, the lead's scratch worktree, 2026-11-10 02:47 to 02:57 IST.
@@ -3171,6 +3181,366 @@ permitted`; the lead reruns the locked complete gates.
   same denied CLI decision socket and the live seat's expected role/rules
   digest warnings. The run was stopped after those environmental failures
   were established rather than waiting for its 20-minute timeout.
+
+## Round 3c release gate
+
+Round 3b's seat completed its task with A5 unmet and raised no `task block`;
+the lead's gate on `adf80543` found it, and round 3c writes the row. The
+omission was a test-evidence gap, not a production block, and the round 3c
+results below find no release block. Round 3d carries #937's saved patch,
+whose SHA-256 is
+`0f10d936da2e36366b600a1fd8ac148f5777d8b3e728a09bb8cfaab70d946b07`.
+Before round 3d's edits, `git write-tree` printed
+`a45d183dbece47c636df6e15b4db1d593ef7c09e`.
+
+### Round 3c rows and negative controls
+
+| Row | Test and outcome | Isolated production revert and first failure |
+|---|---|---|
+| T1, scheduler-level A5 | `TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads`, `internal/schedproc/recover_test.go:247`; raw and legacy heads, with and without a decision retry, release one hold, reset one task, and dispatch once. The retry is `AlreadyRecovered`, leaves the body unchanged, records one `ledger_recovered`, and later ticks never release again. `RecordTarget` leaves a verifying recovered raw ledger; raw records no migration and legacy records exactly one. | At `internal/scheduler/scheduler.go:654`, replaced `s.applyRecoveries(now, log)` with `error(nil)`. All four forms failed first at `internal/schedproc/recover_test.go:270`: `first tick did not release, reset, and dispatch exactly once: []`. |
+| T2, legacy C1b | `TestLegacyBodyWithImplausibleSequenceUsesVerifiedHeadAndChecksCarry`, `internal/seatcommit/raw_compat_test.go:467`; an embedded seal at 2^53 with a tag is ignored under a verified legacy head, unknown carry refuses without changing the ledger, head, slot, or decisions, and the accepted recovery uses N+1, old N, `verified_head`, the exact carried Note, and one migration at N+1. | At `internal/seatcommit/recover.go:638`, replaced `plausibleCopiedSeq(l.Seal.Seq)` with `l.Seal.Seq > 0`. It failed first at `internal/seatcommit/raw_compat_test.go:494`: the recovery chose sequence 9007199254740993 from `body_seal`. |
+| T2b / E1, ruling 1 literal legacy shapes | `TestLegacyShapeWithUnusableSealStillUsesVerifiedHead`, `internal/seatcommit/raw_compat_test.go:522`, writes literal `{"seq":1}` and `{}` seal values. A real pushed entry present in the body is refused with `recover_entry_unknown` and `holds no body that decodes`; ledger, head, slot, and decisions stay unchanged. Recovery without carry uses N+1 from `verified_head`, leaves zero commits, and records one migration. The neither-layout contract remains `TestRecoveryRefusesASlotBodyThatIsNeitherLayout`. | Removed `|| legacy.Seal.Tag == ""` at `internal/seatcommit/recover.go:797`. The isolated run failed first at `internal/seatcommit/raw_compat_test.go:548`: `not a recovery refusal: <nil>`. |
+| E2, untagged legacy body without a usable head | `TestUntaggedLegacyBodyWithoutAUsableHeadRefusesSequenceUnknown`, `internal/seatcommit/raw_compat_test.go:571`, writes literal `{"seq":3}` under a garbage head. `--seq unknown` returns `recover_seq_unknown`; ledger, head, slot, and decisions stay unchanged. | Replaced `plausibleCopiedSeq(l.Seal.Seq) && l.Seal.Tag != ""` with `plausibleCopiedSeq(l.Seal.Seq)` at `internal/seatcommit/recover.go:638`. The isolated run failed first at `internal/seatcommit/raw_compat_test.go:577`: `the legacy body-link condition no longer requires a tag`. |
+| T3, persisted verified source | `TestADocumentVerifyingAgainIsReleasedByARecordedDecision`, `internal/seatcommit/recover_test.go:599`, reads the ledger after recovery and requires `Recovered.SeqFrom == "verified_head"`. | At `internal/seatcommit/recover.go:408`, removed `SeqFrom: "verified_head"` from the persisted `LedgerRecovery`. The lead's #937 run failed first at `internal/seatcommit/recover_test.go:643`, printing the record with an empty `SeqFrom`. |
+| T4.1, raw implausible-body carry | `TestKnownRawBodyWithImplausibleSequenceStillChecksCarriedEntries`, `internal/seatcommit/raw_compat_test.go:403`, requires head N+1, the exact carried Note, and no recovery decision after refusal. | Changed the production carried Note words at `internal/seatcommit/recover.go:780`. The lead's #937 run failed first at `internal/seatcommit/raw_compat_test.go:435`, printing the wrong Note. |
+| T4.2, five R15 forms | `TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm`, `internal/seatcommit/raw_compat_test.go:975`, requires each form's exact `SeqFrom` and carried Note. | Changed the production Note to name another sequence at `internal/seatcommit/recover.go:780`. The lead's #937 run lists the five named subtests as failures; its first package failure is `internal/seatcommit/raw_compat_test.go:435`, the earlier owning row's exact-Note assertion. |
+| T4.3, maximum verified refusal | `TestVerifiedRecoveryAtMaximumSequenceRefusesBeforeWriting`, `internal/seatcommit/raw_compat_test.go:669`, requires the whole refusal sentence including the seat handle. | Changed the handle used by the production refusal at `internal/seatcommit/recover.go:399`. The lead's #937 run failed first at `internal/seatcommit/raw_compat_test.go:613`: `verified maximum = recover_slot_invalid: the commits ledger of seat another ...`. |
+| T4.4, R11 migration and source | `TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence`, `internal/seatcommit/raw_compat_test.go:206`, requires raw and legacy migration counts plus equality between the result and persisted `seq_from`. `TestRecoveryDecisionNamesTheActualSequenceSource`, `internal/schedproc/recover_test.go:28`, pins the decision line's `claimed head` words. | Made a no-head body always migrate: the lead's #937 run failed first at `internal/seatcommit/raw_compat_test.go:253`, `migration lines = [8], want []`. Dropped persisted tamper-path `SeqFrom`: it failed first at line 242 with an incomplete recovered record. |
+| T4.5, refusal decision helper | `assertNoRecoveryDecision`, `internal/seatcommit/raw_compat_test.go:1275`, is exercised by the named T2, T2b, E2, raw-implausible, maximum, and other refusal rows and rejects `ledger_recovered`, `ledger_hold_released`, and `ledger_layout_migrated`. | The isolated assertion control planted `{"kind":"ledger_hold_released"}` in the decision log immediately before the helper. It failed first at `internal/seatcommit/raw_compat_test.go:1299`: `refusal wrote a decision: {"kind":"ledger_hold_released"}`. The temporary test was removed. |
+| T4.6, alarm sync order | `TestAlarmAppendSyncsNewDirectoryEntryOnce`, `internal/seatcommit/alarms_test.go:138`, requires file sync before directory sync as well as the counts. | Swapped the two `errors.Join` operands at `internal/seatcommit/alarms.go:178`. The lead's #937 run failed first at `internal/seatcommit/alarms_test.go:152`: `first append sync order = [directory file]`. |
+| T5, whole-internal writer guard | `TestRawWriterGuardListsEveryCallerAndRejectsAThirdRecoveryCaller`, `internal/seatcommit/quarantine_callers_test.go:149`, walks every production Go file under `internal`, holds the complete allowlist, and tests its parser with a schedproc `WriteRawAfter` caller. | Planted `sealchain.WriteRawAfter` in temporary production file `internal/schedproc/t133_raw_writer_plant.go`. The guard failed first at `internal/seatcommit/quarantine_callers_test.go:189`: `unreviewed raw writer caller schedproc/t133_raw_writer_plant.go:t133RawWriterPlant:sealchain.WriteRawAfter`. The file was then removed. |
+
+Each negative control was applied alone and restored before the next. The final
+diff contains no non-test Go file.
+
+The two round 3c carry rows have distinct reasons:
+`TestKnownRawBodyWithImplausibleSequenceStillChecksCarriedEntries` was
+strengthened because ignoring an unusable sequence must not skip the
+checked-entry membership and origin proof;
+`TestLegacyBodyWithImplausibleSequenceUsesVerifiedHeadAndChecksCarry` was
+added because C1b previously covered only the raw representation.
+
+Against #904, `TestRecoveryCarriesOnlyCheckedEntries` and
+`TestCarryCheckIgnoresTheSeatsGitConfig` changed only in their tamper fixture.
+#904 unmarshalled the whole ledger as one JSON document and wrote it back
+re-marshalled. Under raw-bytes-v1 each fixture now uses `sealchain.SplitRaw`,
+edits `rawDocumentBody`, and rejoins the edited body under the old seal with
+`sealchain.JoinRaw`. The result is a raw-layout ledger whose body no longer
+matches its seal. No assertion in either test changed. The seat checked this
+against #904 head `921c54aec2834e6b2d9f78a6ce558a9ec146c5b4`.
+
+### Limits
+
+- The duplicate migration lines are admitted for rc.2 by the plan reviewer,
+  ruling 3 on #937: "The duplicate lines are informational, each is deduped at
+  its own seq by the rule as written, and nothing is granted or lost." After a
+  second decision on a refused legacy form, the measured migration records are:
+  raw head / raw body 0; raw head / legacy body 0; legacy head / raw body with
+  a gap 2, at sequences 4 and 5; legacy head / legacy body 1, at sequence 2;
+  interrupted migration 2, at sequences 2 and 4. Dedupe is per ledger kind,
+  seat, and sequence. The named 3.2.x item is, in the reviewer's words: "one
+  migration record per chain, keyed by the handle, since a chain migrates once;
+  the second decision after a crash then records nothing new."
+- The interrupted migration at the maximum sequence is admitted by the plan
+  reviewer, ruling 2 on #936, with no code change: "Completing the interrupted
+  migration before the exhaustion refusal is the consistent order, the ledger
+  stays consistent, and nothing is granted." In the lead's measurement on
+  `adf80543`, one ordinary write on a legacy head at MaxInt-1 under a raw
+  successor body at MaxInt completes the head as raw-bytes-v1, records exactly
+  one `ledger_layout_migrated` line at MaxInt, and the same write then returns
+  the exhaustion error. The body is unchanged, the ledger verifies, and no
+  quarantine is created.
+- Ruling 1 on #936, as restated by the reviewer on #937, is: "A known-layout
+  body whose seal is not a plausible link, under a verifying head, recovers
+  from the head; the head is the stronger evidence. Where the body's seal has
+  no tag, nothing is carried: sealchain.Seal always writes a tag, so such a body
+  is not a document the harness sealed." T2b and E1 pin this; the neither-layout
+  refusal stays `TestRecoveryRefusesASlotBodyThatIsNeitherLayout`, and E2 pins
+  the no-usable-head form. On #937 the lead measured that a legacy-shaped body
+  without a tag can carry no entry, whether or not the entry is present in the
+  body and origin. `documentBody`, `internal/seatcommit/recover.go:787`, returns
+  no body, so carry refuses `recover_entry_unknown` with "holds no body that
+  decodes; nothing can be carried from it". Recovery with no carry succeeds at
+  N+1 and the new ledger holds zero commits. The plan reviewer accepted this in
+  ruling 2 on #937: "accept. An untagged legacy body carries nothing; it fails
+  closed, and the lead recovers with no carry."
+
+As a production change of round 3b, `evidenceSeqOf` at
+`internal/seatcommit/recover.go:840` returns its observation error wrapped as
+`git for-each-ref evidence refs: %w` instead of substituting zero. The row
+`TestRecoveryRefusesWhenEvidenceRefsCannotBeObserved` pins
+`recover_base_unobserved`, the command in the refusal, and no write.
+
+The quarantine inventory command was run as written:
+
+```sh
+rg -n 'QuarantineDir|"quarantine"|sealedNames' internal --glob '*.go' --glob '!internal/seatcommit/**' --glob '!**/*_test.go'
+```
+
+It finds uninstall's generic extension walk as the only external path builder;
+CLI, schedproc, and scheduler only describe or pass a slot identity.
+
+### Round 3c seat verification
+
+The final restored tree passed:
+
+- `go test ./internal/seatcommit ./internal/schedproc ./internal/scheduler
+  -count=1`: seatcommit 122.311 s, schedproc 32.949 s, scheduler 22.814 s.
+- `go vet ./internal/seatcommit ./internal/schedproc ./internal/scheduler`:
+  exit 0.
+- The focused T1 test passed all four raw/legacy and retry/no-retry forms.
+- The focused T2, T2b, T3, T4, and T5 rows passed after their isolated
+  mutations were restored.
+- `git diff --check` passed, and the declared Go diff contains test files only.
+
+The seat runs these commands unlocked. The lead reruns the full Go tests, vet,
+and every exact negative control under the host gate lock on the final PR head.
+
+### Round 3d seat verification
+
+- The saved #937 patch had the required SHA-256
+  `0f10d936da2e36366b600a1fd8ac148f5777d8b3e728a09bb8cfaab70d946b07`;
+  before round 3d edits, `git write-tree` printed the required
+  `a45d183dbece47c636df6e15b4db1d593ef7c09e`.
+- The focused E1 and E2 command passed. E1's document-body revert failed first
+  at `raw_compat_test.go:548`, and E2's body-link revert failed first at
+  `raw_compat_test.go:577`; each production mutation was restored immediately.
+- `go test ./internal/seatcommit ./internal/schedproc -count=1`: exit 0,
+  seatcommit 114.209 s and schedproc 21.826 s.
+- `go vet ./internal/seatcommit ./internal/schedproc`: exit 0.
+- `git diff --check` and the evidence redaction check passed. The complete diff
+  contains no non-test Go file.
+
+These commands ran unlocked in the seat. The lead reruns the locked gates and
+the exact revert runs on the PR head.
+
+### Complete lead revert records supplied to round 3c
+
+The following two blocks are pasted whole from the named files. They are not
+abbreviated. The single trailing space after `vet exit 0` in the #936 source
+is omitted so the Markdown passes the repository whitespace gate.
+
+#### `gate-934-reverts.txt`
+
+```text
+Revert runs on PR #934 head fa6bb69998f48e607ec7a4e76b4f3761e889d53f, worktree /Users/omri/scratch-revert-934, 2026-11-10 02:47 to 02:57 IST.
+Script: T/rev934.py (each entry: one string edit asserted to occur once, `go test <pkg> -run <the tests of recover_test.go, raw_compat_test.go, quarantine_test.go> -count=1`, the file restored). The exact edits are in the script.
+
+[baseline seatcommit REC] exit 0 ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	32.193s
+[D1.a name check removed] exit 0; failing: NONE (not caught)
+    first: ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	34.876s
+[D1.a named seq ignores the claimed head seq] exit 1; failing: TestADecisionByAlarmAnswersAHoldNoSlotCan, TestRecoveryRefusesTheMaximumClaimedSequence, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence
+    first: raw_compat_test.go:193: recovery = {Handle: AlreadyRecovered:false Verified:false Alarm: Slot: OldSeq:0 NewSeq:0 Prev: SeqFrom: BodySHA256: HeadSHA256: Base: Carried:[]}, recover_slot_invalid: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutRe
+[D1.b claimed seq left out of the max] exit 1; failing: TestRecoveryRefusesTheMaximumClaimedSequence, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence
+    first: raw_compat_test.go:193: recovery = {Handle:s1 AlreadyRecovered:false Verified:false Alarm: Slot:<tmp>/quarantine/commits.s1.seq7 OldSeq:7 Ne
+[D1.c MaxInt check removed] exit 1; failing: TestRecoveryRefusesTheMaximumClaimedSequence
+    first: raw_compat_test.go:213: maximum seq refusal = recover_write_failed: layout migration decision path, ledger kind, and sequence are required
+[D2 interrupted migration written as migrating] exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision, TestRecoveryContinuesAfterAnInterruptedRawMigration
+    first: raw_compat_test.go:419: migration decisions = 2: {"at":"2026-11-10T00:51:56.65212Z","kind":"ledger_layout_migrated","ledger_kind":"commits","seat":"s1","seq":2,"reason":"legacy commit ledger migrated to raw-bytes-v1 at link 2"}
+[D2 interrupted migration record not written] exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision, TestRecoveryContinuesAfterAnInterruptedRawMigration
+    first: raw_compat_test.go:417: open <tmp>/scheduler/decisions.jsonl: no such file or directory
+[D2 no interrupted-migration branch in link] exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision, TestRecoveryContinuesAfterAnInterruptedRawMigration, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm
+    first: raw_compat_test.go:412: recovery after interrupted migration = {Seq:3 Prev:429b3a1243b4ea2461c335f205726c637a033d41fcb24237ec2957ee9d9aa400 Tag:be043a193730d0caa5277d5664d4e98cf0e1946bd745d8a0276c85686f78d372 Version:(devel) Schema:1}, <nil>
+[D3 retry does not complete the migration] exit 1; failing: TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm, TestRetryCompletesARecoveredRawBodyAboveALegacyHead
+    first: raw_compat_test.go:481: completed head = "", <nil>
+[D4 evidence seq error ignored] exit 1; failing: TestRecoveryRefusesWhenEvidenceRefsCannotBeObserved
+    first: recover_test.go:235: not a recovery refusal: <nil>
+[D5 a body of neither layout accepted] exit 1; failing: TestRecoveryRefusesASlotBodyThatIsNeitherLayout
+    first: raw_compat_test.go:233: not a recovery refusal: <nil>
+[P1 no compat branch in recordAlarm] exit 1; failing: TestRecoveryIsTamperOnlyForCompatibilityRefusals
+    first: raw_compat_test.go:117: alarm recovery refusal = recover_alarm_unverified: the commits ledger of seat s1 cannot be read as a document (commit ledger s1: newer_writer: the seat's commit record was written by a newer amq-squad (v9.0.0); install it with amq-squad up --binary <that build>: unknown field
+[P1 no compat case in recoverLedger] exit 1; failing: TestRecoveryIsTamperOnlyForCompatibilityRefusals
+    first: raw_compat_test.go:113: recovery refusal = recover_write_failed: the commits ledger of seat s1 cannot be read: commit ledger s1: newer_writer: the seat's commit record was written by a newer amq-squad (v9.0.0); install it with amq-squad up --binary <that build>: unknown field "future" (writer schema
+[P2 verified recovery of an interrupted migration: seq 0] exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision
+    first: raw_compat_test.go:446: open <tmp>/scheduler/decisions.jsonl: no such file or directory
+[P2 verified recovery of an interrupted migration: -1 (migrating write)] exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision
+    first: raw_compat_test.go:448: migration decisions = 1: {"at":"2026-11-10T00:54:53.006046Z","kind":"ledger_layout_migrated","ledger_kind":"commits","seat":"s1","seq":3,"reason":"legacy commit ledger migrated to raw-bytes-v1 at link 3"}
+[P2 verified recovery of a legacy body not migrating] exit 1; failing: TestVerifiedLegacyRecoveryAlsoRecordsItsRawMigration
+    first: raw_compat_test.go:730: open <tmp>/scheduler/decisions.jsonl: no such file or directory
+[P3 legacy body with no usable head not migrating] exit 1; failing: TestRecoveryMigratesALegacyBodyWithNoUsableHead
+    first: raw_compat_test.go:391: open <tmp>/scheduler/decisions.jsonl: no such file or directory
+[R1 recoverWrite always migrating] exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision, TestRecoveryContinuesAfterAnInterruptedRawMigration, TestRecoveryContinuesTheChainAfterTheQuarantinedSeq
+    first: raw_compat_test.go:419: migration decisions = 2: {"at":"2026-11-10T00:55:49.379085Z","kind":"ledger_layout_migrated","ledger_kind":"commits","seat":"s1","seq":2,"reason":"legacy commit ledger migrated to raw-bytes-v1 at link 2"}
+[R1 recoverWrite never migrating] exit 1; failing: TestRecoveryMigratesALegacyBodyWithNoUsableHead, TestRecoveryMigratesALegacyLedgerThroughTheRawWriter, TestRetryCompletesARecoveredRawBodyAboveALegacyHead, TestVerifiedLegacyRecoveryAlsoRecordsItsRawMigration
+    first: raw_compat_test.go:357: open <tmp>/scheduler/decisions.jsonl: no such file or directory
+[R2 the already-recovered case disabled] exit 1; failing: TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm, TestRecoveryDecidedAgainIsAnsweredFromTheLedger, TestRecoveryMigratesALegacyLedgerThroughTheRawWriter, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence, TestRetryCompletesARecoveredRawBodyAboveALegacyHead
+    first: raw_compat_test.go:199: retry = {Handle:s1 AlreadyRecovered:false Verified:true Alarm: Slot:<tmp>/quarantine/commits.s1.seq7 OldSeq:7 NewSeq:
+[slot-stale comparison removed] exit 1; failing: TestADecisionByAlarmAnswersAHoldNoSlotCan, TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm, TestRecoveryRefusesWhatItCannotCheck
+    first: raw_compat_test.go:604: not a recovery refusal: <nil>
+[verified: behind-the-slot check removed] exit 0; failing: NONE (not caught)
+    first: ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	18.539s
+[R15 CheckRaw immediate-successor case removed] exit 1; failing: TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm
+    first: raw_compat_test.go:559: raw successor was not admitted: commit ledger s1: ledger_tampered: commits.s1 is at link 2, its head records link 1; the refused document is quarantined at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotFor
+[P4/R6 prepareError wraps every error as a tamper alarm] exit 1; failing: TestPrepareErrorWrapsOnlyTamperingAsALedgerAlarm
+    first: prepare_quarantine_test.go:32: LedgerTamperedError = true, want false: the commit ledger of seat seat-a: newer_writer
+[R9 planted third caller of saveRawLedgerBeforeHead] exit 0 []
+
+```
+
+#### `gate-936-reverts.txt`
+
+```text
+Revert runs on PR #936 head adf80543222d6869ede6322f47e9841d559c87ea, the lead's scratch worktree /Users/omri/scratch-revert-936, started 2026-11-10 04:05 IST.
+[baseline seatcommit REC+guards+alarms] exit 0 ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	29.930s
+[baseline sealchain] exit 0 ok  	github.com/omriariav/amq-squad/v3/internal/sealchain	0.786s
+[U1 D1.a name check removed] ./internal/seatcommit exit 1; failing: TestRenamedSlotMustAgreeWithItsCopiedHeadClaim
+    first: raw_compat_test.go:467: not a recovery refusal: <nil>
+[U2 verified: behind-the-slot check removed] ./internal/seatcommit exit 1; failing: TestVerifiedRecoveryRefusesASlotAboveTheLiveLink
+    first: raw_compat_test.go:491: not a recovery refusal: <nil>
+[U3 planted third caller of saveRawLedgerBeforeHead in ledger.go] exit 1 ; failing: ['TestRawWriterGuardListsEveryCallerAndRejectsAThirdRecoveryCaller'] ['quarantine_callers_test.go:182: unreviewed raw writer caller ledger.go:zzPlanted:saveRawLedgerBeforeHead']
+[U3b plant builds?] vet exit 0
+[U3b planted sealchain.WriteRawAfter caller in internal/schedproc (information; outside the ruled row)] exit 0 ; failing: []
+[R16/M1 plausibleCopiedSeq lower bound removed] ./internal/seatcommit exit 1; failing: TestCopiedHeadSequenceMustLeaveAPlausibleSuccessor, TestRecoveryTreatsNonPositiveHeadClaimsAsUnknownForBothLayouts
+    first: quarantine_test.go:140: headSeq({"seq":0}) = 0, want unknown
+[R19/M2.iii plausibleCopiedSeq upper bound removed] ./internal/seatcommit exit 1; failing: TestCopiedHeadClaimsAboveTheInteroperableBoundUseTheBody, TestCopiedHeadSequenceMustLeaveAPlausibleSuccessor, TestImplausibleCopiedBodySequenceNeedsAUsableHead, TestKnownRawBodyWithImplausibleSequenceContinuesFromVerifiedHead, TestKnownRawBodyWithImplausibleSequenceStillChecksCarriedEntries, TestRecoveryTreatsTheMaximumClaimedSequenceAsUnknown
+    first: quarantine_test.go:140: headSeq({"seq":9007199254740991}) = 9007199254740991, want unknown
+[R19 boundary: < becomes <= (2^53-1 itself plausible)] ./internal/seatcommit exit 1; failing: TestCopiedHeadClaimsAboveTheInteroperableBoundUseTheBody, TestCopiedHeadSequenceMustLeaveAPlausibleSuccessor
+    first: quarantine_test.go:140: headSeq({"seq":9007199254740991}) = 9007199254740991, want unknown
+[R19 boundary: bound one lower (< maxPlausibleSeq-1)] ./internal/seatcommit exit 1; failing: TestCopiedHeadSequenceMustLeaveAPlausibleSuccessor, TestLargestPlausibleCopiedHeadClaimLeavesOneOrdinaryVerifiedWrite
+    first: quarantine_test.go:140: headSeq({"seq":9007199254740990}) = unknown, want 9007199254740990
+[C1b raw body: implausible seal seq used] ./internal/seatcommit exit 1; failing: TestImplausibleCopiedBodySequenceNeedsAUsableHead, TestKnownRawBodyWithImplausibleSequenceContinuesFromVerifiedHead, TestKnownRawBodyWithImplausibleSequenceStillChecksCarriedEntries
+    first: raw_compat_test.go:367: not a recovery refusal: <nil>
+[C1b legacy body: implausible seal seq used] ./internal/seatcommit exit 0; failing: NONE (not caught)
+    first: ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	24.317s
+[C1a/D5 a body of neither layout accepted] ./internal/seatcommit exit 1; failing: TestRecoveryRefusesASlotBodyThatIsNeitherLayout
+    first: raw_compat_test.go:550: not a recovery refusal: <nil>
+[C1b no usable head and no body link: the specific refusal removed (falls to the later seq-unknown refusal; expected equivalent in code)] ./internal/seatcommit exit 0; failing: NONE (not caught)
+    first: ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	24.357s
+[R17 sealchain exhaustion check removed] ./internal/sealchain exit 1; failing: TestRawWriterRefusesSequenceExhaustionBeforeSave
+    first: raw_test.go:29: exhaustion = <nil> (<nil>), saved=true
+[R17 sealchain exhaustion check removed] ./internal/seatcommit exit 1; failing: TestOrdinaryWriterRefusesAnExhaustedVerifiedLedgerWithoutChangingEvidence
+    first: raw_compat_test.go:303: exhausted write = <nil>
+[R17 seatcommit words: exhaustion not wrapped] ./internal/seatcommit exit 1; failing: TestOrdinaryWriterRefusesAnExhaustedVerifiedLedgerWithoutChangingEvidence
+    first: raw_compat_test.go:303: exhausted write = the ledger's sequence is exhausted at link 9223372036854775807
+[R18/M2.ii recordVerified MaxInt refusal removed] ./internal/seatcommit exit 1; failing: TestVerifiedRecoveryAtMaximumSequenceRefusesBeforeWriting
+    first: raw_compat_test.go:509: verified maximum = recover_write_failed: commit ledger s1: the ledger's sequence is exhausted: the ledger's sequence is exhausted at link 9223372036854775807
+[R18 words: recordVerified MaxInt words changed] ./internal/seatcommit exit 1; failing: TestVerifiedRecoveryAtMaximumSequenceRefusesBeforeWriting
+    first: raw_compat_test.go:509: verified maximum = recover_slot_invalid: the commits ledger of seat s1 verifies at the top; no successor can be written
+[D1.c tamper-path MaxInt check removed] ./internal/seatcommit exit 1; failing: TestTamperedBodyUnderVerifiedMaximumHeadKeepsD1cRefusal
+    first: raw_compat_test.go:526: D1.c refusal = recover_write_failed: commit ledger s1: the ledger's sequence is exhausted: the ledger's sequence is exhausted at link 9223372036854775807
+[R20/M3 no usable head: always migrating (round 2 behaviour)] ./internal/seatcommit exit 1; failing: TestRawRecoveryWithGarbageHeadNeverRecordsAMigration
+    first: raw_compat_test.go:446: migration decisions after recovery = [2]
+[R20/P3 no usable head: never migrating] ./internal/seatcommit exit 1; failing: TestRecoveryMigratesALegacyBodyWithNoUsableHead
+    first: raw_compat_test.go:712: open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRecoveryMigratesALegacyBodyWithNoUsableHead3302304544/001/amq/sess/extensions/amq-squad/scheduler/decisions.jsonl: no such file or directory
+[R20 usable head: migrating follows the body, not the head] ./internal/seatcommit exit 1; failing: TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm
+    first: raw_compat_test.go:864: slot link = seq 1 tag 0c6516451dcda9e81c2a1be13e10df63533d6108f4f406dc7d707dbe2dc852de migrating true; want seq 1 tag from head (0c6516451dcda9e81c2a1be13e10df63533d6108f4f406dc7d707dbe2dc852de) migrating false
+[R21/M4 body seal reported as claimed_head] ./internal/seatcommit exit 1; failing: TestADecisionByAlarmAnswersAHoldNoSlotCan, TestCopiedHeadClaimsAboveTheInteroperableBoundUseTheBody, TestRawRecoveryWithGarbageHeadNeverRecordsAMigration, TestRecoveryContinuesAfterAnInterruptedRawMigration, TestRecoveryTreatsNonPositiveHeadClaimsAsUnknownForBothLayouts, TestRecoveryTreatsTheMaximumClaimedSequenceAsUnknown
+    first: raw_compat_test.go:269: maximum claim recovery = {Handle:s1 AlreadyRecovered:false Verified:false Alarm: Slot:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRecoveryTreatsTheMaximumClaimedSequenceAsUnknown65083573/001/amq/sess/extensions/amq-squad/quarantine/commits.s1.sequnknown OldSe
+[R21 claimed head reported as body_seal] ./internal/seatcommit exit 1; failing: TestLargestPlausibleCopiedHeadClaimLeavesOneOrdinaryVerifiedWrite, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence
+    first: raw_compat_test.go:239: recovery = {Handle:s1 AlreadyRecovered:false Verified:false Alarm: Slot:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence3715768919/001/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq7 OldSeq:7 Ne
+[R21 verified recovery seq_from changed] ./internal/seatcommit exit 0; failing: NONE (not caught)
+    first: ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	22.256s
+[R22/M5 the recovery seam runs before the migration record] ./internal/seatcommit exit 1; failing: TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm
+    first: raw_compat_test.go:885: migration seqs after crash = [], want [4]
+[R23/M6 new alarm file: directory not synced] ./internal/seatcommit exit 1; failing: TestAlarmAppendReturnsNewDirectorySyncFailure, TestAlarmAppendSyncsNewDirectoryEntryOnce
+    first: alarms_test.go:154: syncs: file=2 dir=0 path="", want 2, 1, "/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestAlarmAppendSyncsNewDirectoryEntryOnce2219422703/001/extensions/amq-squad/commits"
+[R23 directory synced on every append] ./internal/seatcommit exit 1; failing: TestAlarmAppendSyncsNewDirectoryEntryOnce
+    first: alarms_test.go:154: syncs: file=2 dir=2 path="/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestAlarmAppendSyncsNewDirectoryEntryOnce313751249/001/extensions/amq-squad/commits", want 2, 1, "/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestAlarmAppendSyncsNewDirectoryEntryOnce313751249/001/ext
+[R23 directory sync error dropped] ./internal/seatcommit exit 1; failing: TestAlarmAppendReturnsNewDirectorySyncFailure
+    first: alarms_test.go:165: not a recovery refusal: <nil>
+[R14 evidence error not named for-each-ref] ./internal/seatcommit exit 1; failing: TestRecoveryRefusesWhenEvidenceRefsCannotBeObserved
+    first: recover_test.go:240: evidence refusal = recover_base_unobserved: read the evidence refs: injected observation failure
+[D1.a named seq ignores the claimed head seq] ./internal/seatcommit exit 1; failing: TestADecisionByAlarmAnswersAHoldNoSlotCan, TestInterruptedMigrationRecoveryDedupesTheOriginalDecision, TestKnownRawBodyWithImplausibleSequenceContinuesFromVerifiedHead, TestKnownRawBodyWithImplausibleSequenceStillChecksCarriedEntries, TestLargestPlausibleCopiedHeadClaimLeavesOneOrdinaryVerifiedWrite, TestRecoveryContinuesAfterAnInterruptedRawMigration, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence, TestRenamedSlotMustAgreeWithItsCopiedHeadClaim, TestVerifiedRecoveryRefusesASlotAboveTheLiveLink
+    first: raw_compat_test.go:239: recovery = {Handle: AlreadyRecovered:false Verified:false Alarm: Slot: OldSeq:0 NewSeq:0 Prev: SeqFrom: BodySHA256: HeadSHA256: Base: Carried:[]}, recover_slot_invalid: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutRe
+[D1.b claimed seq left out of the max] ./internal/seatcommit exit 1; failing: TestLargestPlausibleCopiedHeadClaimLeavesOneOrdinaryVerifiedWrite, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence, TestVerifiedRecoveryRefusesASlotAboveTheLiveLink
+    first: raw_compat_test.go:239: recovery = {Handle:s1 AlreadyRecovered:false Verified:false Alarm: Slot:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence2701990230/001/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq7 OldSeq:7 Ne
+[D2 interrupted migration written as migrating] ./internal/seatcommit exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision, TestRecoveryContinuesAfterAnInterruptedRawMigration, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm
+    first: raw_compat_test.go:740: migration decisions = 2: {"at":"2026-11-10T02:21:32.657887Z","kind":"ledger_layout_migrated","ledger_kind":"commits","seat":"s1","seq":2,"reason":"legacy commit ledger migrated to raw-bytes-v1 at link 2"}
+[D2 interrupted migration record not written] ./internal/seatcommit exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision, TestRecoveryContinuesAfterAnInterruptedRawMigration, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm
+    first: raw_compat_test.go:738: open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRecoveryContinuesAfterAnInterruptedRawMigration48399180/001/amq/sess/extensions/amq-squad/scheduler/decisions.jsonl: no such file or directory
+[D2 no interrupted-migration branch in link] ./internal/seatcommit exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision, TestRecoveryContinuesAfterAnInterruptedRawMigration, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm
+    first: raw_compat_test.go:733: recovery after interrupted migration = {Seq:3 Prev:94437889d0c47f9088ccd6a76e836a16f922504a9aba1103cda632f80e9f4a8d Tag:2f1f6bcd54d92a2bd0d8a532fd21cc920fcba4368c79a241d77cea5997f48d08 Version:(devel) Schema:1}, <nil>
+[D3 retry does not complete the migration] ./internal/seatcommit exit 1; failing: TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm, TestRetryCompletesARecoveredRawBodyAboveALegacyHead
+    first: raw_compat_test.go:802: completed head = "", <nil>
+[D4 evidence seq error ignored] ./internal/seatcommit exit 1; failing: TestRecoveryRefusesWhenEvidenceRefsCannotBeObserved
+    first: recover_test.go:239: not a recovery refusal: <nil>
+[P1 no compat branch in recordAlarm] ./internal/seatcommit exit 1; failing: TestRecoveryIsTamperOnlyForCompatibilityRefusals
+    first: raw_compat_test.go:119: alarm recovery refusal = recover_alarm_unverified: the commits ledger of seat s1 cannot be read as a document (commit ledger s1: newer_writer: the seat's commit record was written by a newer amq-squad (v9.0.0); install it with amq-squad up --binary <that build>: unknown field
+[P1 no compat case in recoverLedger] ./internal/seatcommit exit 1; failing: TestRecoveryIsTamperOnlyForCompatibilityRefusals
+    first: raw_compat_test.go:115: recovery refusal = recover_write_failed: the commits ledger of seat s1 cannot be read: commit ledger s1: newer_writer: the seat's commit record was written by a newer amq-squad (v9.0.0); install it with amq-squad up --binary <that build>: unknown field "future" (writer schema
+[P2 verified recovery of an interrupted migration: seq 0] ./internal/seatcommit exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision
+    first: raw_compat_test.go:767: open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestInterruptedMigrationRecoveryDedupesTheOriginalDecisionverif820257856/001/amq/sess/extensions/amq-squad/scheduler/decisions.jsonl: no such file or directory
+[P2 verified recovery of an interrupted migration: -1 (migrating write)] ./internal/seatcommit exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision
+    first: raw_compat_test.go:769: migration decisions = 1: {"at":"2026-11-10T02:24:40.518516Z","kind":"ledger_layout_migrated","ledger_kind":"commits","seat":"s1","seq":3,"reason":"legacy commit ledger migrated to raw-bytes-v1 at link 3"}
+[P2 verified recovery of a legacy body not migrating] ./internal/seatcommit exit 1; failing: TestVerifiedLegacyRecoveryAlsoRecordsItsRawMigration
+    first: raw_compat_test.go:1139: open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestVerifiedLegacyRecoveryAlsoRecordsItsRawMigration1087940453/001/amq/sess/extensions/amq-squad/scheduler/decisions.jsonl: no such file or directory
+[R1 recoverWrite always migrating] ./internal/seatcommit exit 1; failing: TestInterruptedMigrationRecoveryDedupesTheOriginalDecision, TestKnownRawBodyWithImplausibleSequenceContinuesFromVerifiedHead, TestKnownRawBodyWithImplausibleSequenceStillChecksCarriedEntries, TestRawRecoveryWithGarbageHeadNeverRecordsAMigration, TestRecoveryContinuesAfterAnInterruptedRawMigration, TestRecoveryContinuesTheChainAfterTheQuarantinedSeq, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm
+    first: raw_compat_test.go:387: raw chain recorded migration: {"at":"2026-11-10T02:25:24.108782Z","kind":"ledger_layout_migrated","ledger_kind":"commits","seat":"s1","seq":2,"reason":"legacy commit ledger migrated to raw-bytes-v1 at link 2"}
+[R1 recoverWrite never migrating] ./internal/seatcommit exit 1; failing: TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm, TestRecoveryMigratesALegacyBodyWithNoUsableHead, TestRecoveryMigratesALegacyLedgerThroughTheRawWriter, TestRetryCompletesARecoveredRawBodyAboveALegacyHead, TestVerifiedLegacyRecoveryAlsoRecordsItsRawMigration
+    first: raw_compat_test.go:678: open /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRecoveryMigratesALegacyLedgerThroughTheRawWriter3569391666/001/amq/sess/extensions/amq-squad/scheduler/decisions.jsonl: no such file or directory
+[R2 the already-recovered case disabled] ./internal/seatcommit exit 1; failing: TestAVerifiedRecoveryRetriedReportsItsLink, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm, TestRecoveryDecidedAgainIsAnsweredFromTheLedger, TestRecoveryMigratesALegacyLedgerThroughTheRawWriter, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence, TestRetryCompletesARecoveredRawBodyAboveALegacyHead
+    first: raw_compat_test.go:250: retry = {Handle:s1 AlreadyRecovered:false Verified:true Alarm: Slot:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence2715309180/001/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq7 OldSeq:7 NewSeq
+[slot-stale comparison removed] ./internal/seatcommit exit 1; failing: TestADecisionByAlarmAnswersAHoldNoSlotCan, TestAHoldOnAnEarlierSlotIsAnsweredAfterALaterRecovery, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm, TestRecoveryRefusesWhatItCannotCheck
+    first: raw_compat_test.go:940: not a recovery refusal: <nil>
+[R15 CheckRaw immediate-successor case removed] ./internal/seatcommit exit 1; failing: TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm
+    first: raw_compat_test.go:895: raw successor was not admitted: commit ledger s1: ledger_tampered: commits.s1 is at link 2, its head records link 1; the refused document is quarantined at /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotFor
+[P4/R6 prepareError wraps every error as a tamper alarm] ./internal/schedproc exit 1; failing: TestPreparationClassifiesRealTamperedAndNewerWriterLedgersSeparately, TestPrepareErrorWrapsOnlyTamperingAsALedgerAlarm
+    first: prepare_quarantine_test.go:63: newer-writer preparation = the commit ledger of seat newer: newer_writer: commit ledger newer: newer_writer: the seat's commit record was written by a newer amq-squad (v9.0.0); install it with amq-squad up --binary <that build>: unknown field "future" (writer schema 2,
+finished 04:27 IST
+```
+
+#### `gate-937-reverts.txt`
+
+This block is pasted whole from the lead's run on #937 head `63c4ea02`, dated
+2026-11-10. Its six trailing spaces are omitted for the repository whitespace
+gate.
+
+```text
+יום ג׳ נוב׳ 10 2026 05:08:15 IST
+[baseline seatcommit REC+guards+alarms] ./internal/seatcommit exit 0; failing: NONE (not caught)
+    first: ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	117.183s
+[baseline schedproc T1 -v names] ./internal/schedproc exit 0; failing: NONE (not caught)
+    first: ok  	github.com/omriariav/amq-squad/v3/internal/schedproc	2.539s
+    subtests: [('PASS', 'TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads'), ('PASS', 'TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=false/retry=true'), ('PASS', 'TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=false/retry=false'), ('PASS', 'TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=true/retry=true'), ('PASS', 'TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=true/retry=false')]
+[T1(a) raw: CheckRaw immediate-successor case removed (the crashed raw ledger no longer reads)] ./internal/schedproc exit 1; failing: TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads, TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=false/retry=false, TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=false/retry=true
+    first: recover_test.go:270: first tick did not release, reset, and dispatch exactly once: []
+[T1(b)(c): the hold is not forgotten after its release (delete(s.tampered,h) removed)] ./internal/schedproc exit 1; failing: TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads, TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=false/retry=false, TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=false/retry=true, TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=true/retry=false, TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=true/retry=true
+    first: recover_test.go:270: first tick did not release, reset, and dispatch exactly once: [{Kind:task_reset TaskID:t1 Seat:seat-t1 Pool: Reason:the commits ledger of seat seat-t1 was recovered by the lead; the task returns to pending Stage: ReasonCode:} {Kind:ledger_hold_released TaskID: Seat:seat-t1 Pool:
+[T1(b): the already-recovered case disabled] ./internal/schedproc exit 1; failing: TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads, TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=false/retry=true, TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=true/retry=true
+    first: recover_test.go:277: retry = {OK:true Code: Detail:seat seat-t1 recovered from quarantine seq 1: the chain continues at seq 3; 0 entries carried; the scheduler releases the seat at its next tick Data:{"handle":"seat-t1","verified":true,"slot":"/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestCra
+[T1(c) legacy: the migration record is not deduped by seq] ./internal/schedproc exit 1; failing: TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads, TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=true/retry=false
+    first: recover_test.go:313: migration lines = 2, want 1
+[T1(c) legacy: recovery writes no migration record] ./internal/schedproc exit 1; failing: TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads, TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads/legacy=true/retry=false
+    first: recover_test.go:313: migration lines = 0, want 1
+[T2 legacy body: implausible seal seq used as the body link] ./internal/seatcommit exit 1; failing: TestLegacyBodyWithImplausibleSequenceUsesVerifiedHeadAndChecksCarry
+    first: raw_compat_test.go:494: legacy recovery = {Handle:s1 AlreadyRecovered:false Verified:false Alarm: Slot:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestLegacyBodyWithImplausibleSequenceUsesVerifiedHeadAndChecksCa742718362/001/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq4 OldSe
+[T2b bodyKnown tightened to require a tag (the forms of ruling 1 refused)] ./internal/seatcommit exit 1; failing: TestLegacyShapeWithUnusableSealStillUsesVerifiedHead, TestLegacyShapeWithUnusableSealStillUsesVerifiedHead/empty_seal, TestLegacyShapeWithUnusableSealStillUsesVerifiedHead/sequence_without_tag
+    first: raw_compat_test.go:520: unknown carry = recover_seq_unknown: /private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestLegacyShapeWithUnusableSealStillUsesVerifiedHeadsequence_wi1460442493/001/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq1: its body copy is neither the raw layout nor a
+[(information) the tag requirement on a legacy body link removed] ./internal/seatcommit exit 0; failing: NONE (not caught)
+    first: ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	30.979s
+[T3 verified recovery: persisted seq_from changed] ./internal/seatcommit exit 1; failing: TestADocumentVerifyingAgainIsReleasedByARecordedDecision
+    first: recover_test.go:643: the record: &{Seq:4 Slot:/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestADocumentVerifyingAgainIsReleasedByARecordedDecision3261438388/001/amq/sess/extensions/amq-squad/quarantine/commits.s1.seq4 BodySHA256:22db23b7358c3c3c4aa626bdd4e0444a5e7d7949faa177a0038db98700
+[T4 the carried Note words changed] ./internal/seatcommit exit 1; failing: TestKnownRawBodyWithImplausibleSequenceStillChecksCarriedEntries, TestLegacyBodyWithImplausibleSequenceUsesVerifiedHeadAndChecksCarry, TestRecoveryCarriesOnlyCheckedEntries, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/head_legacy_body_legacy, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/head_legacy_body_raw_with_a_gap, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/head_raw_body_legacy, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/head_raw_body_raw, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/interrupted_migration
+    first: raw_compat_test.go:435: carried note = [{Task:t1 Commit:cda0648db9979ca44fe26e01734440b40a4f27f0 Parent:2a64c7e5560eae23af65d900bf2a5095ad2bd233 Tree:1e54c1c866893b6ce7b85a2cd6f80d638d30a1f4 At:2026-10-24 12:00:00 +0000 UTC Pushed:true Branch:seat/s1-t1 Base:2a64c7e5560eae23af65d900bf2a5095ad2bd233
+[T4 the carried Note names another seq] ./internal/seatcommit exit 1; failing: TestKnownRawBodyWithImplausibleSequenceStillChecksCarriedEntries, TestLegacyBodyWithImplausibleSequenceUsesVerifiedHeadAndChecksCarry, TestRecoveryCarriesOnlyCheckedEntries, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/head_legacy_body_legacy, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/head_legacy_body_raw_with_a_gap, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/head_raw_body_legacy, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/head_raw_body_raw, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/interrupted_migration
+    first: raw_compat_test.go:435: carried note = [{Task:t1 Commit:87e50218a401e260d7507d21fd91b73fbba22760 Parent:948b53ee1d3a3505f7c6caed0ff4b0e7526faa8a Tree:1e54c1c866893b6ce7b85a2cd6f80d638d30a1f4 At:2026-10-24 12:00:00 +0000 UTC Pushed:true Branch:seat/s1-t1 Base:948b53ee1d3a3505f7c6caed0ff4b0e7526faa8a
+[T4 R18 sentence: the seat left out] ./internal/seatcommit exit 1; failing: TestVerifiedRecoveryAtMaximumSequenceRefusesBeforeWriting
+    first: raw_compat_test.go:613: verified maximum = recover_slot_invalid: the commits ledger of seat another verifies at the maximum chain sequence; no successor can be written
+[T4 R11 migration count: no usable head always migrating] ./internal/seatcommit exit 1; failing: TestRawRecoveryWithGarbageHeadNeverRecordsAMigration, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence/raw
+    first: raw_compat_test.go:253: migration lines = [8], want []
+[T4 R11 persisted seq_from on the tamper path dropped] ./internal/seatcommit exit 1; failing: TestRawRecoveryWithGarbageHeadNeverRecordsAMigration, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/head_legacy_body_legacy, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/head_raw_body_legacy, TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm/head_raw_body_raw, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence/legacy, TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence/raw
+    first: raw_compat_test.go:242: recovered ledger = &{Seq:8 Prev:47e713a91e36c4d33676113605b0e05aff773dea97fb1b260162aeaf9c40e950 Tag:120d7ab328c8e33514df9d879331c346a25a83f05361b6c50811cebc37e0efd3}, <nil>
+[T4 alarm: directory synced before the file] ./internal/seatcommit exit 1; failing: TestAlarmAppendSyncsNewDirectoryEntryOnce
+    first: alarms_test.go:152: first append sync order = [directory file]
+[T5 a real sealchain.WriteRawAfter caller planted in internal/schedproc] plant vet exit 0
+[T5 a real sealchain.WriteRawAfter caller planted in internal/schedproc] ./internal/seatcommit exit 1; failing: TestRawWriterGuardListsEveryCallerAndRejectsAThirdRecoveryCaller
+    first: quarantine_callers_test.go:189: unreviewed raw writer caller schedproc/zz_planted.go:zzPlanted:sealchain.WriteRawAfter
+[T5 a real sealchain.WriteRawAfter caller planted in a new package internal/zzplant] plant vet exit 0
+[T5 a real sealchain.WriteRawAfter caller planted in a new package internal/zzplant] ./internal/seatcommit exit 1; failing: TestRawWriterGuardListsEveryCallerAndRejectsAThirdRecoveryCaller
+    first: quarantine_callers_test.go:189: unreviewed raw writer caller zzplant/zz_planted.go:zzPlanted:sealchain.WriteRawAfter
+finished 05:19 IST
+worktree clean
+exit 0
+
+Extra runs, יום ג׳ נוב׳ 10 2026 05:19:31 IST
+[(information) documentBody: the tag requirement on a legacy body removed (a carry from an untagged legacy body allowed)] ./internal/seatcommit exit 0; failing: NONE (not caught)
+    first: ok  	github.com/omriariav/amq-squad/v3/internal/seatcommit	24.352s
+[X2 a real saveRawLedgerBeforeHead caller planted in internal/seatcommit (the synthetic check for it was replaced in #937)] plant vet exit 0
+[X2 a real saveRawLedgerBeforeHead caller planted in internal/seatcommit (the synthetic check for it was replaced in #937)] ./internal/seatcommit exit 1; failing: TestRawWriterGuardListsEveryCallerAndRejectsAThirdRecoveryCaller
+    first: quarantine_callers_test.go:189: unreviewed raw writer caller seatcommit/zz_planted.go:zzPlanted:saveRawLedgerBeforeHead
+finished 05:19 IST
+worktree clean
+```
 
 ## Gates
 

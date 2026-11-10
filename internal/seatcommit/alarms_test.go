@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -138,20 +139,28 @@ func TestAlarmAppendSyncsNewDirectoryEntryOnce(t *testing.T) {
 	root := t.TempDir()
 	files, dirs := 0, 0
 	var syncedDir string
+	var order []string
 	oldFile, oldDir := syncAlarmFile, syncAlarmDir
-	syncAlarmFile = func(f *os.File) error { files++; return f.Sync() }
-	syncAlarmDir = func(dir string) error { dirs++; syncedDir = dir; return nil }
+	syncAlarmFile = func(f *os.File) error { files++; order = append(order, "file"); return f.Sync() }
+	syncAlarmDir = func(dir string) error { dirs++; syncedDir = dir; order = append(order, "directory"); return nil }
 	t.Cleanup(func() { syncAlarmFile, syncAlarmDir = oldFile, oldDir })
 	d := AlarmDecision{Seat: "s1", Alarm: "one", At: time.Now().UTC(), Lead: "lead"}
 	if err := appendAlarm(root, d); err != nil {
 		t.Fatal(err)
 	}
+	if !slices.Equal(order, []string{"file", "directory"}) {
+		t.Fatalf("first append sync order = %v", order)
+	}
+	order = nil
 	d.Alarm = "two"
 	if err := appendAlarm(root, d); err != nil {
 		t.Fatal(err)
 	}
 	if files != 2 || dirs != 1 || syncedDir != LedgerDir(root) {
 		t.Fatalf("syncs: file=%d dir=%d path=%q, want 2, 1, %q", files, dirs, syncedDir, LedgerDir(root))
+	}
+	if !slices.Equal(order, []string{"file"}) {
+		t.Fatalf("second append sync order = %v", order)
 	}
 }
 
