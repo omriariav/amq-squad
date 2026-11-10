@@ -227,17 +227,25 @@ func TestRecoveryRefusesWhenEvidenceRefsCannotBeObserved(t *testing.T) {
 	q := f.quarantined()
 	bodyBefore := readFile(t, ledgerPath(f.root, f.handle))
 	headBefore := f.headBytes()
-	want := errors.New("for-each-ref failed")
+	slotBefore := snapshotSlot(t, q.Slot)
+	want := errors.New("injected observation failure")
 	old := readEvidenceRefs
 	readEvidenceRefs = func(git, string) ([]byte, error) { return nil, want }
 	t.Cleanup(func() { readEvidenceRefs = old })
 	_, err := f.recover(q.Seq, 1)
-	if recoverCode(t, err) != RecoverBaseUnobserved || !strings.Contains(err.Error(), want.Error()) {
+	if strings.Contains(want.Error(), "for-each-ref") {
+		t.Fatal("the injected error already contains the command under test")
+	}
+	if recoverCode(t, err) != RecoverBaseUnobserved || !strings.Contains(err.Error(), want.Error()) || !strings.Contains(err.Error(), "git for-each-ref") {
 		t.Fatalf("evidence refusal = %v", err)
 	}
 	if !bytes.Equal(bodyBefore, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(headBefore, f.headBytes()) {
 		t.Fatal("evidence-ref refusal changed the ledger")
 	}
+	if _, statErr := os.Stat(filepath.Join(f.root, "extensions", "amq-squad", "scheduler", "decisions.jsonl")); !os.IsNotExist(statErr) {
+		t.Fatalf("evidence-ref refusal wrote a decision: %v", statErr)
+	}
+	assertSlotSnapshot(t, q.Slot, slotBefore)
 }
 
 // B5: entries named by the decision are carried into the new chain, marked

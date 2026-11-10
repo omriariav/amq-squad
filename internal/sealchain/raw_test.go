@@ -7,12 +7,39 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestRawWriterRefusesSequenceExhaustionBeforeSave(t *testing.T) {
+	root := t.TempDir()
+	seed, err := SessionKey(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := &Link{Seq: math.MaxInt, Tag: "authenticated"}
+	saved := false
+	_, err = WriteRawAfter(root, "fixture", seed, "test", prev, []byte(`{"ok":true}`), "v3.2.0-rc.2", 1, func([]byte) error { saved = true; return nil }, nil, time.Now())
+	var exhausted *ErrSeqExhausted
+	if !errors.As(err, &exhausted) || exhausted.Seq != math.MaxInt || saved {
+		t.Fatalf("exhaustion = %v (%+v), saved=%v", err, exhausted, saved)
+	}
+	seal := RawSeal{Seq: math.MaxInt, Tag: strings.Repeat("a", 64), Version: "v3.2.0-rc.2", Schema: 1}
+	head, err := CompleteRawHead(root, "fixture-before-head", seed, seal, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved = false
+	_, err = WriteRawBeforeHead(root, "fixture-before-head", seed, "test", head, []byte(`{"ok":true}`), "v3.2.0-rc.2", 1, func([]byte) error { saved = true; return nil }, nil, time.Now())
+	exhausted = nil
+	if !errors.As(err, &exhausted) || exhausted.Seq != math.MaxInt || saved {
+		t.Fatalf("before-head exhaustion = %v (%+v), saved=%v", err, exhausted, saved)
+	}
+}
 
 func TestSealchainProductionNeverReadsDocumentHeads(t *testing.T) {
 	files, err := filepath.Glob("*.go")

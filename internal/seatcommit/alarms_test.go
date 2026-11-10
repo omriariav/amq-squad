@@ -2,6 +2,7 @@ package seatcommit
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -130,5 +131,38 @@ func TestTheHoldReleaseFileReleasesOnlyVerifiedLines(t *testing.T) {
 	}
 	if fi, err := os.Stat(filepath.Join(LedgerDir(root), "s1.alarms.jsonl")); err != nil || fi.Mode().Perm() != 0o600 {
 		t.Fatalf("the file: %v %v", err, fi)
+	}
+}
+
+func TestAlarmAppendSyncsNewDirectoryEntryOnce(t *testing.T) {
+	root := t.TempDir()
+	files, dirs := 0, 0
+	var syncedDir string
+	oldFile, oldDir := syncAlarmFile, syncAlarmDir
+	syncAlarmFile = func(f *os.File) error { files++; return f.Sync() }
+	syncAlarmDir = func(dir string) error { dirs++; syncedDir = dir; return nil }
+	t.Cleanup(func() { syncAlarmFile, syncAlarmDir = oldFile, oldDir })
+	d := AlarmDecision{Seat: "s1", Alarm: "one", At: time.Now().UTC(), Lead: "lead"}
+	if err := appendAlarm(root, d); err != nil {
+		t.Fatal(err)
+	}
+	d.Alarm = "two"
+	if err := appendAlarm(root, d); err != nil {
+		t.Fatal(err)
+	}
+	if files != 2 || dirs != 1 || syncedDir != LedgerDir(root) {
+		t.Fatalf("syncs: file=%d dir=%d path=%q, want 2, 1, %q", files, dirs, syncedDir, LedgerDir(root))
+	}
+}
+
+func TestAlarmAppendReturnsNewDirectorySyncFailure(t *testing.T) {
+	f := newFixture(t)
+	want := errors.New("directory sync failed")
+	oldDir := syncAlarmDir
+	syncAlarmDir = func(string) error { return want }
+	t.Cleanup(func() { syncAlarmDir = oldDir })
+	_, err := RecoverLedger(RecoverOptions{Root: f.root, Handle: f.handle, Alarm: "1234abcd", Lead: "lead", Reason: "reviewed", Now: f.now})
+	if recoverCode(t, err) != RecoverWriteFailed || !strings.Contains(err.Error(), want.Error()) {
+		t.Fatalf("decision error = %v, want %v", err, want)
 	}
 }

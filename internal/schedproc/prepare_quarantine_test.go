@@ -3,17 +3,75 @@ package schedproc
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
+
+func TestPreparationClassifiesRealTamperedAndNewerWriterLedgersSeparately(t *testing.T) {
+	root := t.TempDir()
+	prep := &CleanSeats{Root: root}
+	for _, handle := range []string{"tampered", "newer"} {
+		if _, err := seatcommit.RecordBase(root, handle, filepath.Join(root, "wt"), "seat/"+handle, strings.Repeat("a", 40), time.Now()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tamperedPath := filepath.Join(seatcommit.LedgerDir(root), "tampered.json")
+	raw := readBytes(t, tamperedPath)
+	if err := os.WriteFile(tamperedPath, bytes.Replace(raw, []byte(strings.Repeat("a", 40)), []byte(strings.Repeat("0", 40)), 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := prep.PrepareSeat("tampered")
+	var alarm *scheduler.LedgerTamperedError
+	if !errors.As(err, &alarm) {
+		t.Fatalf("tampered preparation = %v", err)
+	}
+
+	newerPath := filepath.Join(seatcommit.LedgerDir(root), "newer.json")
+	body, _, err := sealchain.SplitRaw(readBytes(t, newerPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatal(err)
+	}
+	doc["future"] = true
+	body, _ = json.Marshal(doc)
+	key, err := sealchain.SessionKey(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := readBytes(t, sealchain.HeadPath(root, "commits.newer"))
+	if _, err := sealchain.WriteRaw(root, "commits.newer", key, "amq-squad commits ledger v1", head, body, "v9.0.0", 2, func(raw []byte) error {
+		return os.WriteFile(newerPath, raw, 0o600)
+	}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	err = prep.PrepareSeat("newer")
+	var refusal *scheduler.PrepareRefusal
+	if errors.As(err, &alarm) || !errors.As(err, &refusal) || refusal.Reason != "newer_writer" {
+		t.Fatalf("newer-writer preparation = %v", err)
+	}
+}
+
+func readBytes(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
 
 func TestPrepareErrorWrapsOnlyTamperingAsALedgerAlarm(t *testing.T) {
 	for _, tc := range []struct {

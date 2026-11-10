@@ -120,17 +120,122 @@ func TestLedgerProductionWritersUseOnlyTheRawPath(t *testing.T) {
 	if !calls["writeLedger"]["saveRawLedger"] || !calls["saveRawLedger"]["saveRawLedgerBeforeHead"] || !calls["recoverWrite"]["saveRawLedgerBeforeHead"] {
 		t.Fatalf("raw writer callers: writeLedger=%v saveRawLedger=%v recoverWrite=%v", calls["writeLedger"], calls["saveRawLedger"], calls["recoverWrite"])
 	}
+	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, problem := range legacyLedgerWriterProblems(path, source) {
+			if problem != "ledger.go:saveRawLedgerBeforeHead: atomicfile.Write(ledgerPath)" {
+				t.Error(problem)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRawWriterGuardListsEveryCallerAndRejectsAThirdRecoveryCaller(t *testing.T) {
+	want := map[string]bool{
+		"ledger.go:writeLedger:saveRawLedger":                            true,
+		"ledger.go:saveRawLedger:saveRawLedgerBeforeHead":                true,
+		"recover.go:recoverWrite:saveRawLedgerBeforeHead":                true,
+		"ledger.go:saveRawLedgerBeforeHead:sealchain.WriteRawAfter":      true,
+		"ledger.go:saveRawLedgerBeforeHead:sealchain.WriteRawBeforeHead": true,
+		"exits.go:writeExits:sealchain.WriteRawBeforeHead":               true,
+	}
+	got := map[string]bool{}
 	for _, name := range goFiles(t, ".") {
 		source, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, problem := range legacyLedgerWriterProblems(name, source) {
-			if problem != "ledger.go:saveRawLedgerBeforeHead: atomicfile.Write(ledgerPath)" {
-				t.Error(problem)
-			}
+		for _, call := range rawWriterCalls(t, name, source) {
+			got[call] = true
 		}
 	}
+	exitsSource, err := os.ReadFile("../scheduler/exits.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range rawWriterCalls(t, "exits.go", exitsSource) {
+		got[call] = true
+	}
+	for call := range want {
+		if !got[call] {
+			t.Errorf("missing raw writer caller %s; got %v", call, got)
+		}
+	}
+	for call := range got {
+		if !want[call] {
+			t.Errorf("unreviewed raw writer caller %s", call)
+		}
+	}
+	plant := []byte(`package seatcommit; func planted() { _, _ = saveRawLedgerBeforeHead("", sealchain.Seed{}, nil, nil, Ledger{}, false, nil, time.Time{}) }`)
+	if calls := rawWriterCalls(t, "plant.go", plant); len(calls) != 1 || !strings.Contains(calls[0], "plant.go:planted:saveRawLedgerBeforeHead") {
+		t.Fatalf("planted third caller passed: %v", calls)
+	}
+}
+
+func rawWriterCalls(t *testing.T, name string, source []byte) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, name, source, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliases := map[string]bool{"sealchain": true}
+	for _, imp := range file.Imports {
+		path, _ := strconv.Unquote(imp.Path.Value)
+		if path != "github.com/omriariav/amq-squad/v3/internal/sealchain" {
+			continue
+		}
+		alias := "sealchain"
+		if imp.Name != nil {
+			alias = imp.Name.Name
+		}
+		aliases[alias] = true
+	}
+	var out []string
+	for _, decl := range file.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if !ok || fd.Body == nil {
+			continue
+		}
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			callee := ""
+			switch fun := call.Fun.(type) {
+			case *ast.Ident:
+				if fun.Name == "saveRawLedger" || fun.Name == "saveRawLedgerBeforeHead" {
+					callee = fun.Name
+				}
+			case *ast.SelectorExpr:
+				if id, ok := fun.X.(*ast.Ident); ok && aliases[id.Name] && (fun.Sel.Name == "WriteRaw" || fun.Sel.Name == "WriteRawAfter" || fun.Sel.Name == "WriteRawBeforeHead") {
+					callee = "sealchain." + fun.Sel.Name
+				}
+			}
+			if callee != "" {
+				out = append(out, filepath.Base(name)+":"+fd.Name.Name+":"+callee)
+			}
+			return true
+		})
+	}
+	return out
 }
 
 func TestLedgerWriterGuardRejectsPlantedLegacyCalls(t *testing.T) {

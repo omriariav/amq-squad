@@ -41,6 +41,17 @@ var ErrNewerWriter = errors.New("newer_writer")
 // schema its seal line claims. It is a writer bug, not tampering.
 var ErrSchemaMismatch = errors.New("schema_mismatch")
 
+// ErrSeqExhausted is returned before a raw writer would wrap the platform's
+// largest chain sequence. No document or head bytes have been written when it
+// is returned.
+type ErrSeqExhausted struct {
+	Seq int
+}
+
+func (e *ErrSeqExhausted) Error() string {
+	return fmt.Sprintf("the ledger's sequence is exhausted at link %d", e.Seq)
+}
+
 // RawSeal is the second JSON line of a raw-layout file. Tag covers the exact
 // body bytes and every other field in this line.
 type RawSeal struct {
@@ -415,6 +426,9 @@ func writeRawAfter(root, name string, s Seed, label string, prev *Link, body []b
 	var zero RawSeal
 	if !headName.MatchString(name) || schema <= 0 {
 		return zero, fmt.Errorf("sealed head %q or schema %d", name, schema)
+	}
+	if prev != nil && prev.Seq == int(^uint(0)>>1) {
+		return zero, &ErrSeqExhausted{Seq: prev.Seq}
 	}
 	seal := NewRawSeal(s.Key, label, prev, body, version, schema)
 	raw, err := JoinRaw(body, seal)

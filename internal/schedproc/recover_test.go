@@ -19,9 +19,77 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/panechain"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
+
+func TestRecoveryDecisionNamesTheActualSequenceSource(t *testing.T) {
+	for _, tc := range []struct {
+		name, seq, source string
+		edit              func(*testing.T, *tamperedSeatRig)
+	}{
+		{name: "verified head", seq: "1", source: "verified_head"},
+		{name: "claimed head", seq: "7", source: "claimed_head", edit: func(t *testing.T, r *tamperedSeatRig) {
+			p := sealchain.HeadPath(r.root, "commits."+r.handle)
+			raw := mustRead(t, p)
+			body, seal, err := sealchain.SplitRaw(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var h map[string]any
+			if err := json.Unmarshal(body, &h); err != nil {
+				t.Fatal(err)
+			}
+			h["seq"] = 7
+			body, _ = json.Marshal(h)
+			raw, _ = sealchain.JoinRaw(body, seal)
+			if err := os.WriteFile(p, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "body seal", seq: "unknown", source: "body_seal", edit: func(t *testing.T, r *tamperedSeatRig) {
+			if err := os.WriteFile(sealchain.HeadPath(r.root, "commits."+r.handle), []byte("garbage\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newTamperedSeatRig(t)
+			if tc.edit != nil {
+				tc.edit(t, r)
+			}
+			if _, err := seatcommit.ReadLedger(r.root, r.handle); err == nil {
+				t.Fatal("tampered ledger verified")
+			}
+			decide := recoverDecision(nil, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
+			reply := decide("lead", RecoverRequest{Seat: r.handle, Seq: tc.seq, Slot: 1, Reason: "understood"})
+			if !reply.OK {
+				t.Fatalf("recovery = %+v", reply)
+			}
+			l, err := seatcommit.ReadLedger(r.root, r.handle)
+			if err != nil || l.Recovered == nil || l.Recovered.SeqFrom != tc.source {
+				t.Fatalf("record = %+v, %v", l.Recovered, err)
+			}
+			lines, err := ReadDecisionsTail(r.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := lines[len(lines)-1].Reason; !strings.Contains(got, "sequence chosen from "+tc.source) {
+				t.Fatalf("decision source = %q", got)
+			}
+		})
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
 
 // The rows of 3.2.0-0c-B's process half (recover.go, prepare.go): the
 // recovery through the scheduler's apply step makes the seat grantable, a
