@@ -360,12 +360,7 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 	if err := guard(o); err != nil {
 		return out, err
 	}
-	if choice.migrationSeq > 0 {
-		if err := recordLayoutMigration(o.Root, o.Handle, choice.migrationSeq); err != nil {
-			return out, refuseRecover(RecoverWriteFailed, "%v", err)
-		}
-	}
-	link, err := writeMarkedRecovery(o, slot.name, choice.prev, l, choice.migrating && choice.migrationSeq == 0, now)
+	link, err := writeMarkedRecovery(o, slot.name, choice.prev, l, choice.migrating && choice.migrationSeq == 0, choice.migrationSeq, now)
 	if err != nil {
 		return out, err
 	}
@@ -418,12 +413,7 @@ func recordVerified(o RecoverOptions, live Ledger, slotPath string, migrationSeq
 	if err := guard(o); err != nil {
 		return out, err
 	}
-	if migrationSeq > 0 {
-		if err := recordLayoutMigration(o.Root, o.Handle, migrationSeq); err != nil {
-			return out, refuseRecover(RecoverWriteFailed, "%v", err)
-		}
-	}
-	link, err := writeMarkedRecovery(o, slot.name, prev, l, migrationSeq < 0, now)
+	link, err := writeMarkedRecovery(o, slot.name, prev, l, migrationSeq < 0, migrationSeq, now)
 	if err != nil {
 		return out, err
 	}
@@ -557,13 +547,18 @@ var recoveredMarkCreate = func(d slotDir, name string, data []byte) error {
 // recovery record can be written. A crash or writer failure can therefore
 // leave a marked slot without a record, but never a record naming an
 // unmarked slot.
-func writeMarkedRecovery(o RecoverOptions, slotName string, prev *sealchain.Link, l Ledger, migrating bool, now time.Time) (*sealchain.Link, error) {
+func writeMarkedRecovery(o RecoverOptions, slotName string, prev *sealchain.Link, l Ledger, migrating bool, migrationSeq int, now time.Time) (*sealchain.Link, error) {
 	link := 0
 	if l.Recovered != nil {
 		link = l.Recovered.Link
 	}
 	if err := markRecoveredSlot(o.Root, slotName, o.Lead, link, now); err != nil {
 		return nil, refuseRecover(RecoverWriteFailed, "%s: %v", quarantineRecovered, err)
+	}
+	if migrationSeq > 0 {
+		if err := recordLayoutMigration(o.Root, o.Handle, migrationSeq); err != nil {
+			return nil, refuseRecover(RecoverWriteFailed, "%v", err)
+		}
 	}
 	if beforeRecoveryWrite != nil {
 		if err := beforeRecoveryWrite(); err != nil {
@@ -594,7 +589,7 @@ func markRecoveredSlot(root, slotName, lead string, link int, now time.Time) err
 	}
 	for _, name := range names {
 		if name == quarantineRecovered {
-			return nil
+			return s.sync()
 		}
 	}
 	mark := []byte(fmt.Sprintf("time: %s\nlead: %s\nlink: %d\n", now.UTC().Format(time.RFC3339Nano), lead, link))

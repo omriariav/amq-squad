@@ -273,22 +273,85 @@ func TestRecoveredMarkReaderAndWriterGuards(t *testing.T) {
 			t.Errorf("unreviewed recovered mark writer %s", fn)
 		}
 	}
+	allowed := map[string]bool{
+		"markRecoveredSlot":   true,
+		"recoverLedger":       true,
+		"sameSlot":            true,
+		"writeMarkedRecovery": true,
+	}
+	var found = map[string]bool{}
 	for _, name := range goFiles(t, ".") {
 		source, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)
 		}
+		for _, ref := range recoveredMarkReferenceProblems(name, source, allowed, found) {
+			t.Error(ref)
+		}
 		for _, problem := range recoveredMarkReaderProblems(name, source) {
 			t.Error(problem)
 		}
-		if name != "quarantine.go" && strings.Contains(string(source), `"recovered.txt"`) {
-			t.Errorf("%s learns the recovered mark's literal name", name)
+	}
+	for fn := range allowed {
+		if !found[fn] {
+			t.Errorf("the recovered mark allowlist names %s, which has no reference", fn)
 		}
 	}
-	plant := []byte(`package seatcommit; func bad(d slotDir) { _, _, _ = d.read(quarantineRecovered) }`)
-	if got := recoveredMarkReaderProblems("plant.go", plant); len(got) != 1 {
-		t.Fatalf("planted recovered mark reader passed: %v", got)
+	err := filepath.WalkDir("..", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if filepath.Base(path) != "quarantine.go" && strings.Contains(string(source), `"recovered.txt"`) {
+			t.Errorf("%s learns the recovered mark's literal name", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
+	plants := [][]byte{
+		[]byte(`package seatcommit; func bad(s slotDir) { _ = s.create(quarantineRecovered, nil) }`),
+		[]byte(`package seatcommit; import ("os"; "path/filepath"); func bad(dir string) { _, _ = os.ReadFile(filepath.Join(dir, quarantineRecovered)) }`),
+	}
+	for i, plant := range plants {
+		if got := recoveredMarkReferenceProblems("plant.go", plant, allowed, map[string]bool{}); len(got) == 0 {
+			t.Errorf("planted recovered mark access %d passed", i+1)
+		}
+	}
+}
+
+func recoveredMarkReferenceProblems(name string, source []byte, allowed map[string]bool, found map[string]bool) []string {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, name, source, 0)
+	if err != nil {
+		return []string{name + ": parse: " + err.Error()}
+	}
+	var out []string
+	for _, decl := range file.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if !ok || fd.Body == nil {
+			continue
+		}
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok || id.Name != "quarantineRecovered" {
+				return true
+			}
+			found[fd.Name.Name] = true
+			if !allowed[fd.Name.Name] {
+				out = append(out, filepath.Base(name)+":"+strconv.Itoa(fset.Position(id.Pos()).Line)+": "+fd.Name.Name+" references quarantineRecovered outside the allowlist")
+			}
+			return true
+		})
+	}
+	return out
 }
 
 func recoveredMarkReaderProblems(name string, source []byte) []string {

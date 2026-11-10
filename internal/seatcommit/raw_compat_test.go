@@ -900,6 +900,29 @@ func TestRecoveryContinuesAfterAnInterruptedRawMigration(t *testing.T) {
 	if q.Seq != fmt.Sprint(legacy.Seq) {
 		t.Fatalf("slot seq = %s, want copied legacy head %d", q.Seq, legacy.Seq)
 	}
+	bodyBefore, headBefore := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
+	slotBefore := snapshotSlot(t, q.Slot)
+	decisionPath := filepath.Join(f.root, "extensions", "amq-squad", "scheduler", "decisions.jsonl")
+	decisionsBefore := optionalFile(t, decisionPath)
+	want := errors.New("injected migration mark failure")
+	oldCreate := recoveredMarkCreate
+	recoveredMarkCreate = func(slotDir, string, []byte) error { return want }
+	t.Cleanup(func() { recoveredMarkCreate = oldCreate })
+	_, err := f.recover(q.Seq, 1)
+	if recoverCode(t, err) != RecoverWriteFailed || !strings.Contains(err.Error(), quarantineRecovered) {
+		t.Fatalf("interrupted migration mark failure = %v", err)
+	}
+	if !bytes.Equal(bodyBefore, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(headBefore, f.headBytes()) {
+		t.Fatal("interrupted migration mark failure changed the ledger or head")
+	}
+	assertSlotSnapshot(t, q.Slot, slotBefore)
+	if got := optionalFile(t, decisionPath); !bytes.Equal(got, decisionsBefore) {
+		t.Fatalf("interrupted migration mark failure changed decisions: before %q after %q", decisionsBefore, got)
+	}
+	if _, err := os.Lstat(filepath.Join(q.Slot, quarantineRecovered)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("interrupted migration mark failure left a mark: %v", err)
+	}
+	recoveredMarkCreate = oldCreate
 	res, err := f.recover(q.Seq, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -1305,23 +1328,47 @@ func mustSessionKey(t *testing.T, root string) sealchain.Seed {
 
 func TestVerifiedLegacyRecoveryAlsoRecordsItsRawMigration(t *testing.T) {
 	f := newFixture(t)
-	_, key, legacy := installLegacyCommitLedger(t, f, nil)
+	l, key, legacy := installLegacyCommitLedger(t, f, nil)
+	interrupted := writeInterruptedCommitMigration(t, f, l, key, legacy)
 	original := readFile(t, ledgerPath(f.root, f.handle))
 	tamperBase(t, f, f.base, '0')
 	q := f.quarantined()
 	if err := os.WriteFile(ledgerPath(f.root, f.handle), original, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	bodyBefore, headBefore := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
+	slotBefore := snapshotSlot(t, q.Slot)
+	decisionPath := filepath.Join(f.root, "extensions", "amq-squad", "scheduler", "decisions.jsonl")
+	decisionsBefore := optionalFile(t, decisionPath)
+	want := errors.New("injected verified migration mark failure")
+	oldCreate := recoveredMarkCreate
+	recoveredMarkCreate = func(slotDir, string, []byte) error { return want }
+	t.Cleanup(func() { recoveredMarkCreate = oldCreate })
+	_, err := f.recover(q.Seq, 1)
+	if recoverCode(t, err) != RecoverWriteFailed || !strings.Contains(err.Error(), quarantineRecovered) {
+		t.Fatalf("verified migration mark failure = %v", err)
+	}
+	if !bytes.Equal(bodyBefore, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(headBefore, f.headBytes()) {
+		t.Fatal("verified migration mark failure changed the ledger or head")
+	}
+	assertSlotSnapshot(t, q.Slot, slotBefore)
+	if got := optionalFile(t, decisionPath); !bytes.Equal(got, decisionsBefore) {
+		t.Fatalf("verified migration mark failure changed decisions: before %q after %q", decisionsBefore, got)
+	}
+	if _, err := os.Lstat(filepath.Join(q.Slot, quarantineRecovered)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("verified migration mark failure left a mark: %v", err)
+	}
+	recoveredMarkCreate = oldCreate
 	res, err := f.recover(q.Seq, 1)
 	if err != nil || !res.Verified {
 		t.Fatalf("verified legacy recovery = %+v, %v", res, err)
 	}
 	body, seal, err := sealchain.SplitRaw(readFile(t, ledgerPath(f.root, f.handle)))
-	if err != nil || seal.Seq != legacy.Seq+1 || seal.Prev != legacy.Tag || !seal.Verify(key.Key, ledgerLabel, body) {
+	if err != nil || seal.Seq != interrupted.Seq+1 || seal.Prev != interrupted.Tag || !seal.Verify(key.Key, ledgerLabel, body) {
 		t.Fatalf("verified legacy raw link = %+v, %v", seal, err)
 	}
 	decisions := readFile(t, f.root+"/extensions/amq-squad/scheduler/decisions.jsonl")
-	if got := bytes.Count(decisions, []byte(`"kind":"ledger_layout_migrated"`)); got != 1 {
+	if got := bytes.Count(decisions, []byte(`"kind":"ledger_layout_migrated"`)); got != 1 || !bytes.Contains(decisions, []byte(fmt.Sprintf("link %d", interrupted.Seq))) {
 		t.Fatalf("migration decisions = %d: %s", got, decisions)
 	}
 }
