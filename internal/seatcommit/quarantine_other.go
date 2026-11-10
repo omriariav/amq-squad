@@ -135,17 +135,24 @@ func (d *pathDir) remove(name string, _ bool) error { return os.Remove(filepath.
 
 // openAppendNoFollow off unix: a link check by path, then the open (the
 // unix version checks the descriptor).
-func openAppendNoFollow(path string) (*os.File, error) {
+func openAppendNoFollow(path string) (*os.File, bool, error) {
 	if _, err := lstatRegular(path); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o600)
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_EXCL, 0o600)
+	created := err == nil
+	if errors.Is(err, fs.ErrExist) {
+		if _, checkErr := lstatRegular(path); checkErr != nil {
+			return nil, false, checkErr
+		}
+		f, err = os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0o600)
+	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
 		f.Close()
-		return nil, fmt.Errorf("%s is not a regular file", path)
+		return nil, false, fmt.Errorf("%s is not a regular file", path)
 	}
-	return f, nil
+	return f, created, nil
 }

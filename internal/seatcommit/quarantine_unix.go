@@ -189,23 +189,28 @@ func (d *atDir) remove(name string, isDir bool) error {
 // must be a regular file. It is opened for reading too, so the caller
 // checks the file's last byte through the same descriptor it writes
 // with; nothing is checked by path.
-func openAppendNoFollow(path string) (*os.File, error) {
-	fd, err := unix.Open(path, unix.O_RDWR|unix.O_APPEND|unix.O_CREAT|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0o600)
+func openAppendNoFollow(path string) (*os.File, bool, error) {
+	flags := unix.O_RDWR | unix.O_APPEND | unix.O_NOFOLLOW | unix.O_NONBLOCK | unix.O_CLOEXEC
+	fd, err := unix.Open(path, flags|unix.O_CREAT|unix.O_EXCL, 0o600)
+	created := err == nil
+	if errors.Is(err, unix.EEXIST) {
+		fd, err = unix.Open(path, flags, 0o600)
+	}
 	if err != nil {
 		if errors.Is(err, unix.ENXIO) {
-			return nil, fmt.Errorf("%s is not a regular file", path)
+			return nil, false, fmt.Errorf("%s is not a regular file", path)
 		}
-		return nil, linkError(path, err)
+		return nil, false, linkError(path, err)
 	}
 	f := os.NewFile(uintptr(fd), path)
 	fi, err := f.Stat()
 	if err != nil {
 		f.Close()
-		return nil, err
+		return nil, false, err
 	}
 	if !fi.Mode().IsRegular() {
 		f.Close()
-		return nil, fmt.Errorf("%s is not a regular file", path)
+		return nil, false, fmt.Errorf("%s is not a regular file", path)
 	}
-	return f, nil
+	return f, created, nil
 }

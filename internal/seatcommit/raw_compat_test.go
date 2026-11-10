@@ -8,6 +8,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +121,9 @@ func TestRecoveryIsTamperOnlyForCompatibilityRefusals(t *testing.T) {
 			if errors.Is(tc.want, sealchain.ErrNewerWriter) && !strings.Contains(err.Error(), "amq-squad up --binary <that build>") {
 				t.Fatalf("newer-writer refusal lacks install command: %v", err)
 			}
+			if errors.Is(tc.want, sealchain.ErrSchemaMismatch) && strings.Contains(err.Error(), "amq-squad up --binary") {
+				t.Fatalf("schema-mismatch refusal invented an install command: %v", err)
+			}
 			if !bytes.Equal(beforeBody, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(beforeHead, f.headBytes()) {
 				t.Fatal("compatibility recovery changed ledger bytes")
 			}
@@ -151,6 +156,47 @@ func editCopiedHeadSeq(t *testing.T, f *fixture, seq int) {
 		raw, _ = sealchain.JoinRaw(body, seal)
 	} else {
 		raw = body
+	}
+	if err := os.WriteFile(p, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func installRawLedgerAtSeq(t *testing.T, f *fixture, seq int) {
+	t.Helper()
+	raw := readFile(t, ledgerPath(f.root, f.handle))
+	body, _, err := sealchain.SplitRaw(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := mustSessionKey(t, f.root)
+	seal := sealchain.NewRawSeal(key.Key, ledgerLabel, &sealchain.Link{Seq: seq - 1, Tag: strings.Repeat("a", 64)}, body, "v3.2.0-rc.2", LedgerSchema)
+	if seal.Seq != seq {
+		t.Fatalf("fixture seal seq = %d, want %d", seal.Seq, seq)
+	}
+	document, err := sealchain.JoinRaw(body, seal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledgerPath(f.root, f.handle), document, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sealchain.CompleteRawHead(f.root, ledgerHeadName(f.handle), key, seal, f.now); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func editCopiedRawBodySeq(t *testing.T, f *fixture, seq int) {
+	t.Helper()
+	p := ledgerPath(f.root, f.handle)
+	body, seal, err := sealchain.SplitRaw(readFile(t, p))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seal.Seq = seq
+	raw, err := sealchain.JoinRaw(body, seal)
+	if err != nil {
+		t.Fatal(err)
 	}
 	if err := os.WriteFile(p, raw, 0o600); err != nil {
 		t.Fatal(err)
@@ -195,26 +241,295 @@ func TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence(t *testing
 			if l, err := ReadLedger(f.root, f.handle); err != nil || l.Seal.Seq != 8 || l.Recovered.SeqFrom != "claimed_head" {
 				t.Fatalf("recovered ledger = %+v, %v", l.Seal, err)
 			}
+			l, _ := ReadLedger(f.root, f.handle)
+			if l.Recovered.Seq != 7 || l.Recovered.Link != 8 {
+				t.Fatalf("persisted recovery sequence = %+v", l.Recovered)
+			}
+			bodyBeforeRetry, headBeforeRetry := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
 			if again, err := f.recover("7", 1); err != nil || !again.AlreadyRecovered || again.NewSeq != 8 {
 				t.Fatalf("retry = %+v, %v", again, err)
+			}
+			if !bytes.Equal(bodyBeforeRetry, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(headBeforeRetry, f.headBytes()) {
+				t.Fatal("retry changed recovered body or head")
 			}
 		})
 	}
 }
 
-func TestRecoveryRefusesTheMaximumClaimedSequence(t *testing.T) {
+func TestRecoveryTreatsTheMaximumClaimedSequenceAsUnknown(t *testing.T) {
 	f := newFixture(t)
 	editCopiedHeadSeq(t, f, math.MaxInt)
 	tamperBase(t, f, f.base, '0')
 	q := f.quarantined()
-	bodyBefore, headBefore := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
+	if q.Seq != quarantineSeqUnknown {
+		t.Fatalf("slot seq = %s, want unknown", q.Seq)
+	}
+	res, err := f.recover(q.Seq, 1)
+	if err != nil || res.SeqFrom != "body_seal" || res.NewSeq != 2 {
+		t.Fatalf("maximum claim recovery = %+v, %v", res, err)
+	}
+}
+
+func TestRecoveryTreatsNonPositiveHeadClaimsAsUnknownForBothLayouts(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		for _, seq := range []int{0, -5} {
+			t.Run(fmt.Sprintf("legacy=%v/seq=%d", legacy, seq), func(t *testing.T) {
+				f := newFixture(t)
+				if legacy {
+					installLegacyCommitLedger(t, f, nil)
+				}
+				editCopiedHeadSeq(t, f, seq)
+				tamperBase(t, f, f.base, '0')
+				q := f.quarantined()
+				if q.Seq != quarantineSeqUnknown {
+					t.Fatalf("slot seq = %s", q.Seq)
+				}
+				res, err := f.recover(quarantineSeqUnknown, 1)
+				if err != nil || res.NewSeq != 2 || res.SeqFrom != "body_seal" {
+					t.Fatalf("recovery = %+v, %v", res, err)
+				}
+			})
+		}
+	}
+}
+
+func TestOrdinaryWriterRefusesAnExhaustedVerifiedLedgerWithoutChangingEvidence(t *testing.T) {
+	f := newFixture(t)
+	installRawLedgerAtSeq(t, f, math.MaxInt)
+	body, head := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
+	_, err := RecordTarget(f.root, f.handle, f.target())
+	var exhausted *sealchain.ErrSeqExhausted
+	if !errors.As(err, &exhausted) || !strings.Contains(err.Error(), f.handle) || !strings.Contains(err.Error(), "the ledger's sequence is exhausted") || errors.Is(err, sealchain.ErrTampered) {
+		t.Fatalf("exhausted write = %v", err)
+	}
+	if !bytes.Equal(body, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(head, f.headBytes()) {
+		t.Fatal("exhausted write changed body or head")
+	}
+	if _, err := ReadLedger(f.root, f.handle); err != nil {
+		t.Fatalf("ledger no longer verifies: %v", err)
+	}
+	if _, err := os.Stat(QuarantineDir(f.root)); !os.IsNotExist(err) {
+		t.Fatalf("exhaustion created quarantine: %v", err)
+	}
+	if _, err := os.Stat(AlarmsPath(f.root, f.handle)); !os.IsNotExist(err) {
+		t.Fatalf("exhaustion created alarm: %v", err)
+	}
+}
+
+func TestCopiedHeadClaimsAboveTheInteroperableBoundUseTheBody(t *testing.T) {
+	for _, seq := range []int{math.MaxInt, math.MaxInt - 1, 1 << 53, 1<<53 - 1} {
+		t.Run(strconv.Itoa(seq), func(t *testing.T) {
+			f := newFixture(t)
+			editCopiedHeadSeq(t, f, seq)
+			tamperBase(t, f, f.base, '0')
+			q := f.quarantined()
+			if q.Seq != quarantineSeqUnknown {
+				t.Fatalf("slot seq = %s", q.Seq)
+			}
+			res, err := f.recover(quarantineSeqUnknown, 1)
+			if err != nil || res.NewSeq != 2 || res.SeqFrom != "body_seal" {
+				t.Fatalf("recovery = %+v, %v", res, err)
+			}
+		})
+	}
+}
+
+func TestLargestPlausibleCopiedHeadClaimLeavesOneOrdinaryVerifiedWrite(t *testing.T) {
+	f := newFixture(t)
+	const claimed = 1<<53 - 2
+	editCopiedHeadSeq(t, f, claimed)
+	tamperBase(t, f, f.base, '0')
+	q := f.quarantined()
+	if q.Seq != strconv.Itoa(claimed) {
+		t.Fatalf("slot seq = %s", q.Seq)
+	}
+	res, err := f.recover(strconv.Itoa(claimed), 1)
+	if err != nil || res.NewSeq != 1<<53-1 || res.SeqFrom != "claimed_head" {
+		t.Fatalf("recovery = %+v, %v", res, err)
+	}
+	if _, err := RecordTarget(f.root, f.handle, f.target()); err != nil {
+		t.Fatal(err)
+	}
+	if l, err := ReadLedger(f.root, f.handle); err != nil || l.Seal.Seq != 1<<53 {
+		t.Fatalf("ordinary successor = %+v, %v", l.Seal, err)
+	}
+}
+
+func TestImplausibleCopiedBodySequenceNeedsAUsableHead(t *testing.T) {
+	f := newFixture(t)
+	editCopiedRawBodySeq(t, f, 1<<53)
+	if err := os.WriteFile(sealchain.HeadPath(f.root, ledgerHeadName(f.handle)), []byte("garbage\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	q := f.quarantined()
+	body, head, slot := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes(), snapshotSlot(t, q.Slot)
+	_, err := f.recover(quarantineSeqUnknown, 1)
+	if recoverCode(t, err) != RecoverSeqUnknown {
+		t.Fatalf("implausible body = %v", err)
+	}
+	if !bytes.Equal(body, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(head, f.headBytes()) {
+		t.Fatal("refusal changed ledger")
+	}
+	assertNoRecoveryDecision(t, f.root)
+	assertSlotSnapshot(t, q.Slot, slot)
+}
+
+func TestKnownRawBodyWithImplausibleSequenceContinuesFromVerifiedHead(t *testing.T) {
+	f := newFixture(t)
+	editCopiedRawBodySeq(t, f, 1<<53)
+	q := f.quarantined()
+	res, err := f.recover(q.Seq, 1)
+	if err != nil || res.NewSeq != 2 || res.SeqFrom != "verified_head" {
+		t.Fatalf("verified-head recovery = %+v, %v", res, err)
+	}
+	decisionPath := filepath.Join(f.root, "extensions", "amq-squad", "scheduler", "decisions.jsonl")
+	if raw, err := os.ReadFile(decisionPath); err == nil && bytes.Contains(raw, []byte(`"kind":"ledger_layout_migrated"`)) {
+		t.Fatalf("raw chain recorded migration: %s", raw)
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
+func TestKnownRawBodyWithImplausibleSequenceStillChecksCarriedEntries(t *testing.T) {
+	f := newFixture(t)
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// carried\n")
+	tk := f.reported("cmd/")
+	step := f.run(tk)
+	if !step.OK || step.Commit == "" {
+		t.Fatalf("commit step = %+v", step)
+	}
+	live, err := ReadLedger(f.root, f.handle)
+	if err != nil || len(live.Commits) != 1 {
+		t.Fatalf("ledger = %+v, %v", live.Commits, err)
+	}
+	real := live.Commits[0]
+	editCopiedRawBodySeq(t, f, 1<<53)
+	q := f.quarantined()
+	body, head, slot := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes(), snapshotSlot(t, q.Slot)
+	_, err = f.recover(q.Seq, 1, CarryEntry{Task: "not-in-body", Commit: real.Commit})
+	if recoverCode(t, err) != RecoverEntryUnknown {
+		t.Fatalf("unknown carry = %v", err)
+	}
+	if !bytes.Equal(body, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(head, f.headBytes()) {
+		t.Fatal("unknown carry changed ledger")
+	}
+	assertSlotSnapshot(t, q.Slot, slot)
+	res, err := f.recover(q.Seq, 1, CarryEntry{Task: tk.ID, Commit: real.Commit})
+	if err != nil || res.SeqFrom != "verified_head" || len(res.Carried) != 1 {
+		t.Fatalf("checked carry = %+v, %v", res, err)
+	}
+	live, err = ReadLedger(f.root, f.handle)
+	if err != nil || len(live.Commits) != 1 || live.Commits[0].Note == "" {
+		t.Fatalf("carried note = %+v, %v", live.Commits, err)
+	}
+	if got := migrationDecisionSeqs(t, f.root); len(got) != 0 {
+		t.Fatalf("raw carry recorded migration: %v", got)
+	}
+}
+
+func TestRawRecoveryWithGarbageHeadNeverRecordsAMigration(t *testing.T) {
+	f := newFixture(t)
+	tamperBase(t, f, f.base, '0')
+	if err := os.WriteFile(sealchain.HeadPath(f.root, ledgerHeadName(f.handle)), []byte("garbage\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	q := f.quarantined()
+	res, err := f.recover(q.Seq, 1)
+	if err != nil || res.SeqFrom != "body_seal" || res.NewSeq != 2 {
+		t.Fatalf("garbage-head recovery = %+v, %v", res, err)
+	}
+	l, err := ReadLedger(f.root, f.handle)
+	if err != nil || l.Recovered == nil || l.Recovered.SeqFrom != "body_seal" {
+		t.Fatalf("recovery record = %+v, %v", l.Recovered, err)
+	}
+	if got := migrationDecisionSeqs(t, f.root); len(got) != 0 {
+		t.Fatalf("migration decisions after recovery = %v", got)
+	}
+	if _, err := RecordTarget(f.root, f.handle, f.target()); err != nil {
+		t.Fatal(err)
+	}
+	if got := migrationDecisionSeqs(t, f.root); len(got) != 0 {
+		t.Fatalf("migration decisions after ordinary write = %v", got)
+	}
+}
+
+func TestRenamedSlotMustAgreeWithItsCopiedHeadClaim(t *testing.T) {
+	f := newFixture(t)
+	editCopiedHeadSeq(t, f, 7)
+	tamperBase(t, f, f.base, '0')
+	q := f.quarantined()
+	renamed := filepath.Join(filepath.Dir(q.Slot), quarantineBase(f.handle, "8"))
+	if err := os.Rename(q.Slot, renamed); err != nil {
+		t.Fatal(err)
+	}
+	body, head, slot := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes(), snapshotSlot(t, renamed)
+	_, err := f.recover("8", 1)
+	if recoverCode(t, err) != RecoverSlotInvalid || !strings.Contains(err.Error(), "copied head names 7") {
+		t.Fatalf("renamed slot = %v", err)
+	}
+	if !bytes.Equal(body, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(head, f.headBytes()) {
+		t.Fatal("renamed-slot refusal changed ledger")
+	}
+	assertNoRecoveryDecision(t, f.root)
+	assertSlotSnapshot(t, renamed, slot)
+}
+
+func TestVerifiedRecoveryRefusesASlotAboveTheLiveLink(t *testing.T) {
+	f := newFixture(t)
+	originalBody, originalHead := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
+	editCopiedHeadSeq(t, f, 7)
+	tamperBase(t, f, f.base, '0')
+	q := f.quarantined()
+	if err := os.WriteFile(ledgerPath(f.root, f.handle), originalBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealchain.HeadPath(f.root, ledgerHeadName(f.handle)), originalHead, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	slot := snapshotSlot(t, q.Slot)
+	_, err := f.recover("7", 1)
+	if recoverCode(t, err) != RecoverNotTampered || !strings.Contains(err.Error(), "behind the slot's highest sequence 7") {
+		t.Fatalf("verified behind slot = %v", err)
+	}
+	if !bytes.Equal(originalBody, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(originalHead, f.headBytes()) {
+		t.Fatal("verified refusal changed ledger")
+	}
+	assertNoRecoveryDecision(t, f.root)
+	assertSlotSnapshot(t, q.Slot, slot)
+}
+
+func TestVerifiedRecoveryAtMaximumSequenceRefusesBeforeWriting(t *testing.T) {
+	f := newFixture(t)
+	tamperBase(t, f, f.base, '0')
+	q := f.quarantined()
+	installRawLedgerAtSeq(t, f, math.MaxInt)
+	body, head, slot := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes(), snapshotSlot(t, q.Slot)
 	_, err := f.recover(q.Seq, 1)
-	if recoverCode(t, err) != RecoverSlotInvalid || !strings.Contains(err.Error(), "maximum chain sequence") {
-		t.Fatalf("maximum seq refusal = %v", err)
+	if recoverCode(t, err) != RecoverSlotInvalid || !strings.Contains(err.Error(), "verifies at the maximum chain sequence; no successor can be written") {
+		t.Fatalf("verified maximum = %v", err)
 	}
-	if !bytes.Equal(bodyBefore, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(headBefore, f.headBytes()) {
-		t.Fatal("maximum-seq refusal changed the ledger")
+	if !bytes.Equal(body, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(head, f.headBytes()) {
+		t.Fatal("verified maximum changed ledger")
 	}
+	assertNoRecoveryDecision(t, f.root)
+	assertSlotSnapshot(t, q.Slot, slot)
+}
+
+func TestTamperedBodyUnderVerifiedMaximumHeadKeepsD1cRefusal(t *testing.T) {
+	f := newFixture(t)
+	installRawLedgerAtSeq(t, f, math.MaxInt)
+	tamperBase(t, f, f.base, '0')
+	q := f.quarantined()
+	body, head, slot := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes(), snapshotSlot(t, q.Slot)
+	_, err := f.recover(q.Seq, 1)
+	if recoverCode(t, err) != RecoverSlotInvalid || !strings.Contains(err.Error(), "names the maximum chain sequence; no successor can be written") {
+		t.Fatalf("D1.c refusal = %v", err)
+	}
+	if !bytes.Equal(body, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(head, f.headBytes()) {
+		t.Fatal("D1.c refusal changed ledger")
+	}
+	assertNoRecoveryDecision(t, f.root)
+	assertSlotSnapshot(t, q.Slot, slot)
 }
 
 func TestRecoveryRefusesASlotBodyThatIsNeitherLayout(t *testing.T) {
@@ -229,6 +544,8 @@ func TestRecoveryRefusesASlotBodyThatIsNeitherLayout(t *testing.T) {
 	}
 	q := f.quarantined()
 	bodyBefore, headBefore := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
+	slotBefore := snapshotSlot(t, q.Slot)
+	decisionPath := filepath.Join(f.root, "extensions", "amq-squad", "scheduler", "decisions.jsonl")
 	_, err = f.recover(q.Seq, 1)
 	if recoverCode(t, err) != RecoverSeqUnknown || !strings.Contains(err.Error(), "neither the raw layout nor a legacy ledger") {
 		t.Fatalf("neither-layout refusal = %v", err)
@@ -236,6 +553,10 @@ func TestRecoveryRefusesASlotBodyThatIsNeitherLayout(t *testing.T) {
 	if !bytes.Equal(bodyBefore, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(headBefore, f.headBytes()) {
 		t.Fatal("neither-layout refusal changed the ledger")
 	}
+	if _, statErr := os.Stat(decisionPath); !os.IsNotExist(statErr) {
+		t.Fatalf("neither-layout refusal wrote a decision: %v", statErr)
+	}
+	assertSlotSnapshot(t, q.Slot, slotBefore)
 }
 
 func TestRecoveryRefusesANeitherLayoutHeadWithNoBody(t *testing.T) {
@@ -484,12 +805,14 @@ func TestRetryCompletesARecoveredRawBodyAboveALegacyHead(t *testing.T) {
 
 func TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm(t *testing.T) {
 	type form struct {
-		name          string
-		outcome       string
-		wantSeq       int
-		wantMigrating bool
-		prevFrom      string
-		install       func(*testing.T, *fixture)
+		name            string
+		outcome         string
+		wantSeq         int
+		wantMigrating   bool
+		prevFrom        string
+		crashMigrations []int
+		finalMigrations []int
+		install         func(*testing.T, *fixture)
 	}
 	forms := []form{
 		{name: "head raw body raw", outcome: "raw successor", wantSeq: 1, prevFrom: "head", install: func(t *testing.T, f *fixture) {
@@ -503,7 +826,7 @@ func TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm(t *testing
 				t.Fatal(err)
 			}
 		}},
-		{name: "head legacy body raw with a gap", wantSeq: 3, wantMigrating: true, prevFrom: "head", install: func(t *testing.T, f *fixture) {
+		{name: "head legacy body raw with a gap", wantSeq: 3, wantMigrating: true, prevFrom: "head", crashMigrations: []int{4}, finalMigrations: []int{4, 5}, install: func(t *testing.T, f *fixture) {
 			l, key, legacy := installLegacyCommitLedger(t, f, nil)
 			body, err := json.MarshalIndent(l, "", "  ")
 			if err != nil {
@@ -519,11 +842,11 @@ func TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm(t *testing
 				t.Fatal(err)
 			}
 		}},
-		{name: "head legacy body legacy", outcome: "legacy successor", wantSeq: 1, wantMigrating: true, prevFrom: "head", install: func(t *testing.T, f *fixture) {
+		{name: "head legacy body legacy", outcome: "legacy successor", wantSeq: 1, wantMigrating: true, prevFrom: "head", crashMigrations: []int{2}, finalMigrations: []int{2}, install: func(t *testing.T, f *fixture) {
 			installLegacyCommitLedger(t, f, nil)
 			tamperBase(t, f, f.base, '0')
 		}},
-		{name: "interrupted migration", wantSeq: 2, wantMigrating: true, prevFrom: "body", install: func(t *testing.T, f *fixture) {
+		{name: "interrupted migration", wantSeq: 2, wantMigrating: true, prevFrom: "body", crashMigrations: []int{2}, finalMigrations: []int{2, 4}, install: func(t *testing.T, f *fixture) {
 			l, key, legacy := installLegacyCommitLedger(t, f, nil)
 			writeInterruptedCommitMigration(t, f, l, key, legacy)
 			tamperBase(t, f, f.base, '0')
@@ -532,6 +855,7 @@ func TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm(t *testing
 	for _, tc := range forms {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
+			carry := installFixtureEntryAtSeqOne(t, f)
 			tc.install(t, f)
 			first := f.quarantined()
 			choice := mustSlotChoice(t, f, first)
@@ -540,13 +864,25 @@ func TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm(t *testing
 				t.Fatalf("slot link = seq %d tag %s migrating %v; want seq %d tag from %s (%s) migrating %v", choice.prev.Seq, choice.prev.Tag, choice.migrating, tc.wantSeq, tc.prevFrom, wantTag, tc.wantMigrating)
 			}
 			firstBefore := snapshotSlot(t, first.Slot)
+			bodyBeforeMissing, headBeforeMissing := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
+			_, missingErr := f.recover(first.Seq, mustSlotIndex(t, f.handle, first), CarryEntry{Task: "absent", Commit: carry.Commit})
+			if recoverCode(t, missingErr) != RecoverEntryUnknown {
+				t.Fatalf("absent carry = %v", missingErr)
+			}
+			if !bytes.Equal(bodyBeforeMissing, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(headBeforeMissing, f.headBytes()) {
+				t.Fatal("absent carry changed body or head")
+			}
+			assertSlotSnapshot(t, first.Slot, firstBefore)
 			crash := errors.New("crash before recovery head")
 			beforeRecoveryHeadWrite = func(sealchain.RawSeal) error { return crash }
 			t.Cleanup(func() { beforeRecoveryHeadWrite = nil })
-			_, err := f.recover(first.Seq, mustSlotIndex(t, f.handle, first))
+			_, err := f.recover(first.Seq, mustSlotIndex(t, f.handle, first), carry)
 			beforeRecoveryHeadWrite = nil
 			if recoverCode(t, err) != RecoverWriteFailed || !strings.Contains(err.Error(), crash.Error()) {
 				t.Fatalf("crashed recovery = %v", err)
+			}
+			if got := migrationDecisionSeqs(t, f.root); !slices.Equal(got, tc.crashMigrations) {
+				t.Fatalf("migration seqs after crash = %v, want %v", got, tc.crashMigrations)
 			}
 			crashedBody := readFile(t, ledgerPath(f.root, f.handle))
 			_, crashedSeal, err := sealchain.SplitRaw(crashedBody)
@@ -562,7 +898,7 @@ func TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm(t *testing
 					t.Fatalf("admitted recovery is not visible to hold reconciliation: %+v, %v", recovered, ok)
 				}
 				bodyBeforeRetry, headBeforeRetry := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes()
-				res, err := f.recover(first.Seq, mustSlotIndex(t, f.handle, first))
+				res, err := f.recover(first.Seq, mustSlotIndex(t, f.handle, first), carry)
 				if err != nil || !res.AlreadyRecovered || res.NewSeq != crashedSeal.Seq {
 					t.Fatalf("admitted retry = %+v, %v", res, err)
 				}
@@ -604,7 +940,7 @@ func TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm(t *testing
 				if recoverCode(t, err) != RecoverSlotStale || !strings.Contains(err.Error(), second.Slot) {
 					t.Fatalf("first decision retry = %v", err)
 				}
-				res, err := f.recover(second.Seq, mustSlotIndex(t, f.handle, second))
+				res, err := f.recover(second.Seq, mustSlotIndex(t, f.handle, second), carry)
 				if err != nil {
 					t.Fatalf("second decision = %v", err)
 				}
@@ -618,9 +954,67 @@ func TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm(t *testing
 					t.Fatalf("final seq %d is not above slot maxima %d and %d: %+v", l.Seal.Seq, firstChoice.prev.Seq, secondChoice.prev.Seq, res)
 				}
 			}
+			if got := migrationDecisionSeqs(t, f.root); !slices.Equal(got, tc.finalMigrations) {
+				t.Fatalf("migration seqs after final decision = %v, want %v", got, tc.finalMigrations)
+			}
+			final, err := ReadLedger(f.root, f.handle)
+			if err != nil || len(final.Commits) != 1 || final.Commits[0].Note == "" {
+				t.Fatalf("carried entry with Note = %+v, %v", final.Commits, err)
+			}
 			assertSlotSnapshot(t, first.Slot, firstBefore)
 		})
 	}
+}
+
+func installFixtureEntryAtSeqOne(t *testing.T, f *fixture) CarryEntry {
+	t.Helper()
+	l, err := ReadLedger(f.root, f.handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := sh(t, f.wt, "rev-parse", f.base+"^{tree}")
+	entry := LedgerCommit{Task: "held", Commit: f.base, Tree: tree, Pushed: true, Branch: "main", Base: f.base, At: f.now}
+	l.Commits = []LedgerCommit{entry}
+	l.Seal = nil
+	body, err := json.MarshalIndent(l, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := mustSessionKey(t, f.root)
+	seal := sealchain.NewRawSeal(key.Key, ledgerLabel, nil, body, "v3.2.0-rc.2", LedgerSchema)
+	raw, err := sealchain.JoinRaw(body, seal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledgerPath(f.root, f.handle), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sealchain.CompleteRawHead(f.root, ledgerHeadName(f.handle), key, seal, f.now); err != nil {
+		t.Fatal(err)
+	}
+	return CarryEntry{Task: entry.Task, Commit: entry.Commit}
+}
+
+func migrationDecisionSeqs(t *testing.T, root string) []int {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(root, "extensions", "amq-squad", "scheduler", "decisions.jsonl"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []int
+	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte{'\n'}) {
+		var d struct {
+			Kind string `json:"kind"`
+			Seq  int    `json:"seq"`
+		}
+		if json.Unmarshal(line, &d) == nil && d.Kind == sealchain.LayoutMigrationDecisionKind {
+			out = append(out, d.Seq)
+		}
+	}
+	return out
 }
 
 func mustSlotIndex(t *testing.T, handle string, q *QuarantinedError) int {
@@ -698,6 +1092,21 @@ func assertSlotSnapshot(t *testing.T, path string, want map[string][]byte) {
 		if !bytes.Equal(after, before) {
 			t.Fatalf("first slot's %s changed", name)
 		}
+	}
+}
+
+func assertNoRecoveryDecision(t *testing.T, root string) {
+	t.Helper()
+	p := filepath.Join(root, "extensions", "amq-squad", "scheduler", "decisions.jsonl")
+	raw, err := os.ReadFile(p)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(`"kind":"ledger_recovered"`)) || bytes.Contains(raw, []byte(`"kind":"ledger_layout_migrated"`)) {
+		t.Fatalf("refusal wrote a decision: %s", raw)
 	}
 }
 

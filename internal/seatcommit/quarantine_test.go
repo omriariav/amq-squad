@@ -125,6 +125,23 @@ func headSeqOf(t *testing.T, f *fixture) (seq string, raw []byte) {
 	return strconv.Itoa(h.Seq), raw
 }
 
+func TestCopiedHeadSequenceMustLeaveAPlausibleSuccessor(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want string
+	}{
+		{`{"seq":0}`, quarantineSeqUnknown},
+		{`{"seq":-5}`, quarantineSeqUnknown},
+		{`{"seq":9007199254740990}`, "9007199254740990"},
+		{`{"seq":9007199254740991}`, quarantineSeqUnknown},
+		{`{"seq":9007199254740992}`, quarantineSeqUnknown},
+	} {
+		if got := headSeq([]byte(tc.raw)); got != tc.want {
+			t.Errorf("headSeq(%s) = %s, want %s", tc.raw, got, tc.want)
+		}
+	}
+}
+
 // slotOf is a seat's quarantine slot directory for a seq (k 1 is the
 // first slot, commits.<h>.seq<N>; k 2 is commits.<h>.seq<N>.2).
 func slotOf(f *fixture, seq string, k int) string {
