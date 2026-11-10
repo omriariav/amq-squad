@@ -3,15 +3,37 @@ package schedproc
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
+
+func TestPrepareErrorWrapsOnlyTamperingAsALedgerAlarm(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		wrap bool
+	}{
+		{name: "tampered", err: sealchain.ErrTampered, wrap: true},
+		{name: "newer writer", err: sealchain.ErrNewerWriter},
+		{name: "schema mismatch", err: sealchain.ErrSchemaMismatch},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := prepareError("seat-a", tc.err)
+			var alarm *scheduler.LedgerTamperedError
+			if got := errors.As(err, &alarm); got != tc.wrap {
+				t.Fatalf("LedgerTamperedError = %v, want %v: %v", got, tc.wrap, err)
+			}
+		})
+	}
+}
 
 // 3.2.0-0c-A, the A4 row's scheduler half: the prepare's read of a tampered
 // ledger is still seat_prepare_failed (no lease), and its reason now names

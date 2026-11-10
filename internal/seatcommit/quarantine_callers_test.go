@@ -112,6 +112,110 @@ func TestEveryLedgerWriterHasAQuarantineRow(t *testing.T) {
 	}
 }
 
+// On the 0e layout every production ledger write, including recovery, goes
+// through saveRawLedger. The legacy embedded-seal and legacy-head writers are
+// fixtures only and must not reappear in non-test seatcommit code.
+func TestLedgerProductionWritersUseOnlyTheRawPath(t *testing.T) {
+	calls, _ := packageCallGraph(t, ".")
+	if !calls["writeLedger"]["saveRawLedger"] || !calls["saveRawLedger"]["saveRawLedgerBeforeHead"] || !calls["recoverWrite"]["saveRawLedgerBeforeHead"] {
+		t.Fatalf("raw writer callers: writeLedger=%v saveRawLedger=%v recoverWrite=%v", calls["writeLedger"], calls["saveRawLedger"], calls["recoverWrite"])
+	}
+	for _, name := range goFiles(t, ".") {
+		source, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, problem := range legacyLedgerWriterProblems(name, source) {
+			if problem != "ledger.go:saveRawLedgerBeforeHead: atomicfile.Write(ledgerPath)" {
+				t.Error(problem)
+			}
+		}
+	}
+}
+
+func TestLedgerWriterGuardRejectsPlantedLegacyCalls(t *testing.T) {
+	plants := []string{
+		`package seatcommit; import "github.com/omriariav/amq-squad/v3/internal/sealchain"; func bad(l Ledger) { _ = sealchain.Seal(nil, "x", nil, l) }`,
+		`package seatcommit; import "github.com/omriariav/amq-squad/v3/internal/atomicfile"; func bad(root string) { _ = atomicfile.Write(ledgerPath(root, "s"), nil, 0600) }`,
+		`package seatcommit; import sc "github.com/omriariav/amq-squad/v3/internal/sealchain"; func bad(root string, s sc.Seed) { _ = sc.WriteHead(root, ledgerHeadName("s"), s, nil, time.Time{}) }`,
+		`package seatcommit; import af "github.com/omriariav/amq-squad/v3/internal/atomicfile"; func bad(root string) { _ = af.Write(ledgerPath(root, "s"), nil, 0600) }`,
+	}
+	for i, source := range plants {
+		if got := legacyLedgerWriterProblems("plant.go", []byte(source)); len(got) == 0 {
+			t.Errorf("plant %d passed the writer guard", i+1)
+		}
+	}
+}
+
+func legacyLedgerWriterProblems(name string, source []byte) []string {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, name, source, 0)
+	if err != nil {
+		return []string{name + ": parse: " + err.Error()}
+	}
+	aliases := map[string]string{}
+	for _, imp := range file.Imports {
+		path, _ := strconv.Unquote(imp.Path.Value)
+		alias := filepath.Base(path)
+		if imp.Name != nil {
+			alias = imp.Name.Name
+		}
+		aliases[alias] = path
+	}
+	containsLedgerPath := func(n ast.Node) bool {
+		found := false
+		ast.Inspect(n, func(n ast.Node) bool {
+			if c, ok := n.(*ast.CallExpr); ok {
+				if id, ok := c.Fun.(*ast.Ident); ok && (id.Name == "ledgerPath" || id.Name == "ledgerHeadName") {
+					found = true
+				}
+			}
+			return !found
+		})
+		return found
+	}
+	var out []string
+	for _, decl := range file.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if !ok || fd.Body == nil {
+			continue
+		}
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			x, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			path := aliases[x.Name]
+			kind := ""
+			switch {
+			case path == "github.com/omriariav/amq-squad/v3/internal/sealchain" && (sel.Sel.Name == "Seal" || sel.Sel.Name == "WriteHead"):
+				kind = "sealchain." + sel.Sel.Name
+			case path == "github.com/omriariav/amq-squad/v3/internal/atomicfile" && sel.Sel.Name == "Write" && len(call.Args) > 0 && containsLedgerPath(call.Args[0]):
+				kind = "atomicfile.Write(ledgerPath)"
+			case path == "os" && (sel.Sel.Name == "WriteFile" || sel.Sel.Name == "Create" || sel.Sel.Name == "OpenFile" || sel.Sel.Name == "Rename"):
+				for _, arg := range call.Args {
+					if containsLedgerPath(arg) {
+						kind = "os." + sel.Sel.Name + "(ledgerPath)"
+					}
+				}
+			}
+			if kind != "" {
+				out = append(out, filepath.Base(name)+":"+fd.Name.Name+": "+kind)
+			}
+			return true
+		})
+	}
+	return out
+}
+
 // packageCallGraph parses the package's non-test files: for each function
 // (a method as Type.Name) the set of plain in-package calls in its body
 // (function literals included), and the exported functions.

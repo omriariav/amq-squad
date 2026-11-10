@@ -56,8 +56,12 @@ type Options struct {
 	// Decisions, when set, serves the lead's decisions over the scheduler's
 	// own socket (R4); Root and Lead are filled in by Run.
 	Decisions *DecideOptions
-	Config    scheduler.Config
-	Tick      time.Duration
+	// Recover writes the new chain of a seat's quarantined commits ledger
+	// for the lead's recovery decision (3.2.0-0c-B; the verb passes
+	// Recovery.Apply with the launch's target); nil refuses every recovery.
+	Recover RecoverApply
+	Config  scheduler.Config
+	Tick    time.Duration
 	// Wake triggers an early tick (an AMQ message).
 	Wake <-chan struct{}
 	// Log receives one JSON line per decision; nil writes
@@ -175,8 +179,15 @@ func Run(ctx context.Context, o Options) error {
 	// them.
 	if st, err := scheduler.ReadState(o.Config.StatePath); err != nil {
 		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "launch_failures_unread", Reason: err.Error()})
-	} else if f, b := s.RestoreLaunchFailures(st); f+b > 0 {
-		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "launch_failures_restored", Reason: fmt.Sprintf("%d launch failures and %d tasks blocked on one, from the previous incarnation's state", f, b)})
+	} else {
+		if f, b := s.RestoreLaunchFailures(st); f+b > 0 {
+			logLine(o.Log, o.Now(), scheduler.Decision{Kind: "launch_failures_restored", Reason: fmt.Sprintf("%d launch failures and %d tasks blocked on one, from the previous incarnation's state", f, b)})
+		}
+		// A tamper alarm holds its seat across a restart (3.2.0-0c-B): the
+		// alarm is raised once, never once per incarnation.
+		if n := s.RestoreLedgerTampers(st); n > 0 {
+			logLine(o.Log, o.Now(), scheduler.Decision{Kind: "ledger_tampers_restored", Reason: fmt.Sprintf("%d seats held by a tamper alarm until the lead's recovery, from the previous incarnation's state", n)})
+		}
 	}
 	if p, ok := o.Preparer.(interface {
 		SetLog(io.Writer, func() time.Time)
@@ -246,6 +257,9 @@ func Run(ctx context.Context, o Options) error {
 			d.Root, d.Lead = o.Root, o.Config.Lead
 			if d.Relaunch == nil && len(o.Config.Roster) > 0 {
 				d.Relaunch = relaunchDecision(s, d.Reload, o.Start)
+			}
+			if d.Recover == nil && o.Recover != nil {
+				d.Recover = recoverDecision(s, o.Root, o.Recover, o.Now)
 			}
 			opened, serr := ServeDecisions(d)
 			if serr != nil {
