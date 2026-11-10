@@ -65,6 +65,14 @@ func ReadLaunchRecord(root string) (LaunchRecord, error) {
 // WidenRequestKind marks a widening in a message body.
 const WidenRequestKind = "amq-squad.widen.v1"
 
+// CleanRequestKind marks the lead's request to clean a stopped seat.
+const CleanRequestKind = "amq-squad.clean.v1"
+
+type CleanRequest struct {
+	Kind string `json:"kind"`
+	Seat string `json:"seat"`
+}
+
 // WidenRequest is the lead's widening, over the decision socket (and in the
 // lead's AMQ record of it).
 type WidenRequest struct {

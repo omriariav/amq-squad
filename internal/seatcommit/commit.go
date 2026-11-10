@@ -406,7 +406,9 @@ func run(o Options, res Result) Result {
 		return res
 	}
 	if o.cancelled() {
-		return res.defer_(ReasonStepCancelled + ": the task was cancelled while the step ran; nothing is pushed")
+		res = res.defer_(ReasonStepCancelled + ": the task was cancelled while the step ran; nothing is pushed")
+		res.ReasonCode = ReasonStepCancelled
+		return res
 	}
 	out := commitAndPush(o, sh, ledger, base, res)
 	if out.OK {
@@ -466,6 +468,62 @@ func (l Ledger) base(g grants.Resolved) string {
 // The whole reset runs under the task store's lock with the seat free (R3):
 // no claim can land between the check and the reset.
 func CleanSeat(root, handle, gitBin string, env []string, now time.Time) (discarded bool, err error) {
+	discarded, _, err = CleanSeatDetailed(root, handle, gitBin, env, now)
+	return discarded, err
+}
+
+// CleanSeatDetailed is CleanSeat with the marker-takeover decision that the
+// scheduler records.
+func CleanSeatDetailed(root, handle, gitBin string, env []string, now time.Time) (discarded bool, decision string, err error) {
+	if gitBin == "" {
+		if gitBin, err = exec.LookPath("git"); err != nil {
+			return false, "", err
+		}
+	}
+	if env == nil {
+		env = os.Environ()
+	}
+	store, err := task.Open(root)
+	if err != nil {
+		return false, "", err
+	}
+	// CleanSeat runs on the tick (the seat's preparation before a lease): a
+	// busy ledger is ErrLedgerBusy, never a wait.
+	err = withLedgerTryLock(root, handle, func() (retErr error) {
+		// Only between leases, never mid-task (condition 2 of the ruling):
+		// the store lock covers the state read with the seat's unclean marker
+		// and, in a second take, the marker's removal with the seat
+		// re-checked; the git work runs between them, outside the lock (no
+		// lock reachable from the tick is held across a subprocess). While
+		// the marker exists no grant or claim leases the seat; only a
+		// return removes it, and only its own (the nonce). A process death can
+		// leave it behind; the next CleanSeat proves that cleaner dead before
+		// taking it over.
+		list, nonce, markerDecision, err := store.ReserveSeatWithDecision(handle, now)
+		if err != nil {
+			return err
+		}
+		decision = markerDecision
+		defer func() {
+			if releaseErr := store.ReleaseSeat(handle, nonce); retErr == nil && releaseErr != nil {
+				retErr = releaseErr
+			}
+		}()
+		discarded, retErr = cleanSeat(root, handle, gitBin, env, list, now)
+		if retErr != nil {
+			return retErr
+		}
+		return nil
+	})
+	return discarded, decision, err
+}
+
+// CleanSeatHeld is CleanSeat for a caller that already holds the seat's
+// reservation (task.Store.ReserveCancel, the scheduler's cancel round): the
+// clean runs under the ledger try-lock with no reservation of its own (a
+// second take would find the caller's live marker and refuse), and the
+// caller releases the reservation. A seat that holds a lease is refused.
+func CleanSeatHeld(root, handle, gitBin string, env []string, now time.Time) (discarded bool, err error) {
 	if gitBin == "" {
 		if gitBin, err = exec.LookPath("git"); err != nil {
 			return false, err
@@ -478,27 +536,16 @@ func CleanSeat(root, handle, gitBin string, env []string, now time.Time) (discar
 	if err != nil {
 		return false, err
 	}
-	// CleanSeat runs on the tick (the seat's preparation before a lease): a
-	// busy ledger is ErrLedgerBusy, never a wait.
 	err = withLedgerTryLock(root, handle, func() error {
-		// Only between leases, never mid-task (condition 2 of the ruling):
-		// the store lock covers the state read with the seat's unclean marker
-		// and, in a second take, the marker's removal with the seat
-		// re-checked; the git work runs between them, outside the lock (no
-		// lock reachable from the tick is held across a subprocess). While
-		// the marker exists no grant or claim leases the seat; only a
-		// completed clean removes it, and only its own (the nonce): a clean
-		// that fails or dies leaves the seat unclean for the next CleanSeat.
-		list, nonce, err := store.ReserveSeat(handle, now)
+		list, err := store.List()
 		if err != nil {
 			return err
 		}
-		var derr error
-		discarded, derr = cleanSeat(root, handle, gitBin, env, list, now)
-		if derr != nil {
-			return derr
+		if held := task.HeldBy(handle, list); held != nil {
+			return fmt.Errorf("seat %s holds task %s; its worktree is cleaned only between leases", handle, held.ID)
 		}
-		return store.ReleaseSeat(handle, nonce)
+		discarded, err = cleanSeat(root, handle, gitBin, env, list, now)
+		return err
 	})
 	return discarded, err
 }
@@ -508,6 +555,11 @@ func CleanSeat(root, handle, gitBin string, env []string, now time.Time) (discar
 // scheduler-side half of CleanSeat's discard record and is idempotent by task
 // and attempt.
 func ArchiveAttempt(root, handle, gitBin string, env []string, taskID string, attempt int, now time.Time) (archived bool, err error) {
+	return ArchiveAttemptReason(root, handle, gitBin, env, taskID, attempt, "blocked: "+task.ReasonWidenRequested, now)
+}
+
+// ArchiveAttemptReason seals a stopped attempt under its task and attempt.
+func ArchiveAttemptReason(root, handle, gitBin string, env []string, taskID string, attempt int, reason string, now time.Time) (archived bool, err error) {
 	if gitBin == "" {
 		if gitBin, err = exec.LookPath("git"); err != nil {
 			return false, err
@@ -525,6 +577,11 @@ func ArchiveAttempt(root, handle, gitBin string, env []string, taskID string, at
 		if err != nil {
 			return err
 		}
+		// The first writer of a task and attempt keeps the record (fix 1b's
+		// row in internal/cli, "on demand keeps the first archived
+		// attempt"): the typed widen's dry run reads the snapshot of the
+		// stop. A tree the worktree holds later under the same attempt is
+		// the clean's to record (cleanSeat compares trees, Codex's B).
 		for _, d := range l.Discarded {
 			if d.TaskID == taskID && d.Attempt == attempt {
 				return nil
@@ -557,7 +614,7 @@ func ArchiveAttempt(root, handle, gitBin string, env []string, taskID string, at
 		if err != nil {
 			return err
 		}
-		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Attempt: attempt, Reason: "blocked: " + task.ReasonWidenRequested, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
+		l.Discarded = append(l.Discarded, LedgerDiscard{TaskID: taskID, Attempt: attempt, Reason: reason, Parent: parent, Tree: tree, DiffDigest: digest(raw), At: now.UTC(), EvidenceRef: ref})
 		if err := writeLedger(root, l, "archive attempt"); err != nil {
 			return err
 		}
@@ -566,6 +623,16 @@ func ArchiveAttempt(root, handle, gitBin string, env []string, taskID string, at
 	})
 	return archived, err
 }
+
+// RefusalSeatHeadDetachedUnmerged refuses a clean of a worktree whose HEAD
+// (a task branch, a foreign branch or a detached HEAD) holds a commit the
+// resting commit does not and the ledger did not record: the harness never
+// discards a local commit (slots.go's code, the same words). The clean
+// says so once and leaves the worktree as it is; the lead decides. Named
+// Refusal*, not Reason*: it is the clean's refusal, never a commit
+// refusal (routing's table reads this package's Reason* constants), and
+// the words scan reads both prefixes.
+const RefusalSeatHeadDetachedUnmerged = "seat_head_detached_unmerged"
 
 // beforeArchiveAttemptWrite is a test seam held inside ArchiveAttempt's
 // ledger critical section, after its snapshot and before its ledger write.
@@ -591,9 +658,6 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 		return false, fmt.Errorf("the seat worktree %s is not a git checkout root: %v", rec.Worktree, err)
 	}
 	onTask := rp.HeadRef != "refs/heads/"+rec.Branch
-	if onTask && !l.knownBranch(rp.HeadRef) {
-		return false, fmt.Errorf("the seat worktree has %q checked out, not the seat branch %s or the task branch of the lease its commit ledger records", rp.HeadRef, rec.Branch)
-	}
 	henv := harnessEnv(env)
 	sh, err := newShadow(gitBin, henv, rp)
 	if err != nil {
@@ -613,6 +677,24 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 	// The next lease starts at the base (3.0.2 t23, amendment 2b): the tip
 	// the launch recorded on the launch record, never the ledger's first base.
 	rest, _ := restTarget(rec, l)
+	if onTask {
+		workRepo := git{bin: gitBin, dir: rp.Worktree, env: henv}.with("GIT_DIR="+rp.GitDir, "GIT_WORK_TREE="+rp.Worktree)
+		workHead, herr := workRepo.line("rev-parse", "--verify", "HEAD^{commit}")
+		if herr != nil {
+			return false, fmt.Errorf("the seat worktree has %q checked out and its HEAD is unreadable: %v", rp.HeadRef, herr)
+		}
+		recorded := workHead == rest
+		for _, c := range l.Commits {
+			recorded = recorded || c.Commit == workHead
+		}
+		ahead, aerr := repo.line("rev-list", "--max-count=1", rest+".."+workHead)
+		if aerr != nil {
+			return false, aerr
+		}
+		if ahead != "" && !recorded {
+			return false, fmt.Errorf("%s: seat %s: the worktree's branch %s holds an unrecorded commit %s; the harness never discards a local commit", RefusalSeatHeadDetachedUnmerged, handle, firstNonEmpty(strings.TrimPrefix(rp.HeadRef, "refs/heads/"), "(detached HEAD)"), ahead)
+		}
+	}
 	head, _ := repo.line("rev-parse", "--verify", "-q", "refs/heads/"+rec.Branch)
 	if l.Lease == nil && !onTask && tree == parentTree && head == parent && parent == rest {
 		return false, nil
@@ -623,9 +705,14 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 	if discarded {
 		raw, _ := sh.g.run(nil, nil, "diff-tree", "-r", "-z", "--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--raw", parent, tree)
 		taskID, attempt, last := lastAttempt(list, handle)
+		// Nothing is removed that the ledger does not hold (Codex's B on
+		// #898): the attempt's earlier discard counts only when its tree
+		// is the tree about to be removed; a worktree edited since (a
+		// repair, a second clean) gets a second discard under the same
+		// task and attempt, at its own time.
 		already := false
 		for _, d := range l.Discarded {
-			already = already || d.TaskID == taskID && d.Attempt == attempt
+			already = already || (d.TaskID == taskID && d.Attempt == attempt && d.Tree == tree)
 		}
 		if !already {
 			expireEvidence(repo, &l, now)

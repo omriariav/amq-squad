@@ -51,13 +51,13 @@ func TestEveryLedgerWriterHasAQuarantineRow(t *testing.T) {
 	sort.Strings(direct)
 	// The direct callers and the A1 row that drives each.
 	rowOf := map[string]string{
-		"recordBase":     "RecordBase, RecordWorktreeBase",
-		"RecordTarget":   "RecordTarget",
-		"ArchiveAttempt": "ArchiveAttempt",
-		"cleanSeat":      "CleanSeat",
-		"StartTask":      "StartTask",
-		"settle":         "Run",
-		"commitAndPush":  "Run",
+		"recordBase":           "RecordBase, RecordWorktreeBase",
+		"RecordTarget":         "RecordTarget",
+		"ArchiveAttemptReason": "ArchiveAttempt, ArchiveAttemptReason",
+		"cleanSeat":            "CleanSeat",
+		"StartTask":            "StartTask",
+		"settle":               "Run",
+		"commitAndPush":        "Run",
 	}
 	for _, name := range direct {
 		if rowOf[name] == "" {
@@ -101,7 +101,7 @@ func TestEveryLedgerWriterHasAQuarantineRow(t *testing.T) {
 	for _, r := range refs {
 		t.Logf("%s", r)
 	}
-	for _, entry := range []string{"RecordBase", "RecordTarget", "RecordWorktreeBase", "ArchiveAttempt", "CleanSeat"} {
+	for _, entry := range []string{"RecordBase", "RecordTarget", "RecordWorktreeBase", "ArchiveAttempt", "ArchiveAttemptReason", "CleanSeatDetailed"} {
 		found := false
 		for _, r := range refs {
 			found = found || strings.HasSuffix(r, " seatcommit."+entry)

@@ -375,13 +375,6 @@ func (l Ledger) rest() string { return firstNonEmpty(l.Rest, l.Head, l.Base) }
 // the only source of which task a branch carries.
 func TaskBranch(handle, taskID string) string { return "seat/" + handle + "-" + taskID }
 
-// knownBranch reports whether a ref is the task branch of the lease the
-// ledger records (Lease.Task, Lease.Branch): the lease record is the only
-// source of whether, and on which task, the worktree is; never the name.
-func (l Ledger) knownBranch(ref string) bool {
-	return l.Lease != nil && l.Lease.Branch != "" && ref == "refs/heads/"+l.Lease.Branch
-}
-
 // taskCommitAt is the index of the task's last commit on its branch, -1
 // when none.
 func (l Ledger) taskCommitAt(taskID, branch string) int {

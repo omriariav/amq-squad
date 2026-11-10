@@ -1,6 +1,7 @@
 package task
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -23,6 +24,9 @@ func TestOnlyTheCleanersOwnMarkerIsReleased(t *testing.T) {
 	if _, _, err := s.ReserveSeat("seat-1", t0.Add(time.Minute)); !errors.Is(err, ErrSeatCleaning) {
 		t.Fatalf("a second cleaner over a fresh marker: %v", err)
 	}
+	originalStart := cleanerStartToken
+	cleanerStartToken = func(int) (string, bool) { return "reused-pid", true }
+	t.Cleanup(func() { cleanerStartToken = originalStart })
 	_, nonceB, err := s.ReserveSeat("seat-1", t0.Add(SeatReservationTTL+time.Minute))
 	if err != nil {
 		t.Fatalf("a takeover after the TTL: %v", err)
@@ -38,6 +42,29 @@ func TestOnlyTheCleanersOwnMarkerIsReleased(t *testing.T) {
 	}
 	if _, err := s.Claim(a.ID, "seat-1", nil, time.Hour, t0); err != nil {
 		t.Fatalf("a claim after B's clean: %v", err)
+	}
+}
+
+func TestCleanerMarkerUsesProcessIdentityBeforeTTL(t *testing.T) {
+	s := newStore(t)
+	if err := os.MkdirAll(reservedDir(s.Dir), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(seatMarker{Nonce: "old", At: t0, PID: 4242, Start: "first"})
+	if err := os.WriteFile(markerPath(s.Dir, "seat-1"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	originalStart, originalAlive := cleanerStartToken, cleanerAlive
+	cleanerStartToken = func(pid int) (string, bool) { return "first", pid == 4242 }
+	cleanerAlive = func(int) bool { return true }
+	t.Cleanup(func() { cleanerStartToken, cleanerAlive = originalStart, originalAlive })
+	if _, _, _, err := s.ReserveSeatWithDecision("seat-1", t0.Add(2*SeatReservationTTL)); !errors.Is(err, ErrSeatCleaning) {
+		t.Fatalf("a live cleaner past the old TTL was taken over: %v", err)
+	}
+	cleanerStartToken = func(pid int) (string, bool) { return "reused", pid == 4242 }
+	_, _, decision, err := s.ReserveSeatWithDecision("seat-1", t0.Add(time.Second))
+	if err != nil || !strings.Contains(decision, "dead pid 4242") {
+		t.Fatalf("a dead cleaner was not taken over immediately: decision=%q err=%v", decision, err)
 	}
 }
 

@@ -229,6 +229,60 @@ func (s Store) Grant(id, holder string, pool *Pool, dur time.Duration, now time.
 	})
 }
 
+// UncleanedSeatError refuses a lease for a seat whose latest attempt is a
+// cancelled one not archived and cleaned yet: the plan reviewer's words
+// (#909), with the seat and the cancelled attempt's task.
+type UncleanedSeatError struct{ Seat, Task string }
+
+func (e *UncleanedSeatError) Error() string {
+	return fmt.Sprintf("seat %s holds an uncleaned cancelled attempt of %s; run seat clean --seat %s first", e.Seat, e.Task, e.Seat)
+}
+
+// GrantClean is Grant for a grant outside the scheduler (the lead's
+// dispatch): it refuses, inside the same locked mutation that grants, a
+// seat with an unresolved cancellation (UnresolvedCancellation), so no
+// cancellation can land between the check and the grant (#909). The
+// scheduler grants with Grant: it grants only after PrepareSeat's clean,
+// never to a seat with a queued exit item.
+func (s Store) GrantClean(id, holder string, pool *Pool, dur time.Duration, now time.Time) (Task, error) {
+	return s.mutate(id, now, func(t *Task, all *tasks) error {
+		if err := dispatchRefusal(all.dir, all.list, strings.TrimSpace(holder)); err != nil {
+			return err
+		}
+		if err := s.dispatchable(*t); err != nil {
+			return err
+		}
+		return grant(t, all, holder, pool, dur, now)
+	})
+}
+
+// dispatchRefusal is the lead's dispatch refusal of a seat, read under the
+// store's lock: a seat reserved for a cancelled attempt's close and clean
+// (ReservedSeatError), then a seat whose latest attempt is a cancelled one
+// not cleaned yet (UncleanedSeatError).
+func dispatchRefusal(dir string, list []Task, holder string) error {
+	var reserved *ReservedSeatError
+	if err := seatLeasable(dir, holder); errors.As(err, &reserved) {
+		return err
+	}
+	if c, _, ok := UnresolvedCancellation(list, holder); ok {
+		return &UncleanedSeatError{Seat: holder, Task: c.ID}
+	}
+	return nil
+}
+
+// DispatchRefusal is dispatchRefusal under the store's lock, for the
+// dispatch's early refusal before it creates a task.
+func (s Store) DispatchRefusal(holder string) error {
+	return s.withLock(false, func() error {
+		list, err := readDir(s.Dir)
+		if err != nil {
+			return err
+		}
+		return dispatchRefusal(s.Dir, list, strings.TrimSpace(holder))
+	})
+}
+
 // Claim claims the holder's lease on id. With an empty id it claims the
 // holder's unclaimed lease, or else pulls the next eligible pending task
 // (of pool, when given; a task with no pool matches any) and claims it in
@@ -900,6 +954,66 @@ func (s Store) Cancel(id, actor, reason string, now time.Time) (Task, error) {
 		t.State, t.ClosedAt, t.Report, t.WaitReason = StateCancelled, &at, nil, ""
 		t.CancelReason = strings.TrimSpace(reason) + byActor(actor)
 		return nil
+	})
+}
+
+// LaterLease names a lease of the seat granted at or after the attempt
+// ended (an ended attempt of any task, or a current lease), "" when there
+// is none: the attempt is then the seat's last. The scheduler's occupant
+// match and the lead's dispatch read it alike (3.2.0-2b-1).
+func LaterLease(list []Task, holder, taskID string, a Attempt) string {
+	for _, t := range list {
+		if t.Lease != nil && t.Lease.Holder == holder && !t.Lease.GrantedAt.Before(a.EndedAt) {
+			return t.ID
+		}
+		for _, b := range t.Attempts {
+			if t.ID == taskID && b.N == a.N {
+				continue // the attempt itself
+			}
+			if b.Holder == holder && !b.GrantedAt.Before(a.EndedAt) {
+				return t.ID
+			}
+		}
+	}
+	return ""
+}
+
+// UnresolvedCancellation is the seat's cancelled attempt whose archive and
+// clean are not recorded (no CleanedAt) and that the seat has not worked
+// past (no later lease): the seat's worktree may still hold its bytes, so
+// no new lease is granted over it until the clean runs (Codex's P2 on the
+// #909 re-pass).
+func UnresolvedCancellation(list []Task, holder string) (Task, Attempt, bool) {
+	for _, t := range list {
+		for _, a := range t.Attempts {
+			if a.Holder == holder && a.Outcome == OutcomeCancelled && a.CleanedAt == nil && LaterLease(list, holder, t.ID, a) == "" {
+				return t, a, true
+			}
+		}
+	}
+	return Task{}, Attempt{}, false
+}
+
+// MarkAttemptCleaned durably records that one cancelled attempt was archived
+// and its seat worktree cleaned. It is idempotent so a scheduler that cleaned
+// successfully but restarted around the store write may safely retry.
+func (s Store) MarkAttemptCleaned(id string, attempt int, now time.Time) (Task, error) {
+	return s.mutate(id, now, func(t *Task, _ *tasks) error {
+		for i := range t.Attempts {
+			a := &t.Attempts[i]
+			if a.N != attempt {
+				continue
+			}
+			if a.Outcome != OutcomeCancelled {
+				return fmt.Errorf("task %s attempt %d ended %s, not cancelled", id, attempt, a.Outcome)
+			}
+			if a.CleanedAt == nil {
+				at := now.UTC()
+				a.CleanedAt = &at
+			}
+			return nil
+		}
+		return fmt.Errorf("task %s has no attempt %d", id, attempt)
 	})
 }
 

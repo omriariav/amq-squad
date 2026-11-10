@@ -247,6 +247,12 @@ type Scheduler struct {
 	// once-then-count log.
 	tampered     map[string]*LedgerTamper
 	prepareFails map[string]*prepareFailure
+	// cleanDeferred suppresses identical per-tick decisions. A changed reason
+	// is a new actionable state and is logged once.
+	cleanDeferred map[string]string
+	// exitRefused is the last refusal logged per cancelled attempt whose
+	// check holds the seat (exits.go, Codex's D on #898): once per reason.
+	exitRefused map[string]string
 }
 
 // WaitNoRosterSeat is the wait of a pending task whose route names a pool
@@ -447,7 +453,7 @@ func (s *Scheduler) Tick() ([]Decision, error) {
 	// R3: the exit check on every terminal path that is not a done report.
 	s.loadExits()
 	if s.exitsLoaded {
-		if err := s.scanAttempts(list, now); err != nil {
+		if err := s.scanAttemptsLog(list, now, log); err != nil {
 			return out, err
 		}
 		if err := s.runExits(now, log); err != nil {
@@ -905,8 +911,17 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 				}
 				continue
 			}
-			handle, prepErr := s.preparedIdleSeat(list, t, *r.Pool, log)
-			if prepErr != nil {
+			// A prepare failure belongs to the seat, not to the pending task.
+			// Keep looking through this pool in the same dispatch pass, while
+			// skipping ordinary failures locally. Typed compatibility failures
+			// remain durable exclusions inside preparedIdleSeat.
+			skipped := map[string]bool{}
+			for {
+				var prepErr error
+				handle, prepErr = s.preparedIdleSeat(list, t, *r.Pool, skipped, log)
+				if prepErr == nil {
+					break
+				}
 				// A tamper is the typed block, raised once (tamper.go);
 				// any other failure is logged once, then counted.
 				got, perr := s.prepareFailed(t, handle, prepErr, now, log)
@@ -915,14 +930,28 @@ func (s *Scheduler) dispatch(list []task.Task, now time.Time, cfg Config, log fu
 				}
 				if got != nil {
 					list = replace(list, *got)
+					handle = ""
+					break
 				}
-				continue
+				skipped[handle] = true
 			}
 			if handle == "" {
 				continue
 			}
-			s.preparePassed(handle)
 			got, err := s.Store.Grant(t.ID, handle, r.Pool, cfg.LeaseDuration, now)
+			// A seat reserved for a cancelled attempt's close and clean
+			// (task.ReservedSeatError, refused inside the grant's mutation,
+			// #909): said once per seat and task, like a prepare refusal.
+			var reserved *task.ReservedSeatError
+			if errors.As(err, &reserved) {
+				s.logOnce(
+					Decision{Kind: "seat_prepare_failed", TaskID: t.ID, Seat: handle, Reason: err.Error()},
+					Decision{Kind: "seat_prepare_suppressed", TaskID: t.ID, Seat: handle, Reason: "the same prepare failure repeats; further repeats are counted, not logged, until the task, the seat or the reason changes: " + err.Error()},
+					t.UpdatedAt.UTC().Format(time.RFC3339Nano), "seat_reserved", log,
+				)
+				continue
+			}
+			s.preparePassed(handle)
 			var unverified *task.VerifierUnconfiguredError
 			if errors.As(err, &unverified) {
 				// The claim path's refusal (v3-5-verifier rule 4): the grant
@@ -1058,6 +1087,10 @@ func legacyMergeDependencies(t task.Task, list []task.Task) []string {
 // idleSeat is the first seat (by handle) of the pool that holds nothing,
 // answers, and did not let an earlier attempt of this task lapse.
 func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string {
+	return s.idleSeatExcept(list, t, p, nil)
+}
+
+func (s *Scheduler) idleSeatExcept(list []task.Task, t task.Task, p task.Pool, skip map[string]bool) string {
 	lapsed := map[string]bool{}
 	for _, a := range t.Attempts {
 		joinedAt := time.Time{}
@@ -1074,7 +1107,7 @@ func (s *Scheduler) idleSeat(list []task.Task, t task.Task, p task.Pool) string 
 		if s.rosterMode() {
 			serves = PoolServes(st.pool, p)
 		}
-		if serves && st.closing == "" && !st.unresponsive && !s.seatExcluded(h) && !lapsed[h] && task.HeldBy(h, list) == nil && !s.exitPending(h) {
+		if serves && !skip[h] && st.closing == "" && !st.unresponsive && !s.seatExcluded(h) && !lapsed[h] && task.HeldBy(h, list) == nil && !s.exitPending(h) {
 			handles = append(handles, h)
 		}
 	}
@@ -1096,9 +1129,9 @@ func (s *Scheduler) seatExcluded(handle string) bool {
 // preparedIdleSeat skips typed-incompatible seats and continues through the
 // pool until it finds a healthy one. Other prepare failures retain the old
 // per-tick behavior. The task is never blocked for another seat's ledger.
-func (s *Scheduler) preparedIdleSeat(list []task.Task, t task.Task, p task.Pool, log func(Decision)) (string, error) {
+func (s *Scheduler) preparedIdleSeat(list []task.Task, t task.Task, p task.Pool, skip map[string]bool, log func(Decision)) (string, error) {
 	for {
-		handle := s.idleSeat(list, t, p)
+		handle := s.idleSeatExcept(list, t, p, skip)
 		if handle == "" || s.Preparer == nil {
 			return handle, nil
 		}
@@ -1171,6 +1204,9 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 			if st.awaitGone {
 				continue // closed; counted until its SeatGone confirms it
 			}
+			if st.closing == closeCancelled {
+				continue // runExits closes it, under the store's lock (#909)
+			}
 			if s.Launcher == nil {
 				delete(s.seats, h)
 				log(Decision{Kind: "seat_closed", Seat: h, Reason: st.closing})
@@ -1180,7 +1216,7 @@ func (s *Scheduler) closeIdle(list []task.Task, now time.Time, cfg Config, log f
 				log(Decision{Kind: "seat_close_failed", Seat: h, Reason: err.Error()})
 				continue
 			}
-			if (st.closing == closeExpired || st.closing == closeRestart || st.closing == closeRelaunch) && s.closeUnconfirmed(h) {
+			if (st.closing == closeExpired || st.closing == closeRestart || st.closing == closeRelaunch || st.closing == closeCancelled) && s.closeUnconfirmed(h) {
 				st.awaitGone = true
 				log(Decision{Kind: "seat_close_requested", Seat: h, Reason: st.closing + "; waiting for its seat_gone"})
 				continue

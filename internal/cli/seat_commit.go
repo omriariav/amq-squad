@@ -14,6 +14,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/gateverify"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -28,6 +29,7 @@ const seatUsage = `amq-squad seat - the harness steps for one seat
 
 Usage:
   amq-squad seat commit --seat H [--root DIR | --project P --session S] [--base SHA] [--open-pr] [--dry-run] [--json]
+  amq-squad seat clean --seat H [--root DIR | --project P --session S] [--json]
 
 seat commit is the harness-side commit step (plan 4.3, amendment 21). The
 scheduler runs it on a seat's done report; the lead may run it by hand. It
@@ -58,9 +60,54 @@ func runSeat(args []string) error {
 	switch args[0] {
 	case "commit":
 		return runSeatCommit(args[1:], os.Stdout)
+	case "clean":
+		return runSeatClean(args[1:], os.Stdout)
 	default:
-		return unknownSubcommandError("seat", args[0], "commit")
+		return unknownSubcommandError("seat", args[0], "commit", "clean")
 	}
+}
+
+var seatCleanSend = schedproc.SendClean
+
+func runSeatClean(args []string, out io.Writer) error {
+	f := newStoreFlags("seat clean")
+	f.fs.Usage = func() { fmt.Fprint(os.Stderr, seatUsage) }
+	seat := f.fs.String("seat", "", "the stopped seat handle")
+	if err := parseFlags(f.fs, args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*seat) == "" || f.fs.NArg() > 0 {
+		return usageErrorf("seat clean: --seat HANDLE is required and takes no positional arguments")
+	}
+	if flagWasSet(f.fs, "me") {
+		return usageErrorf("seat clean: takes no --me; the scheduler proves the lead from the process, never from a flag")
+	}
+	_, root, release, err := f.store(false)
+	if err != nil {
+		return err
+	}
+	release()
+	rec, err := schedproc.ReadLaunchRecord(root)
+	if err != nil {
+		return fmt.Errorf("seat clean: no running scheduler for %s: %v", root, err)
+	}
+	var reply schedproc.DecideReply
+	if rec.DecisionSocket == "" {
+		reply = schedproc.DecideReply{Code: schedproc.RefusedStarting, Detail: "the scheduler is starting: its decision socket is not open yet"}
+	} else if reply, err = seatCleanSend(root, rec.DecisionSocket, schedproc.CleanRequest{Seat: strings.TrimSpace(*seat)}); err != nil {
+		return fmt.Errorf("seat clean: the scheduler's decision socket: %w", err)
+	}
+	if *f.jsonOut {
+		if err := writeJSONEnvelope(out, "seat_clean", reply); err != nil {
+			return err
+		}
+	} else if reply.OK {
+		fmt.Fprintln(out, reply.Detail)
+	}
+	if !reply.OK {
+		return &codedExitError{code: ExitCommitRefused, msg: fmt.Sprintf("seat clean refused: %s\n  code: %s", reply.Detail, reply.Code)}
+	}
+	return nil
 }
 
 // seatCommitData is the JSON envelope of seat commit.

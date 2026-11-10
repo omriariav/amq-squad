@@ -146,9 +146,13 @@ type Attempt struct {
 	Pool      *Pool     `json:"pool"`
 	GrantedAt time.Time `json:"granted_at"`
 	EndedAt   time.Time `json:"ended_at"`
-	Outcome   string    `json:"outcome"`
-	Detail    string    `json:"detail,omitempty"`
-	Verdict   *Verdict  `json:"verdict,omitempty"` // the harness's verdict, when one was recorded
+	// CleanedAt is the durable cancellation-clean boundary. A scheduler
+	// restart skips a cancelled attempt only after its archive and worktree
+	// cleanup completed and this timestamp was committed to the task store.
+	CleanedAt *time.Time `json:"cleaned_at,omitempty"`
+	Outcome   string     `json:"outcome"`
+	Detail    string     `json:"detail,omitempty"`
+	Verdict   *Verdict   `json:"verdict,omitempty"` // the harness's verdict, when one was recorded
 }
 
 // Report is the holder's done report, kept until the commit step decides.
