@@ -1126,9 +1126,13 @@ func (s *Scheduler) seatExcluded(handle string) bool {
 	return st != nil && (st.excluded == "newer_writer" || st.excluded == "schema_mismatch" || s.tamperedSeat(handle))
 }
 
-// preparedIdleSeat skips typed-incompatible seats and continues through the
-// pool until it finds a healthy one. Other prepare failures retain the old
-// per-tick behavior. The task is never blocked for another seat's ledger.
+// preparedIdleSeat returns the first idle seat of the pool whose
+// prepare passes. A typed newer_writer or schema_mismatch refusal is
+// recorded on the seat (one seat_excluded line per change) and the
+// search continues here. Any other failure is returned with its
+// seat: the dispatch loop raises a tamper as the typed block on the
+// task and ends that task's search, and logs any other failure once,
+// skips the seat for the pass and calls again.
 func (s *Scheduler) preparedIdleSeat(list []task.Task, t task.Task, p task.Pool, skip map[string]bool, log func(Decision)) (string, error) {
 	for {
 		handle := s.idleSeatExcept(list, t, p, skip)

@@ -171,6 +171,7 @@ func TestFailedCleanLeavesNoMarkerAndTheSeatStaysRefused(t *testing.T) {
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n// local commit\n")
 	sh(t, f.wt, "add", "-A")
 	sh(t, f.wt, "commit", "-q", "-m", "seat local commit")
+	localCommit := sh(t, f.wt, "rev-parse", "HEAD")
 	launcher := &cancellingProcessLauncher{}
 	cleaner := &commitAttemptCleaner{f: f}
 	exitsPath := filepath.Join(f.root, "scheduler-exits.json")
@@ -183,7 +184,8 @@ func TestFailedCleanLeavesNoMarkerAndTheSeatStaysRefused(t *testing.T) {
 		t.Fatalf("close pass = %+v, %v", d, err)
 	}
 	failed, err := s.Tick()
-	if err != nil || len(failed) != 1 || failed[0].Kind != "seat_clean_deferred" || failed[0].Reason == "" {
+	wantDeferred := "seat_head_detached_unmerged: seat " + f.handle + ": the worktree's branch seat/" + f.handle + "-" + tk.ID + " holds an unrecorded commit " + localCommit + "; the harness never discards a local commit"
+	if err != nil || len(failed) != 1 || failed[0].Kind != "seat_clean_deferred" || failed[0].Reason != wantDeferred {
 		t.Fatalf("failed clean pass = %+v, %v", failed, err)
 	}
 	deferredReason := failed[0].Reason
@@ -238,6 +240,8 @@ func TestFailedCleanLeavesNoMarkerAndTheSeatStaysRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	second.AdoptUp(f.handle, pool, f.now.Add(3*time.Second))
+	var restarted []scheduler.Decision
 	for range 2 {
 		d, err := second.Tick()
 		if err != nil {
@@ -245,6 +249,22 @@ func TestFailedCleanLeavesNoMarkerAndTheSeatStaysRefused(t *testing.T) {
 		}
 		if decisionHas(d, "dispatched") {
 			t.Fatalf("restart dispatched over the held item: %+v", d)
+		}
+		restarted = append(restarted, d...)
+	}
+	if got := decisionCount(restarted, "seat_clean_deferred"); got != 1 {
+		t.Fatalf("restart deferred decisions = %d, want 1: %+v", got, restarted)
+	}
+	var restartedKinds []string
+	for _, d := range restarted {
+		restartedKinds = append(restartedKinds, d.Kind)
+	}
+	if want := []string{"seat_clean_deferred", "seat_requested"}; !reflect.DeepEqual(restartedKinds, want) {
+		t.Fatalf("restart decisions = %v, want %v", restartedKinds, want)
+	}
+	for _, d := range restarted {
+		if d.Kind == "seat_clean_deferred" && d.Reason != wantDeferred {
+			t.Fatalf("restart deferred reason = %q, want %q", d.Reason, wantDeferred)
 		}
 	}
 	if got, _ := f.store.Get(next.ID); got.State != task.StatePending || got.Lease != nil {

@@ -44,6 +44,55 @@ func TestGrantCleanRefusesAnUncleanedSeatInsideItsMutation(t *testing.T) {
 	}
 }
 
+// A cancelled attempt stops blocking the seat after the seat has held and
+// ended a later lease. The no-later-lease side is pinned by
+// TestGrantCleanRefusesAnUncleanedSeatInsideItsMutation. The later lease is
+// proof that the old cancellation is no longer the worktree occupant; it does
+// not retroactively mark that old attempt cleaned. Without the LaterLease
+// clause in UnresolvedCancellation, the third grant is refused as if the first
+// attempt were still current.
+func TestGrantCleanAllowsASeatThatWorkedPastAnUncleanedCancellation(t *testing.T) {
+	s := Store{Dir: t.TempDir()}
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	first, err := s.Add(AddInput{Title: "cancelled", Class: "script"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Grant(first.ID, "seat-1", nil, time.Hour, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Cancel(first.ID, "lead", "stop", now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := s.Add(AddInput{Title: "later lease", Class: "script"}, now.Add(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Grant(second.ID, "seat-1", nil, time.Hour, now.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Fail(second.ID, "seat-1", "finished later work", now.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+
+	third, err := s.Add(AddInput{Title: "third", Class: "script"}, now.Add(4*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	granted, err := s.GrantClean(third.ID, "seat-1", nil, time.Hour, now.Add(4*time.Second))
+	if err != nil || granted.Lease == nil || granted.Lease.Holder != "seat-1" {
+		t.Fatalf("grant after the later lease: lease=%+v err=%v", granted.Lease, err)
+	}
+	old, err := s.Get(first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(old.Attempts) != 1 || old.Attempts[0].CleanedAt != nil {
+		t.Fatalf("the old cancelled attempt was changed: %+v", old.Attempts)
+	}
+}
+
 // The plan reviewer's condition (c) on #909: a seat reserved for a
 // cancelled attempt's close and clean (ReserveCancel) is refused by both
 // grants inside their store mutations, the scheduler's (Grant) and the
