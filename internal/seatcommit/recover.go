@@ -91,6 +91,9 @@ type CarryEntry struct {
 type RecoverResult struct {
 	Handle           string `json:"handle"`
 	AlreadyRecovered bool   `json:"already_recovered,omitempty"`
+	// Note reports a non-fatal repair problem, currently a retry that found
+	// the recovery record but could not restore its missing slot mark.
+	Note string `json:"note,omitempty"`
 	// Verified: the document verified when the decision came; the record
 	// was sealed into the next link of the same body (recordVerified).
 	Verified bool `json:"verified,omitempty"`
@@ -247,6 +250,12 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 		}
 		out = RecoverResult{Handle: o.Handle, AlreadyRecovered: true, Verified: live.Recovered.Verified, Slot: slotPath, OldSeq: live.Recovered.Seq, NewSeq: newSeq,
 			SeqFrom: live.Recovered.SeqFrom, BodySHA256: live.Recovered.BodySHA256, HeadSHA256: live.Recovered.HeadSHA256, Base: live.Base}
+		if err := markRecoveredSlot(o.Root, RecoverSlotName(o.Handle, o.Seq, o.Slot), o.Lead, newSeq, o.Now.UTC()); err != nil {
+			// The sealed record is authoritative. A retry still answers already
+			// recovered, but tells the lead that the missing mark could not be
+			// restored. A later retry tries again.
+			out.Note = fmt.Sprintf("the recovery is recorded, but %s could not be restored: %v", quarantineRecovered, err)
+		}
 		for _, c := range live.Commits {
 			if c.Note != "" {
 				out.Carried = append(out.Carried, c)
@@ -356,7 +365,7 @@ func recoverLedger(o RecoverOptions) (RecoverResult, error) {
 			return out, refuseRecover(RecoverWriteFailed, "%v", err)
 		}
 	}
-	link, err := recoverWrite(o.Root, o.Handle, choice.prev, l, choice.migrating && choice.migrationSeq == 0, now)
+	link, err := writeMarkedRecovery(o, slot.name, choice.prev, l, choice.migrating && choice.migrationSeq == 0, now)
 	if err != nil {
 		return out, err
 	}
@@ -414,7 +423,7 @@ func recordVerified(o RecoverOptions, live Ledger, slotPath string, migrationSeq
 			return out, refuseRecover(RecoverWriteFailed, "%v", err)
 		}
 	}
-	link, err := recoverWrite(o.Root, o.Handle, prev, l, migrationSeq < 0, now)
+	link, err := writeMarkedRecovery(o, slot.name, prev, l, migrationSeq < 0, now)
 	if err != nil {
 		return out, err
 	}
@@ -519,6 +528,7 @@ func recoverWrite(root, handle string, prev *sealchain.Link, l Ledger, migrating
 	if err != nil {
 		return nil, refuseRecover(RecoverWriteFailed, "the session seed: %v", err)
 	}
+	trace("recover-write", ledgerPath(root, handle))
 	seal, err := saveRawLedgerBeforeHead(root, key, nil, prev, l, migrating, beforeRecoveryHeadWrite, now)
 	if err != nil {
 		return nil, refuseRecover(RecoverWriteFailed, "%v", err)
@@ -532,6 +542,68 @@ func recoverWrite(root, handle string, prev *sealchain.Link, l Ledger, migrating
 // beforeRecoveryHeadWrite is the R15 crash seam after the recovered body is
 // durable and immediately before its head is written.
 var beforeRecoveryHeadWrite func(sealchain.RawSeal) error
+
+// beforeRecoveryWrite is the crash seam after the slot mark is durable and
+// immediately before the recovered ledger body is written.
+var beforeRecoveryWrite func() error
+
+// recoveredMarkCreate is the slot descriptor's exclusive create. Tests
+// replace it to prove a mark failure writes no ledger state.
+var recoveredMarkCreate = func(d slotDir, name string, data []byte) error {
+	return d.create(name, data)
+}
+
+// writeMarkedRecovery establishes the durable no-reuse signal before the
+// recovery record can be written. A crash or writer failure can therefore
+// leave a marked slot without a record, but never a record naming an
+// unmarked slot.
+func writeMarkedRecovery(o RecoverOptions, slotName string, prev *sealchain.Link, l Ledger, migrating bool, now time.Time) (*sealchain.Link, error) {
+	link := 0
+	if l.Recovered != nil {
+		link = l.Recovered.Link
+	}
+	if err := markRecoveredSlot(o.Root, slotName, o.Lead, link, now); err != nil {
+		return nil, refuseRecover(RecoverWriteFailed, "%s: %v", quarantineRecovered, err)
+	}
+	if beforeRecoveryWrite != nil {
+		if err := beforeRecoveryWrite(); err != nil {
+			return nil, refuseRecover(RecoverWriteFailed, "%v", err)
+		}
+	}
+	return recoverWrite(o.Root, o.Handle, prev, l, migrating, now)
+}
+
+// markRecoveredSlot creates recovered.txt through the slot's own descriptor,
+// fsyncs it through create, then syncs the slot directory. Its content is for
+// a person only. Code uses presence from names(), never these bytes. Any
+// existing entry of any type is success, which makes retries idempotent.
+func markRecoveredSlot(root, slotName, lead string, link int, now time.Time) error {
+	d, err := openDirNoFollow(QuarantineDir(root))
+	if err != nil {
+		return err
+	}
+	defer d.close()
+	s, err := d.open(slotName)
+	if err != nil {
+		return err
+	}
+	defer s.close()
+	names, err := s.names()
+	if err != nil {
+		return err
+	}
+	for _, name := range names {
+		if name == quarantineRecovered {
+			return nil
+		}
+	}
+	mark := []byte(fmt.Sprintf("time: %s\nlead: %s\nlink: %d\n", now.UTC().Format(time.RFC3339Nano), lead, link))
+	trace("create", s.name()+"/"+quarantineRecovered)
+	if err := recoveredMarkCreate(s, quarantineRecovered, mark); err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	return s.sync()
+}
 
 // readSlot reads one quarantine slot through the same descriptor-anchored,
 // no-follow opens the copy uses, and checks it against its sidecar (the

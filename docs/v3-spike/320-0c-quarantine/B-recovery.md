@@ -598,7 +598,7 @@ The reviewer kept P2-2 and P3 as built and tightened P2-1 and P2-3.
   owner's own account). The reviewer accepted it as residual risk for
   rc.2, with the 3.2.x item "a quarantine slot named by a recovery record
   is never reused; identical bytes refused again get a new .k slot"
-  ("Residual risk").
+  ("Residual risk"). This item is now closed by "The slot is never reused".
 - **A recovery from another slot leaves the hold.** When the document
   changed again after the alarm (a later refused read quarantined it in
   another slot), the recovery must name the later slot (the decision is
@@ -633,7 +633,8 @@ code kept alive only by a test, `1cd21fa1` removes it.
   never equal one. What the slot reuse does allow, the slot-reuse replay,
   stays the stated same-uid residual for rc.2, closed by the 3.2.x item
   "a quarantine slot named by a recovery record is never reused;
-  identical bytes refused again get a new .k slot" ("Residual risk").
+  identical bytes refused again get a new .k slot" ("Residual risk"). The
+  item is now closed by "The slot is never reused".
 - **What went.** The check in `covers`; `LedgerTamper.Baseline` (the
   state file's `baseline` field; a state file written with it still
   decodes, the field ignored) and `LedgerTamperedError.Baseline`;
@@ -3198,15 +3199,16 @@ Before round 3d's edits, `git write-tree` printed
 | Row | Test and outcome | Isolated production revert and first failure |
 |---|---|---|
 | T1, scheduler-level A5 | `TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads`, `internal/schedproc/recover_test.go:247`; raw and legacy heads, with and without a decision retry, release one hold, reset one task, and dispatch once. The retry is `AlreadyRecovered`, leaves the body unchanged, records one `ledger_recovered`, and later ticks never release again. `RecordTarget` leaves a verifying recovered raw ledger; raw records no migration and legacy records exactly one. | At `internal/scheduler/scheduler.go:654`, replaced `s.applyRecoveries(now, log)` with `error(nil)`. All four forms failed first at `internal/schedproc/recover_test.go:270`: `first tick did not release, reset, and dispatch exactly once: []`. |
-| T2, legacy C1b | `TestLegacyBodyWithImplausibleSequenceUsesVerifiedHeadAndChecksCarry`, `internal/seatcommit/raw_compat_test.go:467`; an embedded seal at 2^53 with a tag is ignored under a verified legacy head, unknown carry refuses without changing the ledger, head, slot, or decisions, and the accepted recovery uses N+1, old N, `verified_head`, the exact carried Note, and one migration at N+1. | At `internal/seatcommit/recover.go:638`, replaced `plausibleCopiedSeq(l.Seal.Seq)` with `l.Seal.Seq > 0`. It failed first at `internal/seatcommit/raw_compat_test.go:494`: the recovery chose sequence 9007199254740993 from `body_seal`. |
+| T2, legacy C1b | `TestLegacyBodyWithImplausibleSequenceUsesVerifiedHeadAndChecksCarry`, `internal/seatcommit/raw_compat_test.go:483`; an embedded seal at 2^53 with a tag is ignored under a verified legacy head, unknown carry refuses without changing the ledger, head, slot, or decisions, and the accepted recovery uses N+1, old N, `verified_head`, the exact carried Note, and one migration at N+1. | At `internal/seatcommit/recover.go:710`, replaced `plausibleCopiedSeq(l.Seal.Seq)` with `l.Seal.Seq > 0`. It failed first at `internal/seatcommit/raw_compat_test.go:510`: the recovery chose sequence 9007199254740993 from `body_seal`. |
 | T2b / E1, ruling 1 literal legacy shapes | `TestLegacyShapeWithUnusableSealStillUsesVerifiedHead`, `internal/seatcommit/raw_compat_test.go:522`, writes literal `{"seq":1}` and `{}` seal values. A real pushed entry present in the body is refused with `recover_entry_unknown` and `holds no body that decodes`; ledger, head, slot, and decisions stay unchanged. Recovery without carry uses N+1 from `verified_head`, leaves zero commits, and records one migration. The neither-layout contract remains `TestRecoveryRefusesASlotBodyThatIsNeitherLayout`. | Removed `|| legacy.Seal.Tag == ""` at `internal/seatcommit/recover.go:797`. The isolated run failed first at `internal/seatcommit/raw_compat_test.go:548`: `not a recovery refusal: <nil>`. |
-| E2, untagged legacy body without a usable head | `TestUntaggedLegacyBodyWithoutAUsableHeadRefusesSequenceUnknown`, `internal/seatcommit/raw_compat_test.go:571`, writes literal `{"seq":3}` under a garbage head. `--seq unknown` returns `recover_seq_unknown`; ledger, head, slot, and decisions stay unchanged. | Replaced `plausibleCopiedSeq(l.Seal.Seq) && l.Seal.Tag != ""` with `plausibleCopiedSeq(l.Seal.Seq)` at `internal/seatcommit/recover.go:638`. The isolated run failed first at `internal/seatcommit/raw_compat_test.go:577`: `the legacy body-link condition no longer requires a tag`. |
+| E2, untagged legacy body without a usable head | `TestUntaggedLegacyBodyWithoutAUsableHeadRefusesSequenceUnknown`, `internal/seatcommit/raw_compat_test.go:571`, writes literal `{"seq":3}` under a garbage head. `--seq unknown` returns `recover_seq_unknown` with the words `names a plausible chain link to continue after`; ledger, head, slot, and decisions stay unchanged. | Replaced `plausibleCopiedSeq(l.Seal.Seq) && l.Seal.Tag != ""` with `plausibleCopiedSeq(l.Seal.Seq)` at `internal/seatcommit/recover.go:710`. The isolated run failed first at `internal/seatcommit/raw_compat_test.go:582`, whose behavioral assertion printed the later refusal without `plausible`. |
+| E2b, untagged legacy body above a verifying head | `TestUntaggedLegacyBodySeqAboveAVerifyingHeadIsIgnored`, `internal/seatcommit/raw_compat_test.go:591`, installs literal `{"seq":9}` under a verifying legacy head at N=1. Recovery returns NewSeq 2, OldSeq 1, `verified_head`, and one migration at 2. | The same tag-condition revert as E2. The isolated run failed first at `internal/seatcommit/raw_compat_test.go:598`: the result used NewSeq 10 and `body_seal`. |
 | T3, persisted verified source | `TestADocumentVerifyingAgainIsReleasedByARecordedDecision`, `internal/seatcommit/recover_test.go:599`, reads the ledger after recovery and requires `Recovered.SeqFrom == "verified_head"`. | At `internal/seatcommit/recover.go:408`, removed `SeqFrom: "verified_head"` from the persisted `LedgerRecovery`. The lead's #937 run failed first at `internal/seatcommit/recover_test.go:643`, printing the record with an empty `SeqFrom`. |
 | T4.1, raw implausible-body carry | `TestKnownRawBodyWithImplausibleSequenceStillChecksCarriedEntries`, `internal/seatcommit/raw_compat_test.go:403`, requires head N+1, the exact carried Note, and no recovery decision after refusal. | Changed the production carried Note words at `internal/seatcommit/recover.go:780`. The lead's #937 run failed first at `internal/seatcommit/raw_compat_test.go:435`, printing the wrong Note. |
 | T4.2, five R15 forms | `TestRecoveryCrashBeforeTheHeadHasTheRuledOutcomeForEverySlotForm`, `internal/seatcommit/raw_compat_test.go:975`, requires each form's exact `SeqFrom` and carried Note. | Changed the production Note to name another sequence at `internal/seatcommit/recover.go:780`. The lead's #937 run lists the five named subtests as failures; its first package failure is `internal/seatcommit/raw_compat_test.go:435`, the earlier owning row's exact-Note assertion. |
 | T4.3, maximum verified refusal | `TestVerifiedRecoveryAtMaximumSequenceRefusesBeforeWriting`, `internal/seatcommit/raw_compat_test.go:669`, requires the whole refusal sentence including the seat handle. | Changed the handle used by the production refusal at `internal/seatcommit/recover.go:399`. The lead's #937 run failed first at `internal/seatcommit/raw_compat_test.go:613`: `verified maximum = recover_slot_invalid: the commits ledger of seat another ...`. |
 | T4.4, R11 migration and source | `TestRecoveryUsesTheClaimedTamperedHeadSeqWithoutReusingASequence`, `internal/seatcommit/raw_compat_test.go:206`, requires raw and legacy migration counts plus equality between the result and persisted `seq_from`. `TestRecoveryDecisionNamesTheActualSequenceSource`, `internal/schedproc/recover_test.go:28`, pins the decision line's `claimed head` words. | Made a no-head body always migrate: the lead's #937 run failed first at `internal/seatcommit/raw_compat_test.go:253`, `migration lines = [8], want []`. Dropped persisted tamper-path `SeqFrom`: it failed first at line 242 with an incomplete recovered record. |
-| T4.5, refusal decision helper | `assertNoRecoveryDecision`, `internal/seatcommit/raw_compat_test.go:1275`, is exercised by the named T2, T2b, E2, raw-implausible, maximum, and other refusal rows and rejects `ledger_recovered`, `ledger_hold_released`, and `ledger_layout_migrated`. | The isolated assertion control planted `{"kind":"ledger_hold_released"}` in the decision log immediately before the helper. It failed first at `internal/seatcommit/raw_compat_test.go:1299`: `refusal wrote a decision: {"kind":"ledger_hold_released"}`. The temporary test was removed. |
+| T4.5, refusal decision helper | `assertNoRecoveryDecision`, `internal/seatcommit/raw_compat_test.go:1282`, is exercised by the named T2, T2b, E2, raw-implausible, maximum, and other refusal rows and rejects `ledger_recovered`, `ledger_hold_released`, and `ledger_layout_migrated`. | The isolated assertion control planted `{"kind":"ledger_hold_released"}` in the decision log immediately before the helper. It failed first at `internal/seatcommit/raw_compat_test.go:1293` in the temporary control: `refusal wrote a decision: {"kind":"ledger_hold_released"}`. The temporary test was removed. |
 | T4.6, alarm sync order | `TestAlarmAppendSyncsNewDirectoryEntryOnce`, `internal/seatcommit/alarms_test.go:138`, requires file sync before directory sync as well as the counts. | Swapped the two `errors.Join` operands at `internal/seatcommit/alarms.go:178`. The lead's #937 run failed first at `internal/seatcommit/alarms_test.go:152`: `first append sync order = [directory file]`. |
 | T5, whole-internal writer guard | `TestRawWriterGuardListsEveryCallerAndRejectsAThirdRecoveryCaller`, `internal/seatcommit/quarantine_callers_test.go:149`, walks every production Go file under `internal`, holds the complete allowlist, and tests its parser with a schedproc `WriteRawAfter` caller. | Planted `sealchain.WriteRawAfter` in temporary production file `internal/schedproc/t133_raw_writer_plant.go`. The guard failed first at `internal/seatcommit/quarantine_callers_test.go:189`: `unreviewed raw writer caller schedproc/t133_raw_writer_plant.go:t133RawWriterPlant:sealchain.WriteRawAfter`. The file was then removed. |
 
@@ -3265,9 +3267,10 @@ against #904 head `921c54aec2834e6b2d9f78a6ce558a9ec146c5b4`.
   ruling 2 on #937: "accept. An untagged legacy body carries nothing; it fails
   closed, and the lead recovers with no carry."
 
-As a production change of round 3b, `evidenceSeqOf` at
-`internal/seatcommit/recover.go:840` returns its observation error wrapped as
-`git for-each-ref evidence refs: %w` instead of substituting zero. The row
+As a production change of round 3b, `evidenceSeqOf` is declared at
+`internal/seatcommit/recover.go:912` and returns its observation error wrapped
+at `internal/seatcommit/recover.go:915` as `git for-each-ref evidence refs: %w`
+instead of substituting zero. The row
 `TestRecoveryRefusesWhenEvidenceRefsCannotBeObserved` pins
 `recover_base_unobserved`, the command in the refusal, and no write.
 
@@ -3980,7 +3983,7 @@ exit 0; the windows build exit 0.
   threat model 0c-A stated ("The threat line" in `A-quarantine.md`).
   For the 3.2.x list, by name: "a quarantine slot named by a recovery
   record is never reused; identical bytes refused again get a new .k
-  slot".
+  slot". This item is now closed by "The slot is never reused".
 - A hold whose document changed again after its alarm is not answered by
   a recovery from the later slot (the recovery must name the slot whose
   bytes are the live document's). The lead then releases the hold by its
@@ -3995,3 +3998,106 @@ exit 0; the windows build exit 0.
   answer"`); it stopped the first whole-module run on `8eeeaf24` under a
   load average of 10.8 and passed the run after it. Outside this PR's
   files.
+
+## The slot is never reused
+
+A recovery by slot creates `recovered.txt` in the named quarantine slot.
+It uses the already opened slot descriptor, exclusive mode 0600, fsyncs the
+file, and then syncs the slot directory. The text records the time, lead and
+new recovery link, one line each. It is for a person only. Code never reads
+the content; the entry's name in the slot descriptor's listing is the whole
+signal. The original `body.json`, `head.json` and `quarantine.txt` remain
+byte for byte and neither they nor the mark are removed by any verb.
+
+The tamper path and verified mode mark the slot after their last refusal and
+before the recovery body write. A mark that already exists is success. Any
+other mark error refuses `recover_write_failed`, names `recovered.txt`, and
+writes no ledger, head or decision. An already-recorded retry restores a
+missing mark; failure is a non-fatal `RecoverResult.note`, printed by the CLI,
+because the sealed recovery remains authoritative. The decision by alarm
+names no slot and writes no mark.
+
+The order is mark first, record second. Therefore every slot named by a
+recovery record is marked. The reverse can occur once: a crash or later write
+failure after the mark can leave a marked slot that no record names. An
+identical later refusal treats that marked slot as a different set and uses
+the first free `.k`; later identical ticks reuse that new unmarked slot. The
+100-slot bound still counts every marked slot, and exhaustion still leaves a
+hold that only its alarm decision answers. A regular file, link or directory
+named `recovered.txt` retires the slot because only the directory listing is
+consulted.
+
+`covers`, recovery records, slot names, the sidecar and `sameSlot`'s byte
+comparison are unchanged. A second recovery may name a marked slot when its
+bytes are again live, which is the retry after a mark-only crash.
+
+When a successful slot recovery does not answer the current hold, both the
+verb detail and its `ledger_recovered` line now say which action does. For a
+different held slot the full text is `the hold on seat <h> names slot <X>;
+recover <X>, or send the alarm decision (alarm <id>)`. A hold with no slot
+says `the hold on seat <h> has no slot; send the alarm decision (alarm <id>)`.
+Recovering the hold's own slot, or recovering a seat that is not held, keeps
+the earlier words byte for byte. This is explanatory only. `covers` still
+decides release from the exact held slot or that hold's alarm id.
+
+Rejected alternatives:
+
+- Remember released slots in the scheduler and make a reused slot answer only
+  by alarm. One slot would then name two holds and the lead would need two
+  verbs.
+- Mark after the recovery body write. A crash could leave a record naming an
+  unmarked slot, which is the replay this rule closes.
+- Compare record time with hold time. That creates a clock rule instead of the
+  slot rule the reviewer named.
+
+### Rows and negative controls
+
+| Row | Test and location | Revert run, reverted line, first failure |
+|---|---|---|
+| Q1 and Q3, mark and next slot | `TestRecoveredSlotIsMarkedAndIdenticalRefusalTakesNextSlot`, `internal/seatcommit/recovered_slot_test.go:15`, checks the mark, the unchanged original three files, `.2`, repeated `.2`, and no `.3`. | `GOCACHE=/tmp/amq-squad-t135-gocache go test ./internal/seatcommit -run TestRecoveredSlotIsMarkedAndIdenticalRefusalTakesNextSlot -count=1`; removed the recovered-name detection in `sameSlot`; first failure at `recovered_slot_test.go:42`, the refusal named X rather than X.2. |
+| Q2, the replay | `TestSlotReuseReplayStaysHeldUntilItsAlarmDecision`, `internal/schedproc/recover_test.go:1026`, uses the real preparer, reader, on-disk slots and scheduler: H1 on X releases once, the identical bytes publish X.2 with a new alarm, the record of X does not release H2 over two ticks, and H2's alarm releases once. | `GOCACHE=/tmp/amq-squad-t135-gocache go test ./internal/schedproc -run TestSlotReuseReplayStaysHeldUntilItsAlarmDecision -count=1`; removed the recovered-name detection in `sameSlot`; first failure at `recover_test.go:1056`, the second hold named X rather than X.2. |
+| Q4, unmarked reuse | `TestIdenticalSecondRefusalKeepsTheFirstCopy`, `internal/seatcommit/quarantine_test.go:233`, now first asserts that an unrecovered slot has no `recovered.txt` and still reuses X. | The same focused command with `-run TestIdenticalSecondRefusalKeepsTheFirstCopy`; changed unmarked `present` to always advance; first failure at `quarantine_test.go:248`, the second refusal named X.2 rather than X. |
+| Q5, mark-only crash | `TestRecoveryMarksBeforeBodyWriteAndRetrySucceeds`, `internal/seatcommit/recovered_slot_test.go:109`, injects the crash between mark and body write and checks unchanged ledger and head plus the durable mark. `TestMarkOnlyCrashTickAndDifferentSlotRecovery`, `internal/schedproc/recover_test.go:1078`, runs the real scheduler tick in that state: X.2 appears while the hold remains X; retrying X releases it, while recording X.2 leaves it until the alarm decision and carries the full Q10 advice. | `GOCACHE=/tmp/amq-squad-t135-gocache go test ./internal/seatcommit -run TestRecoveryMarksBeforeBodyWriteAndRetrySucceeds -count=1`; moved the crash seam before `markRecoveredSlot`; first failure at `recovered_slot_test.go:125`, the crash left no mark. |
+| Q6, failed or existing mark | `TestRecoveryMarkFailureWritesNothingAndExistingMarkIsSuccess`, `internal/seatcommit/recovered_slot_test.go:81`, injects the slot create error and compares ledger, head, decision log and the three files, then proves an existing mark is idempotent. | The focused test command; ignored the returned error from `recoveredMarkCreate`; first failure at `recovered_slot_test.go:92`, recovery succeeded instead of returning `recover_write_failed`. |
+| Q7, planted types | `TestPlantedRecoveredNameRetiresSlotWithoutOpeningIt`, `internal/seatcommit/recovered_slot_test.go:57`, plants a symlink and a directory and requires `.2`. | The focused test command; replaced the `names()` presence test with a regular-file read; first failure was the symlink subtest at `recovered_slot_test.go:75`, which returned a link error rather than X.2. |
+| Q8, verified and retry repair | `TestVerifiedAndAlreadyRecoveredPathsMaintainTheMark`, `internal/seatcommit/recovered_slot_test.go:133`, checks verified mode, removal and repair, and the non-fatal retry note when repair fails. | The focused test command; removed the already-recovered mark repair; first failure at `recovered_slot_test.go:157`, the retry did not restore the mark. |
+| Q9, durability | `TestRecoveredMarkIsDurableBeforeRecoveryBodyWrite`, `internal/seatcommit/recovered_slot_test.go:171`, records create, slot sync and body write in that order. | The focused test command; removed the slot `sync`; first failure at `recovered_slot_test.go:193`, the trace lacked the middle operation. |
+| Q10, words | `TestSlotRecoveryReplyExplainsAStillDifferentHold` and `TestSlotRecoveryOfTheHoldsOwnSlotKeepsTheExistingWords`, `internal/schedproc/recover_test.go:968` and `:1002`, use a real scheduler hold and assert the full reply and decision sentences for another slot, a second edit, no slot, and the ordinary golden. `TestHeldTamperPublishesAlarmAndSlotTogether`, `internal/scheduler/tamper_test.go:29`, pins the snapshot accessor. | `GOCACHE=/tmp/amq-squad-t135-gocache go test ./internal/schedproc -run 'TestSlotRecovery(Reply|Of)' -count=1`; removed `recoveryHoldAdvice`; first failure at `recover_test.go:992`, the reply lacked the complete hold sentence. |
+
+The reader and writer guard is
+`TestRecoveredMarkReaderAndWriterGuards`,
+`internal/seatcommit/quarantine_callers_test.go:266`. Its reader half rejects
+any `slotDir.read(quarantineRecovered)` and its module inventory keeps the
+literal `"recovered.txt"` in `quarantine.go` only. Its writer half requires
+`markRecoveredSlot` to be the sole caller of `recoveredMarkCreate`. The
+inventory command was:
+
+```sh
+git grep -n 'quarantineRecovered\|recovered.txt' -- internal ':!**/*_test.go'
+```
+
+It returned only `internal/seatcommit/quarantine.go` and
+`internal/seatcommit/recover.go`; no reader outside `internal/seatcommit`
+learns the mark's name.
+
+### Limits
+
+A crash after the mark can leave the stray identical copy X.2, while the hold
+still names X. If a recovery records X.2, the decision stands but the hold
+does not: the reply tells the lead, `the hold on seat <h> names slot <X>;
+recover <X>, or send the alarm decision (alarm <id>)`. Recovering X answers
+it when possible; the alarm decision is the sequence-independent way out.
+Marked slots count toward the existing limit of 100. A process running as the
+same user can remove the mark, as it can replace the whole ledger and head;
+the threat line in `A-quarantine.md` remains evidence against accident and
+other writers, not a vault against the owner's account.
+
+### Release note
+
+Recovery now permanently retires its quarantine slot, so replaying identical
+refused bytes creates a new slot and cannot reuse an earlier recovery to
+release a later hold.
+
+The touched-package gates ran unlocked in the seat sandbox. Focused rows,
+build and vet completed there; the full package gates that open loopback or
+Unix-socket listeners could not complete because the sandbox refused `bind`.

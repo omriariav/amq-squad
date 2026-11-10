@@ -263,6 +263,56 @@ func TestLedgerWriterGuardRejectsPlantedLegacyCalls(t *testing.T) {
 	}
 }
 
+func TestRecoveredMarkReaderAndWriterGuards(t *testing.T) {
+	calls, _ := packageCallGraph(t, ".")
+	if !calls["markRecoveredSlot"]["recoveredMarkCreate"] {
+		t.Fatal("markRecoveredSlot is no longer the recovered mark's writer")
+	}
+	for fn, callees := range calls {
+		if fn != "markRecoveredSlot" && callees["recoveredMarkCreate"] {
+			t.Errorf("unreviewed recovered mark writer %s", fn)
+		}
+	}
+	for _, name := range goFiles(t, ".") {
+		source, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, problem := range recoveredMarkReaderProblems(name, source) {
+			t.Error(problem)
+		}
+		if name != "quarantine.go" && strings.Contains(string(source), `"recovered.txt"`) {
+			t.Errorf("%s learns the recovered mark's literal name", name)
+		}
+	}
+	plant := []byte(`package seatcommit; func bad(d slotDir) { _, _, _ = d.read(quarantineRecovered) }`)
+	if got := recoveredMarkReaderProblems("plant.go", plant); len(got) != 1 {
+		t.Fatalf("planted recovered mark reader passed: %v", got)
+	}
+}
+
+func recoveredMarkReaderProblems(name string, source []byte) []string {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, name, source, 0)
+	if err != nil {
+		return []string{name + ": parse: " + err.Error()}
+	}
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok || len(call.Args) == 0 {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		mark, okMark := call.Args[0].(*ast.Ident)
+		if ok && okMark && sel.Sel.Name == "read" && mark.Name == "quarantineRecovered" {
+			out = append(out, filepath.Base(name)+":"+strconv.Itoa(fset.Position(call.Pos()).Line)+": opens the recovered mark")
+		}
+		return true
+	})
+	return out
+}
+
 func legacyLedgerWriterProblems(name string, source []byte) []string {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, name, source, 0)

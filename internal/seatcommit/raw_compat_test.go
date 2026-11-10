@@ -569,13 +569,6 @@ func TestLegacyShapeWithUnusableSealStillUsesVerifiedHead(t *testing.T) {
 }
 
 func TestUntaggedLegacyBodyWithoutAUsableHeadRefusesSequenceUnknown(t *testing.T) {
-	production, err := os.ReadFile("recover.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Contains(production, []byte(`plausibleCopiedSeq(l.Seal.Seq) && l.Seal.Tag != ""`)) {
-		t.Fatal("the legacy body-link condition no longer requires a tag")
-	}
 	f := newFixture(t)
 	installLegacyShapedBodyUnderVerifyingHead(t, f, &sealchain.Link{Seq: 3})
 	installLiteralLegacySeal(t, f, `{"seq":3}`)
@@ -584,8 +577,8 @@ func TestUntaggedLegacyBodyWithoutAUsableHeadRefusesSequenceUnknown(t *testing.T
 	}
 	q := f.quarantined()
 	body, head, slot := readFile(t, ledgerPath(f.root, f.handle)), f.headBytes(), snapshotSlot(t, q.Slot)
-	_, err = f.recover(q.Seq, 1)
-	if recoverCode(t, err) != RecoverSeqUnknown {
+	_, err := f.recover(q.Seq, 1)
+	if recoverCode(t, err) != RecoverSeqUnknown || !strings.Contains(err.Error(), "names a plausible chain link to continue after") {
 		t.Fatalf("untagged legacy recovery = %v", err)
 	}
 	if !bytes.Equal(body, readFile(t, ledgerPath(f.root, f.handle))) || !bytes.Equal(head, f.headBytes()) {
@@ -593,6 +586,20 @@ func TestUntaggedLegacyBodyWithoutAUsableHeadRefusesSequenceUnknown(t *testing.T
 	}
 	assertSlotSnapshot(t, q.Slot, slot)
 	assertNoRecoveryDecision(t, f.root)
+}
+
+func TestUntaggedLegacyBodySeqAboveAVerifyingHeadIsIgnored(t *testing.T) {
+	f := newFixture(t)
+	headSeq := installLegacyShapedBodyUnderVerifyingHead(t, f, &sealchain.Link{Seq: 9})
+	installLiteralLegacySeal(t, f, `{"seq":9}`)
+	q := f.quarantined()
+	res, err := f.recover(q.Seq, 1)
+	if err != nil || res.NewSeq != headSeq+1 || res.OldSeq != headSeq || res.SeqFrom != "verified_head" {
+		t.Fatalf("untagged legacy recovery = %+v, %v", res, err)
+	}
+	if got := migrationDecisionSeqs(t, f.root); !slices.Equal(got, []int{headSeq + 1}) {
+		t.Fatalf("migration seqs = %v, want [%d]", got, headSeq+1)
+	}
 }
 
 func TestRawRecoveryWithGarbageHeadNeverRecordsAMigration(t *testing.T) {

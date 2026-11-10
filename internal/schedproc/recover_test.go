@@ -964,3 +964,165 @@ func TestAnAlarmDecisionSurvivesALaterContinuation(t *testing.T) {
 		t.Fatalf("B was not released after the continuation: %+v", all)
 	}
 }
+
+func TestSlotRecoveryReplyExplainsAStillDifferentHold(t *testing.T) {
+	const (
+		seat  = "s1"
+		alarm = "a0000001"
+		x     = "/q/commits.s1.seq1"
+		y     = "/q/commits.s1.seq1.2"
+	)
+	for _, tc := range []struct {
+		name, heldSlot, recoveredSlot, advice string
+	}{
+		{name: "another slot", heldSlot: x, recoveredSlot: y, advice: "the hold on seat s1 names slot " + x + "; recover " + x + ", or send the alarm decision (alarm " + alarm + ")"},
+		{name: "second edit", heldSlot: x, recoveredSlot: "/q/commits.s1.seq2", advice: "the hold on seat s1 names slot " + x + "; recover " + x + ", or send the alarm decision (alarm " + alarm + ")"},
+		{name: "no slot", advice: "the hold on seat s1 has no slot; send the alarm decision (alarm " + alarm + ")"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			s := &scheduler.Scheduler{}
+			s.RestoreLedgerTampers(scheduler.State{LedgerTampered: []scheduler.LedgerTamper{{Handle: seat, Quarantine: tc.heldSlot, Alarm: alarm}}})
+			apply := func(string, RecoverRequest) (seatcommit.RecoverResult, error) {
+				return seatcommit.RecoverResult{Handle: seat, Slot: tc.recoveredSlot, OldSeq: 1, NewSeq: 2, SeqFrom: "verified_head", Base: strings.Repeat("b", 40)}, nil
+			}
+			decide := recoverDecision(s, root, apply, func() time.Time { return time.Unix(1, 0) })
+			reply := decide("lead", RecoverRequest{Seat: seat, Seq: "1", Slot: 1, Reason: "understood"})
+			if !reply.OK || !strings.HasSuffix(reply.Detail, tc.advice) {
+				t.Fatalf("reply = %+v, want full advice %q", reply, tc.advice)
+			}
+			lines, err := ReadDecisionsTail(root)
+			if err != nil || len(lines) != 1 || !strings.HasSuffix(lines[0].Reason, tc.advice) {
+				t.Fatalf("decision = %+v, %v, want full advice %q", lines, err, tc.advice)
+			}
+		})
+	}
+}
+
+func TestSlotRecoveryOfTheHoldsOwnSlotKeepsTheExistingWords(t *testing.T) {
+	const (
+		seat  = "s1"
+		alarm = "a0000001"
+		x     = "/q/commits.s1.seq1"
+	)
+	root := t.TempDir()
+	s := &scheduler.Scheduler{}
+	s.RestoreLedgerTampers(scheduler.State{LedgerTampered: []scheduler.LedgerTamper{{Handle: seat, Quarantine: x, Alarm: alarm}}})
+	apply := func(string, RecoverRequest) (seatcommit.RecoverResult, error) {
+		return seatcommit.RecoverResult{Handle: seat, Slot: x, OldSeq: 1, NewSeq: 2, SeqFrom: "verified_head", Base: strings.Repeat("b", 40)}, nil
+	}
+	reply := recoverDecision(s, root, apply, func() time.Time { return time.Unix(1, 0) })("lead", RecoverRequest{Seat: seat, Seq: "1", Slot: 1, Reason: "understood"})
+	want := "seat s1 recovered from quarantine seq 1: the chain continues at seq 2; 0 entries carried; the scheduler releases the seat at its next tick"
+	if !reply.OK || reply.Detail != want {
+		t.Fatalf("ordinary reply = %q, want %q", reply.Detail, want)
+	}
+	lines, err := ReadDecisionsTail(root)
+	wantReason := "the lead lead recovered the commits ledger of seat s1 from quarantine seq 1 (/q/commits.s1.seq1): the chain continues at seq 2 (sequence chosen from verified_head); carried entries: none; base " + strings.Repeat("b", 40) + "; reason: understood"
+	if err != nil || len(lines) != 1 || lines[0].Reason != wantReason {
+		t.Fatalf("ordinary decision = %+v, %v, want %q", lines, err, wantReason)
+	}
+}
+
+func TestSlotReuseReplayStaysHeldUntilItsAlarmDecision(t *testing.T) {
+	r := newTamperedSeatRig(t)
+	first := r.ticks(3)
+	h1, ok := r.s.HeldTamper(r.handle)
+	if !ok || h1.Slot == "" {
+		t.Fatalf("first hold = %+v, %v; decisions %+v", h1, ok, first)
+	}
+	refusedBody := mustRead(t, filepath.Join(h1.Slot, "body.json"))
+	refusedHead := mustRead(t, filepath.Join(h1.Slot, "head.json"))
+	decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Seq: "1", Slot: 1, Reason: "H1 understood"}); !reply.OK {
+		t.Fatalf("H1 recovery: %+v", reply)
+	}
+	recoveredBody := mustRead(t, filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json"))
+	recoveredHead := mustRead(t, sealchain.HeadPath(r.root, "commits."+r.handle))
+	if ds := r.ticks(1); len(kinds(ds, "ledger_hold_released")) != 1 {
+		t.Fatalf("H1 release = %+v", ds)
+	}
+	if _, err := r.store.Release(r.tk.ID, r.handle, "exercise the next hold", r.now); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json"), refusedBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealchain.HeadPath(r.root, "commits."+r.handle), refusedHead, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second := r.ticks(1)
+	h2, ok := r.s.HeldTamper(r.handle)
+	if !ok || h2.Alarm == h1.Alarm || h2.Slot != h1.Slot+".2" {
+		t.Fatalf("second hold = %+v, %v; first %+v; decisions %+v", h2, ok, h1, second)
+	}
+	if err := os.WriteFile(filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json"), recoveredBody, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealchain.HeadPath(r.root, "commits."+r.handle), recoveredHead, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ds := r.ticks(2); len(kinds(ds, "ledger_hold_released")) != 0 {
+		t.Fatalf("the replay released H2: %+v", ds)
+	}
+	if got, ok := r.s.HeldTamper(r.handle); !ok || got.Alarm != h2.Alarm {
+		t.Fatalf("H2 did not stand: %+v, %v", got, ok)
+	}
+	if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: h2.Alarm, Reason: "H2 understood"}); !reply.OK {
+		t.Fatalf("H2 alarm decision: %+v", reply)
+	}
+	if ds := r.ticks(1); len(kinds(ds, "ledger_hold_released")) != 1 {
+		t.Fatalf("H2 alarm release = %+v", ds)
+	}
+}
+
+func TestMarkOnlyCrashTickAndDifferentSlotRecovery(t *testing.T) {
+	setup := func(t *testing.T) (*tamperedSeatRig, scheduler.HeldTamper, *seatcommit.QuarantinedError) {
+		r := newTamperedSeatRig(t)
+		r.ticks(3)
+		hold, ok := r.s.HeldTamper(r.handle)
+		if !ok || hold.Slot == "" {
+			t.Fatalf("initial hold = %+v, %v", hold, ok)
+		}
+		if err := os.WriteFile(filepath.Join(hold.Slot, "recovered.txt"), []byte("simulated mark-only crash\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		r.ticks(1)
+		if got, ok := r.s.HeldTamper(r.handle); !ok || got != hold {
+			t.Fatalf("mark-only tick changed the hold: %+v, %v, want %+v", got, ok, hold)
+		}
+		_, err := seatcommit.ReadLedger(r.root, r.handle)
+		var q2 *seatcommit.QuarantinedError
+		if !errors.As(err, &q2) || q2.Slot != hold.Slot+".2" {
+			t.Fatalf("mark-only tick slots = %+v, %v", q2, err)
+		}
+		return r, hold, q2
+	}
+	t.Run("retry original slot releases", func(t *testing.T) {
+		r, hold, _ := setup(t)
+		decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
+		if reply := decide("lead", RecoverRequest{Seat: r.handle, Seq: "1", Slot: 1, Reason: "retry after mark-only crash"}); !reply.OK {
+			t.Fatalf("retry X: %+v", reply)
+		}
+		if ds := r.ticks(1); len(kinds(ds, "ledger_hold_released")) != 1 {
+			t.Fatalf("retry X did not release %s: %+v", hold.Slot, ds)
+		}
+	})
+	t.Run("recovering new slot leaves original hold", func(t *testing.T) {
+		r, hold, _ := setup(t)
+		decide := recoverDecision(r.s, r.root, Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}.Apply, func() time.Time { return r.now })
+		reply := decide("lead", RecoverRequest{Seat: r.handle, Seq: "1", Slot: 2, Reason: "choose the new copy"})
+		want := "the hold on seat " + r.handle + " names slot " + hold.Slot + "; recover " + hold.Slot + ", or send the alarm decision (alarm " + hold.Alarm + ")"
+		if !reply.OK || !strings.HasSuffix(reply.Detail, want) {
+			t.Fatalf("recover X.2 = %+v, want %q", reply, want)
+		}
+		if ds := r.ticks(2); len(kinds(ds, "ledger_hold_released")) != 0 {
+			t.Fatalf("recovering X.2 released X: %+v", ds)
+		}
+		if reply := decide("lead", RecoverRequest{Seat: r.handle, Alarm: hold.Alarm, Reason: "release X by alarm"}); !reply.OK {
+			t.Fatalf("alarm decision: %+v", reply)
+		}
+		if ds := r.ticks(1); len(kinds(ds, "ledger_hold_released")) != 1 {
+			t.Fatalf("alarm did not release X: %+v", ds)
+		}
+	})
+}

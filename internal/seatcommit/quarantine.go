@@ -37,11 +37,13 @@ import (
 //	    body.json        the refused body, byte for byte (when present)
 //	    head.json        its head, byte for byte (when present)
 //	    quarantine.txt   time, writer verb, binary version, error, digests
+//	    recovered.txt    time, lead and recovery link (after recovery only)
 //
 // written whole into a temp directory beside it and published by one
 // rename, so no reader sees a partial set; an identical refusal (the read
-// path refuses on every tick) is a no-op, a different one takes the next
-// k. Everything is created relative to one descriptor of the quarantine
+// path refuses on every tick) is a no-op unless a recovery marked the slot;
+// a marked or different one takes the next k. Everything is created relative
+// to one descriptor of the quarantine
 // directory, opened without following links, and every file is opened
 // O_NOFOLLOW: a planted link anywhere is a named copy failure, never a
 // copy through it. The files are evidence: never sealed, never read as a
@@ -75,10 +77,11 @@ const quarantineSlots = 100
 // The files of a slot, and the prefix of a copy in progress (a leftover
 // of a crash is listed in the next sidecar, never reused, never removed).
 const (
-	quarantineBodyFile = "body.json"
-	quarantineHeadFile = "head.json"
-	quarantineSidecar  = "quarantine.txt"
-	quarantineTempPre  = ".copying-"
+	quarantineBodyFile  = "body.json"
+	quarantineHeadFile  = "head.json"
+	quarantineSidecar   = "quarantine.txt"
+	quarantineRecovered = "recovered.txt"
+	quarantineTempPre   = ".copying-"
 )
 
 // quarantineBase is the stem of a seat's slots for one seq:
@@ -235,12 +238,15 @@ func quarantineCopy(d slotDir, base, handle, verb string, refusal error, raw led
 			slot += "." + strconv.Itoa(k)
 		}
 		for attempt := 0; attempt < 2; attempt++ {
-			same, present, err := sameSlot(d, slot, set)
+			same, present, marked, err := sameSlot(d, slot, set)
 			if err != nil {
 				drop()
 				return "", err
 			}
 			if present {
+				if marked {
+					break // a recovered set is never reused: the next k
+				}
 				if same {
 					drop()
 					return slot, nil // an identical refusal: the published slot stands
@@ -355,25 +361,37 @@ func removeSlot(d slotDir, name string, td slotDir, set slotSet) {
 // same files present with the same bytes, the sidecar compared without its
 // time and leftover lines. A slot that is present but is not a published
 // set (no sidecar, a link, a file) is an error.
-func sameSlot(d slotDir, slot string, set slotSet) (same, present bool, err error) {
+func sameSlot(d slotDir, slot string, set slotSet) (same, present, marked bool, err error) {
 	s, err := d.open(slot)
 	if errors.Is(err, fs.ErrNotExist) {
-		return false, false, nil
+		return false, false, false, nil
 	}
 	if err != nil {
-		return false, true, err
+		return false, true, false, err
 	}
 	defer s.close()
+	names, err := s.names()
+	if err != nil {
+		return false, true, false, err
+	}
+	for _, name := range names {
+		if name == quarantineRecovered {
+			// Presence alone retires the slot. Do not open any slot file,
+			// even when the mark is a link or directory or the rest of the
+			// slot is malformed.
+			return false, true, true, nil
+		}
+	}
 	same = true
 	for _, name := range slotFiles() {
 		got, ok, err := s.read(name)
 		if err != nil {
-			return false, true, err
+			return false, true, marked, err
 		}
 		want, wantOK := set[name]
 		if name == quarantineSidecar {
 			if !ok {
-				return false, true, fmt.Errorf("%s is not a quarantine slot (no %s)", slot, quarantineSidecar)
+				return false, true, marked, fmt.Errorf("%s is not a quarantine slot (no %s)", slot, quarantineSidecar)
 			}
 			got, want = sidecarStable(got), sidecarStable(want)
 		}
@@ -381,7 +399,7 @@ func sameSlot(d slotDir, slot string, set slotSet) (same, present bool, err erro
 			same = false
 		}
 	}
-	return same, true, nil
+	return same, true, marked, nil
 }
 
 // sidecarStable is a sidecar without the lines that differ between two

@@ -239,6 +239,9 @@ func TestIdenticalSecondRefusalKeepsTheFirstCopy(t *testing.T) {
 	if _, err := RecordTarget(f.root, f.handle, f.target()); !errors.Is(err, sealchain.ErrTampered) {
 		t.Fatalf("first refusal: %v", err)
 	}
+	if _, err := os.Lstat(filepath.Join(slotOf(f, seq, 1), quarantineRecovered)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an unrecovered slot has %s: %v", quarantineRecovered, err)
+	}
 	keep := [3][]byte{readFile(t, bodyQ), readFile(t, headQ), readFile(t, sideQ)}
 	_, err := RecordTarget(f.root, f.handle, f.target())
 	if !errors.Is(err, sealchain.ErrTampered) || !namesSlot(err.Error(), slotOf(f, seq, 1)) {

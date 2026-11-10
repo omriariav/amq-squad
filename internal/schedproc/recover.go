@@ -194,6 +194,13 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 		}
 		reason := fmt.Sprintf("the lead %s %s the commits ledger of seat %s from quarantine seq %d (%s): the chain continues at seq %d (sequence chosen from %s); carried entries: %s; base %s; reason: %s",
 			lead, verb, req.Seat, res.OldSeq, res.Slot, res.NewSeq, firstNonEmptyString(res.SeqFrom, "the verified head"), firstOrNone(carried), res.Base, firstNonEmptyString(req.Reason, "none given"))
+		holdAdvice := recoveryHoldAdvice(s, req.Seat, res.Slot)
+		if holdAdvice != "" {
+			reason += "; " + holdAdvice
+		}
+		if res.Note != "" {
+			reason += "; note: " + res.Note
+		}
 		if req.Alarm != "" {
 			verb = "released"
 			if res.AlreadyRecovered {
@@ -217,8 +224,34 @@ func recoverDecision(s *scheduler.Scheduler, root string, apply RecoverApply, no
 				detail = fmt.Sprintf("seat %s: alarm %s was already released by decision (its hold release file has the line); the decision is recorded now", req.Seat, req.Alarm)
 			}
 		}
+		if req.Alarm == "" && holdAdvice != "" {
+			detail += "; " + holdAdvice
+		}
+		if res.Note != "" {
+			detail += "; note: " + res.Note
+		}
 		return DecideReply{OK: true, Detail: detail, Data: data}
 	}
+}
+
+// recoveryHoldAdvice explains a successful slot recovery that does not cover
+// the seat's current hold. It changes words only; scheduler.covers remains the
+// sole release rule.
+func recoveryHoldAdvice(s *scheduler.Scheduler, seat, recoveredSlot string) string {
+	if s == nil {
+		return ""
+	}
+	hold, ok := s.HeldTamper(seat)
+	if !ok {
+		return ""
+	}
+	if hold.Slot == "" {
+		return fmt.Sprintf("the hold on seat %s has no slot; send the alarm decision (alarm %s)", seat, hold.Alarm)
+	}
+	if hold.Slot == recoveredSlot {
+		return ""
+	}
+	return fmt.Sprintf("the hold on seat %s names slot %s; recover %s, or send the alarm decision (alarm %s)", seat, hold.Slot, hold.Slot, hold.Alarm)
 }
 
 func firstOrNone(items []string) string {

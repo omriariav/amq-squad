@@ -164,9 +164,10 @@ type Scheduler struct {
 	// press and the reload) waiting for the next tick (RequestRelaunch,
 	// RequestRelaunchReload); set under mu.
 	relaunchAsk *relaunchAsk
-	// heldAlarms is the held seats' alarm ids as the last change left them
-	// (publishHolds), read by the decision socket (HeldAlarm); set under mu.
-	heldAlarms map[string]string
+	// heldTampers is the held seats' alarm ids and quarantine slots as the
+	// last change left them (publishHolds), read by the decision socket; set
+	// under mu.
+	heldTampers map[string]HeldTamper
 	// releaseLines are the hold release file problems already logged, by
 	// seat and problem (the tick's own).
 	releaseLines map[string]bool

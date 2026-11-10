@@ -24,7 +24,7 @@ func TestSchedulerRecoverSendsTheDecisionOverTheSocket(t *testing.T) {
 	t.Setenv("AM_ROOT", root)
 	var sent []schedproc.RecoverRequest
 	reply := schedproc.DecideReply{OK: true, Detail: "seat dev recovered from quarantine seq 150: the chain continues at seq 151; 1 entries carried"}
-	reply.Data, _ = json.Marshal(seatcommit.RecoverResult{Handle: "dev", Slot: "/q/commits.dev.seq150", OldSeq: 150, NewSeq: 151, Base: strings.Repeat("b", 40),
+	reply.Data, _ = json.Marshal(seatcommit.RecoverResult{Handle: "dev", Slot: "/q/commits.dev.seq150", OldSeq: 150, NewSeq: 151, Base: strings.Repeat("b", 40), Note: "recovered.txt could not be restored",
 		Carried: []seatcommit.LedgerCommit{{Task: "t1", Commit: strings.Repeat("a", 40), Note: "carried from quarantine seq 150"}}})
 	prev := schedulerRecoverSend
 	t.Cleanup(func() { schedulerRecoverSend = prev })
@@ -83,7 +83,7 @@ func TestSchedulerRecoverSendsTheDecisionOverTheSocket(t *testing.T) {
 	if got := sent[0]; got.Seat != want.Seat || got.Seq != want.Seq || got.Slot != want.Slot || got.Reason != want.Reason || len(got.Carry) != 1 || got.Carry[0] != want.Carry[0] {
 		t.Fatalf("sent %+v, want %+v", got, want)
 	}
-	for _, line := range []string{"scheduler recover: seat dev recovered from quarantine seq 150", "chain: seq 151 after the quarantined seq 150", "carried t1 " + commit + " (carried from quarantine seq 150)"} {
+	for _, line := range []string{"scheduler recover: seat dev recovered from quarantine seq 150", "chain: seq 151 after the quarantined seq 150", "carried t1 " + commit + " (carried from quarantine seq 150)", "note: recovered.txt could not be restored"} {
 		if !strings.Contains(stdout, line) {
 			t.Fatalf("the output does not say %q:\n%s", line, stdout)
 		}
