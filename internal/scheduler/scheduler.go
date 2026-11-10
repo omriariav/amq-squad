@@ -1126,9 +1126,10 @@ func (s *Scheduler) seatExcluded(handle string) bool {
 	return st != nil && (st.excluded == "newer_writer" || st.excluded == "schema_mismatch" || s.tamperedSeat(handle))
 }
 
-// preparedIdleSeat skips typed-incompatible seats and continues through the
-// pool until it finds a healthy one. Other prepare failures retain the old
-// per-tick behavior. The task is never blocked for another seat's ledger.
+// preparedIdleSeat skips each seat whose prepare fails and continues through
+// the pool in the same dispatch pass until it finds a healthy one. Every
+// failure is logged once by the caller. The task is never blocked for another
+// seat's ledger.
 func (s *Scheduler) preparedIdleSeat(list []task.Task, t task.Task, p task.Pool, skip map[string]bool, log func(Decision)) (string, error) {
 	for {
 		handle := s.idleSeatExcept(list, t, p, skip)

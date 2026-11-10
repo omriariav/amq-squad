@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,21 +155,41 @@ func TestSealedExitsLedgerStillRefusesAnUnknownFieldBesideTheNewOnes(t *testing.
 	}
 
 	for _, tc := range []struct {
-		name, version, kind string
-		schema              int
-		want                error
+		name, version, kind, route string
+		schema                     int
+		want                       error
 	}{
-		{"same schema", "(devel)", "schema_mismatch", 1, sealchain.ErrSchemaMismatch},
-		{"newer schema", "v9.0.0", "newer_writer", 2, sealchain.ErrNewerWriter},
+		{"same schema", "(devel)", "schema_mismatch", task.RouteLead, 1, sealchain.ErrSchemaMismatch},
+		{"newer schema", "v9.0.0", "newer_writer", task.RouteOwner, 2, sealchain.ErrNewerWriter},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, path, _, _ := installSealedExitsWithCancelFields(t)
 			writeFutureExits(t, root, path, tc.version, tc.schema)
 			g := newHarness(t, Config{IdleTimeout: time.Hour, ExitsPath: path, SealRoot: root})
 			g.s.Exits = &deferringExits{}
-			decisions := g.tick()
-			if !has(decisions, tc.kind, "", "") || has(decisions, "dispatched", "", "") || !errors.Is(g.s.exitsErr, tc.want) {
-				t.Fatalf("future exits = decisions %+v err %v", decisions, g.s.exitsErr)
+			pending := g.add("must stay pending", &sonnet)
+			g.s.AdoptUp("seat-idle", sonnet, t0)
+			var all []Decision
+			for range 3 {
+				all = append(all, g.tick()...)
+			}
+			kindCount := 0
+			for _, d := range all {
+				if d.Kind == tc.kind {
+					kindCount++
+					if !strings.HasPrefix(d.Reason, tc.route+": ") {
+						t.Fatalf("%s route = %q, want %s", tc.kind, d.Reason, tc.route)
+					}
+				}
+				if d.Kind == "dispatched" {
+					t.Fatalf("future exits dispatched an idle seat: %+v", all)
+				}
+			}
+			if kindCount != 1 || !errors.Is(g.s.exitsErr, tc.want) {
+				t.Fatalf("future exits = decisions %+v count %d err %v", all, kindCount, g.s.exitsErr)
+			}
+			if got, err := g.store.Get(pending.ID); err != nil || got.State != task.StatePending || got.Lease != nil {
+				t.Fatalf("pending task changed under refusal: %+v, %v", got, err)
 			}
 		})
 	}
@@ -206,8 +227,26 @@ func TestCancelWaitsWhileTheExitsLedgerRefuses(t *testing.T) {
 	if err := os.WriteFile(headPath, head, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	s.exitsLoaded, s.exitsErr = false, nil
-	if decisions, err = s.Tick(); err != nil || has(decisions, "newer_writer", "", "") {
-		t.Fatalf("readable tick = %+v, %v", decisions, err)
+	var rounds [4][]Decision
+	for i := range rounds {
+		rounds[i], err = s.Tick()
+		if err != nil {
+			t.Fatalf("readable tick %d: %v", i+1, err)
+		}
+	}
+	if !has(rounds[0], "seat_closing", tk.ID, "seat-b") || !has(rounds[0], "seat_closed", "", "seat-b") {
+		t.Fatalf("readable tick 1 did not close: %+v", rounds[0])
+	}
+	if !has(rounds[1], "seat_cleaned", tk.ID, "seat-b") {
+		t.Fatalf("readable tick 2 did not clean: %+v", rounds[1])
+	}
+	if len(rounds[2]) != 0 || len(rounds[3]) != 0 {
+		t.Fatalf("readable ticks 3 and 4 repeated decisions: %+v %+v", rounds[2], rounds[3])
+	}
+	if s.exitsErr != nil {
+		t.Fatalf("restored exits ledger remains refused: %v", s.exitsErr)
+	}
+	if got, _ := store.Get(tk.ID); got.Attempts[0].CleanedAt == nil {
+		t.Fatalf("restored exits ledger did not record the clean: %+v", got.Attempts[0])
 	}
 }

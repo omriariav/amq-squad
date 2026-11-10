@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
@@ -163,5 +165,66 @@ func TestPrepareNamesTheQuarantineOfATamperedLedger(t *testing.T) {
 	}
 	if got, _ := r.store.Get(tk.ID); got.Lease != nil {
 		t.Fatal("the task was leased on a tampered ledger")
+	}
+}
+
+// PrepareSeat reads the ledger twice: compatibility first, then the real
+// clean. The injected clock edits the ledger at the only boundary between
+// those reads. This pins the second return through prepareError: a tamper
+// discovered by the clean retains the typed alarm and its quarantine data.
+func TestPrepareClassifiesTamperDiscoveredByTheClean(t *testing.T) {
+	q := squadFixture(t)
+	planned, err := (&Slots{Squad: q}).Plan(scheduler.SeatRequest{ID: "setup", Pool: sonnet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	seat := planned.Seats[0]
+	root := q.SessionRoot()
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	if _, err := seatcommit.RecordWorktreeBase("git", root, seat.Handle, seat.Worktree, seat.Branch, seatcommit.Target{BaseBranch: "main"}, now); err != nil {
+		t.Fatal(err)
+	}
+	staged := launch.StagedDir(root, seat.Handle)
+	if err := os.MkdirAll(staged, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := launch.WriteFile(filepath.Join(staged, launch.FileName), launch.Record{Handle: seat.Handle, Root: root, Session: q.Session, Runtime: "codex", Worktree: seat.Worktree, Branch: seat.Branch, Base: seat.Base}); err != nil {
+		t.Fatal(err)
+	}
+	ledgerPath := filepath.Join(seatcommit.LedgerDir(root), seat.Handle+".json")
+	original := readBytes(t, ledgerPath)
+	tampered := bytes.Replace(original, []byte(seat.Base), []byte(strings.Repeat("0", len(seat.Base))), 1)
+	if bytes.Equal(tampered, original) {
+		t.Fatal("the recorded base is not in the ledger")
+	}
+
+	calls := 0
+	prep := &CleanSeats{Root: root, Git: "git"}
+	prep.SetLog(io.Discard, func() time.Time {
+		calls++
+		if calls == 1 {
+			if err := os.WriteFile(ledgerPath, tampered, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return now.Add(time.Duration(calls) * time.Second)
+	})
+	err = prep.PrepareSeat(seat.Handle)
+	var alarm *scheduler.LedgerTamperedError
+	if !errors.As(err, &alarm) {
+		t.Fatalf("prepare after between-read tamper = %T %v", err, err)
+	}
+	if calls != 1 {
+		t.Fatalf("clock calls = %d, want 1 so the edit stays after compatibility and before clean", calls)
+	}
+	if alarm.Handle != seat.Handle || alarm.Seq != "1" || alarm.Quarantine == "" {
+		t.Fatalf("typed alarm = %+v", alarm)
+	}
+	if _, err := os.Stat(alarm.Quarantine); err != nil {
+		t.Fatalf("quarantine %q: %v", alarm.Quarantine, err)
+	}
+	entries, err := os.ReadDir(seatcommit.QuarantineDir(root))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("quarantine slots = %v, %v; want exactly the clean's slot", entries, err)
 	}
 }
