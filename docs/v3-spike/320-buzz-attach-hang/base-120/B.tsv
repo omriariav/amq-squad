@@ -1,0 +1,2 @@
+run	exit	seconds	load_before	load_after	hang_point	companion_exit	log
+1	1	0	16:10  6 users, load averages: 1.28 1.36 1.60	16:10  6 users, load averages: 1.28 1.36 1.60	-	-	B-1.log

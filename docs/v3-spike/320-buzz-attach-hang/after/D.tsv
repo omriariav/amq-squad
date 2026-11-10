@@ -1,0 +1,2 @@
+run	exit	seconds	load_before	load_after	hang_point	companion_exit	log
+1	0	315	{ 1.90 1.53 1.42 }	{ 3.79 3.39 2.43 }	-	1	D-1.log

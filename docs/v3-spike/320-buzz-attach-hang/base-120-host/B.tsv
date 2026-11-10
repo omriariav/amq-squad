@@ -1,0 +1,3 @@
+run	exit	seconds	load_before	load_after	hang_point	companion_exit	log
+1	1	314	{ 2.91 1.75 1.73 }	{ 3.87 1.99 1.76 }	online while the lead runs	-	B-1.log
+2	1	314	{ 3.75 2.02 1.77 }	{ 1.05 1.38 1.53 }	online while the lead runs	-	B-2.log

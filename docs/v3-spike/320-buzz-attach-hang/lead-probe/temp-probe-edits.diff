@@ -1,0 +1,56 @@
+diff --git a/internal/buzz/enroll_test.go b/internal/buzz/enroll_test.go
+index 07f523f1..2492baf9 100644
+--- a/internal/buzz/enroll_test.go
++++ b/internal/buzz/enroll_test.go
+@@ -393,6 +393,16 @@ func TestOwnerScriptDryRun(t *testing.T) {
+ 	// one request at a time: the answer first, then the route
+ 	tAnswer := time.Now()
+ 	answerID := ownerDM("Approve rel-dry release "+prefix, q.EventID)
++	// the lead's temp probe, never committed: the owner answers again
++	// after a rejected row, on the live serve
++	for n := 1; n <= 10; n++ {
++		if awaitWithin(ctx, &relay.bell, 4*time.Second, func() bool { return serveAdmitted(relay, body, answerID) }) {
++			t.Logf("probe945 answer: delivered on send %d", n)
++			break
++		}
++		t.Logf("probe945 answer: send %d not delivered in 4s; the owner answers again", n)
++		answerID = ownerDM("Approve rel-dry release "+prefix, q.EventID)
++	}
+ 	// serve's running row for the answer: the delivery into the attach
+ 	// inbox is done (serveAdmitted)
+ 	await(ctx, t, &relay.bell, "serve delivers the answer into the attach inbox", func() bool { return serveAdmitted(relay, body, answerID) })
+@@ -431,7 +441,16 @@ func TestOwnerScriptDryRun(t *testing.T) {
+ 	if _, err := store.ReadAnswer("rel-dry"); err != nil {
+ 		t.Fatalf("no answer file: %v", err)
+ 	}
++	t.Logf("probe945 answer: handled once, outcome %s, reply %q, answer file read", handled[0].Gate.Outcome, handled[0].Reply)
+ 	routeID := ownerDM("@lead-b please rebase #12", "")
++	for n := 1; n <= 10; n++ {
++		if awaitWithin(ctx, &relay.bell, 4*time.Second, func() bool { return serveAdmitted(relay, body, routeID) }) {
++			t.Logf("probe945 route: delivered on send %d", n)
++			break
++		}
++		t.Logf("probe945 route: send %d not delivered in 4s; the owner sends again", n)
++		routeID = ownerDM("@lead-b please rebase #12", "")
++	}
+ 	await(ctx, t, &relay.bell, "serve delivers the route", func() bool { return serveAdmitted(relay, body, routeID) })
+ 	if delivered, err = inbox.New(ctx); err != nil || len(delivered) != 1 {
+ 		t.Fatalf("the attach inbox after serve's delivery of the route: %+v, %v", delivered, err)
+diff --git a/internal/buzz/relay_test.go b/internal/buzz/relay_test.go
+index 2832e4a4..3d087a3b 100644
+--- a/internal/buzz/relay_test.go
++++ b/internal/buzz/relay_test.go
+@@ -168,6 +168,13 @@ func newWSRelay(t *testing.T) *wsRelay {
+ 	r.mem.onPublish = func(raw []byte) {
+ 		e, _ := nostr.ParseEvent(raw)
+ 		r.tracef("store kind=%d id=%s author=%s", e.Kind, shortID(e.ID), shortID(e.PubKey))
++		if e.Kind == 9 || e.Kind == 40003 { // the lead's temp probe, never committed
++			c := e.Content
++			if len(c) > 300 {
++				c = c[:300]
++			}
++			r.tracef("probe945 content kind=%d id=%s: %q", e.Kind, shortID(e.ID), c)
++		}
+ 		r.broadcast(raw)
+ 		r.bell.ring()
+ 	}

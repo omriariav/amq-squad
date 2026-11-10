@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -204,6 +205,45 @@ func (f coreFixture) ownerDM(t *testing.T, content, thread string) string {
 	return e.ID
 }
 
+type ownerDMSender struct {
+	owner       throwaway
+	relay       *wsRelay
+	channel     string
+	body        string
+	lastCreated int64
+}
+
+// send publishes a fresh owner event. Nostr event ids include CreatedAt only
+// to whole seconds, so a resend with identical content waits for the next
+// second rather than accidentally publishing the same id twice.
+func (s *ownerDMSender) send(ctx context.Context, t *testing.T, content, thread string) string {
+	t.Helper()
+	created := time.Now().Unix()
+	if created <= s.lastCreated {
+		timer := time.NewTimer(time.Until(time.Unix(s.lastCreated+1, 0)))
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			t.Fatalf("owner resend did not reach a fresh event second: %v", context.Cause(ctx))
+		}
+		created = time.Now().Unix()
+	}
+	tags := [][]string{{"h", s.channel}, {"p", s.body}}
+	if thread != "" {
+		tags = append(tags, []string{"e", thread, "", "reply"})
+	}
+	e := nostr.Event{CreatedAt: created, Kind: 9, Tags: tags, Content: content}
+	if err := s.owner.sk.Sign(&e); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.relay.mem.Publish(ctx, e.Marshal()); err != nil {
+		t.Fatal(err)
+	}
+	s.lastCreated = created
+	return e.ID
+}
+
 // fakeMailer records AMQ sends.
 type fakeMailer struct {
 	mu   sync.Mutex
@@ -238,11 +278,18 @@ func statusDoc(t *testing.T, handle string, live bool) []byte {
 	return raw
 }
 
+var amqIdentityEnv = []string{"AM_ME", "AM_ROOT", "AM_BASE_ROOT", "AM_ROOT_ID", "AM_BASE_ROOT_ID", "AM_SESSION"}
+
+func isAMQIdentityEnv(name string) bool {
+	return slices.Contains(amqIdentityEnv, name)
+}
+
 // amqEnv is the environment of every amq a test runs (briefs ruling 18;
 // Codex P2-7): base (the process environment when nil) with HOME a scratch
 // directory (base's own scratch HOME, else a fresh one), the XDG cache,
-// config and data directories under it, and AMQ_NO_UPDATE_CHECK=1, so no
-// amq a test starts reads the real HOME or reaches the network.
+// config and data directories under it, no inherited AMQ launch identity,
+// and AMQ_NO_UPDATE_CHECK=1, so no amq a test starts reads the real HOME,
+// reaches the network or sees the seat's pinned session.
 func amqEnv(t *testing.T, base []string) []string {
 	t.Helper()
 	home := ""
@@ -263,7 +310,7 @@ func amqEnv(t *testing.T, base []string) []string {
 	var out []string
 	for _, kv := range base {
 		k, _, _ := strings.Cut(kv, "=")
-		if _, replaced := set[k]; !replaced {
+		if _, replaced := set[k]; !replaced && !isAMQIdentityEnv(k) {
 			out = append(out, kv)
 		}
 	}
@@ -271,6 +318,27 @@ func amqEnv(t *testing.T, base []string) []string {
 		out = append(out, k+"="+v)
 	}
 	return out
+}
+
+// scrubAMQIdentity removes the seat's launch identity from this test
+// process. Production seams such as ExecEndpoint inherit the process
+// environment rather than amqEnv, and must not pin a scratch AMQ root to the
+// live seat's session.
+func scrubAMQIdentity(t *testing.T) {
+	t.Helper()
+	for _, name := range amqIdentityEnv {
+		value, existed := os.LookupEnv(name)
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if existed {
+				_ = os.Setenv(name, value)
+			} else {
+				_ = os.Unsetenv(name)
+			}
+		})
+	}
 }
 
 // amqCmd is the only way a test execs amq (TestTestsExecAMQOnlyThroughTheHelper).
@@ -287,6 +355,7 @@ func amqCmd(ctx context.Context, t *testing.T, base []string, args ...string) *e
 // environment.
 func amqProcess(t *testing.T) {
 	t.Helper()
+	scrubAMQIdentity(t)
 	for _, kv := range amqEnv(t, []string{}) {
 		k, v, _ := strings.Cut(kv, "=")
 		t.Setenv(k, v)

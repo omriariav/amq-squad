@@ -3,6 +3,7 @@ package buzz
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -19,13 +20,86 @@ import (
 // well inside make ci's 20 minute go test timeout.
 const runBudget = 5 * time.Minute
 
+const evidenceRunBudgetEnv = "AMQ_SQUAD_EVIDENCE_RUN_BUDGET"
+const evidencePresenceWaitEnv = "AMQ_SQUAD_EVIDENCE_PRESENCE_WAIT"
+const evidencePollIntervalEnv = "AMQ_SQUAD_EVIDENCE_POLL_INTERVAL"
+
+// effectiveRunBudget permits count-table runs to fail a reproduced hang
+// sooner. It is evidence-only: ordinary tests and gates leave the variable
+// unset and retain five minutes. A requested bound can only shorten the
+// default and never falls below three passing-run lengths.
+func effectiveRunBudget(t *testing.T) time.Duration {
+	t.Helper()
+	raw := os.Getenv(evidenceRunBudgetEnv)
+	if raw == "" {
+		return runBudget
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		t.Fatalf("%s: %v", evidenceRunBudgetEnv, err)
+	}
+	if d < 2*time.Minute {
+		return 2 * time.Minute
+	}
+	if d > runBudget {
+		return runBudget
+	}
+	return d
+}
+
 // budget returns the run's context: it ends when the test ends or the
 // budget runs out, whichever is first.
 func budget(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeoutCause(t.Context(), runBudget, fmt.Errorf("the run's %s budget ran out", runBudget))
+	limit := effectiveRunBudget(t)
+	ctx, cancel := context.WithTimeoutCause(t.Context(), limit, fmt.Errorf("the run's %s budget ran out", limit))
 	t.Cleanup(cancel)
 	return ctx
+}
+
+func TestEvidenceRunBudgetIsBoundedAndDefaultsToFiveMinutes(t *testing.T) {
+	t.Setenv(evidenceRunBudgetEnv, "")
+	if got := effectiveRunBudget(t); got != 5*time.Minute {
+		t.Fatalf("unset budget = %s", got)
+	}
+	t.Setenv(evidenceRunBudgetEnv, "1s")
+	if got := effectiveRunBudget(t); got != 2*time.Minute {
+		t.Fatalf("short budget = %s", got)
+	}
+	t.Setenv(evidenceRunBudgetEnv, "130s")
+	if got := effectiveRunBudget(t); got != 130*time.Second {
+		t.Fatalf("evidence budget = %s", got)
+	}
+	t.Setenv(evidenceRunBudgetEnv, "10m")
+	if got := effectiveRunBudget(t); got != 5*time.Minute {
+		t.Fatalf("long budget = %s", got)
+	}
+}
+
+func evidencePresenceWait() bool { return os.Getenv(evidencePresenceWaitEnv) == "1" }
+
+func TestPresenceWaitEvidenceIsOffByDefault(t *testing.T) {
+	t.Setenv(evidencePresenceWaitEnv, "")
+	if evidencePresenceWait() {
+		t.Fatal("presence-wait evidence row is on without its variable")
+	}
+	t.Setenv(evidencePresenceWaitEnv, "1")
+	if !evidencePresenceWait() {
+		t.Fatal("presence-wait evidence row did not turn on explicitly")
+	}
+}
+
+func evidencePollInterval() string { return os.Getenv(evidencePollIntervalEnv) }
+
+func TestPollIntervalEvidenceIsOffByDefault(t *testing.T) {
+	t.Setenv(evidencePollIntervalEnv, "")
+	if got := evidencePollInterval(); got != "" {
+		t.Fatalf("unset poll interval = %q", got)
+	}
+	t.Setenv(evidencePollIntervalEnv, "5ms")
+	if got := evidencePollInterval(); got != "5ms" {
+		t.Fatalf("explicit poll interval = %q", got)
+	}
 }
 
 // bell wakes waiters when what it observes changes. The zero value is
@@ -75,6 +149,115 @@ func await(ctx context.Context, t *testing.T, b *bell, step string, ok func() bo
 	}
 }
 
+type ownerReject int
+
+const (
+	ownerNotRejected ownerReject = iota
+	ownerRejectedByPlant
+	ownerRejectedForReal
+)
+
+// sendOwnerUntilDone sends one owner event and observes only state changes on
+// the relay bell. A rejection tied to that event causes one new event. The
+// deterministic test plant does not consume the one real resend; a second
+// real rejection fails instead of creating an unbounded retry loop.
+func sendOwnerUntilDone(
+	ctx context.Context,
+	b *bell,
+	kind, step string,
+	send func() string,
+	done func(string) bool,
+	rejected func(string) ownerReject,
+	fail func(string),
+	logLine func(string),
+) (string, int) {
+	id := send()
+	realResends := 0
+	for {
+		rung := b.next()
+		if done(id) {
+			return id, realResends
+		}
+		rejection := rejected(id)
+		if rejection != ownerNotRejected {
+			if rejection == ownerRejectedForReal {
+				realResends++
+				if realResends > 1 {
+					fail(kind + " rejected (native_error) twice; not sent a third time")
+					return id, realResends - 1
+				}
+			}
+			logLine(kind + " rejected (native_error), sent again")
+			next := send()
+			if next == id {
+				fail(kind + " sent again with the same event id")
+				return id, realResends
+			}
+			id = next
+			continue
+		}
+		select {
+		case <-rung:
+		case <-ctx.Done():
+			fail(fmt.Sprintf("hung: no signal for %q (%v)", step, context.Cause(ctx)))
+			return id, realResends
+		}
+	}
+}
+
+func TestSendOwnerUntilDone(t *testing.T) {
+	t.Run("done at once", func(t *testing.T) {
+		sends := 0
+		id, resends := sendOwnerUntilDone(t.Context(), &bell{}, "answer", "done",
+			func() string { sends++; return fmt.Sprintf("event-%d", sends) },
+			func(string) bool { return true },
+			func(string) ownerReject { return ownerNotRejected },
+			func(msg string) { t.Fatalf("unexpected failure: %s", msg) },
+			func(line string) { t.Fatalf("unexpected log: %s", line) })
+		if id != "event-1" || sends != 1 || resends != 0 {
+			t.Fatalf("id=%q sends=%d real resends=%d", id, sends, resends)
+		}
+	})
+
+	t.Run("rejected once then done", func(t *testing.T) {
+		sends := 0
+		var logs []string
+		id, resends := sendOwnerUntilDone(t.Context(), &bell{}, "answer", "done",
+			func() string { sends++; return fmt.Sprintf("event-%d", sends) },
+			func(id string) bool { return id == "event-2" },
+			func(id string) ownerReject {
+				if id == "event-1" {
+					return ownerRejectedForReal
+				}
+				return ownerNotRejected
+			},
+			func(msg string) { t.Fatalf("unexpected failure: %s", msg) },
+			func(line string) { logs = append(logs, line) })
+		if id != "event-2" || sends != 2 || resends != 1 || !slices.Equal(logs, []string{"answer rejected (native_error), sent again"}) {
+			t.Fatalf("id=%q sends=%d real resends=%d logs=%v", id, sends, resends, logs)
+		}
+	})
+
+	t.Run("rejected twice", func(t *testing.T) {
+		sends := 0
+		var failures, logs []string
+		_, resends := sendOwnerUntilDone(t.Context(), &bell{}, "answer", "done",
+			func() string { sends++; return fmt.Sprintf("event-%d", sends) },
+			func(id string) bool { return id == "event-3" },
+			func(id string) ownerReject {
+				if id == "event-1" || id == "event-2" {
+					return ownerRejectedForReal
+				}
+				return ownerNotRejected
+			},
+			func(msg string) { failures = append(failures, msg) },
+			func(line string) { logs = append(logs, line) })
+		if sends != 2 || resends != 1 || !slices.Equal(failures, []string{"answer rejected (native_error) twice; not sent a third time"}) || len(logs) != 1 {
+			t.Fatalf("sends=%d real resends=%d failures=%v logs=%v", sends, resends, failures, logs)
+		}
+	})
+}
+
 // serveAdmitted reports whether serve posted the running row for the owner
 // DM dmID. Serve's core sets a request running only on the mailbox
 // adapter's admission, which returns after the prompt is in the attach
@@ -99,6 +282,36 @@ func serveAdmitted(r *wsRelay, body, dmID string) bool {
 		}
 	}
 	return false
+}
+
+// serveRejected reports the terminal native_error row for dmID. The root row
+// e-tags the owner event; an edit e-tags that root, exactly like
+// serveAdmitted. No unrelated rejection can trigger a resend.
+func serveRejected(r *wsRelay, body, dmID string) bool {
+	_, ok := serveRejectedEvent(r, body, dmID)
+	return ok
+}
+
+// serveRejectedEvent returns the exact terminal row as well as the verdict so
+// the evidence-only polling matrix can record one real row's tags.
+func serveRejectedEvent(r *wsRelay, body, dmID string) (nostr.Event, bool) {
+	const rejected = "amq-squad: rejected (native_error)"
+	var roots []string
+	for _, e := range r.mem.events(9, body) {
+		if !slices.Contains(nostr.TagValues(e, "e"), dmID) {
+			continue
+		}
+		if e.Content == rejected {
+			return e, true
+		}
+		roots = append(roots, e.ID)
+	}
+	for _, e := range r.mem.events(40003, body) {
+		if e.Content == rejected && slices.ContainsFunc(nostr.TagValues(e, "e"), func(id string) bool { return slices.Contains(roots, id) }) {
+			return e, true
+		}
+	}
+	return nostr.Event{}, false
 }
 
 // serveAnswered reports whether the body posted any row in reply to the

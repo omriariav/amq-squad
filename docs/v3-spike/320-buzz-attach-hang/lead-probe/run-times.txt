@@ -1,0 +1,28 @@
+poll5ms: started / finished / porcelain lines in the worktree after (the temp edits, when any)
+יום ג׳ נוב׳ 10 2026 21:29:14 IST
+יום ג׳ נוב׳ 10 2026 21:36:20 IST
+       0
+content5ms: started / finished / porcelain lines in the worktree after (the temp edits, when any)
+יום ג׳ נוב׳ 10 2026 21:39:08 IST
+יום ג׳ נוב׳ 10 2026 21:45:12 IST
+       1
+contentbase: started / finished / porcelain lines in the worktree after (the temp edits, when any)
+יום ג׳ נוב׳ 10 2026 21:45:12 IST
+יום ג׳ נוב׳ 10 2026 21:45:43 IST
+       1
+resend5ms: started / finished / porcelain lines in the worktree after (the temp edits, when any)
+יום ג׳ נוב׳ 10 2026 21:48:24 IST
+יום ג׳ נוב׳ 10 2026 21:50:43 IST
+       2
+base138 (v0.138.0): started / finished / porcelain lines in the worktree after (the temp edits, when any)
+יום ג׳ נוב׳ 10 2026 22:13:36 IST
+יום ג׳ נוב׳ 10 2026 22:14:07 IST
+       0
+poll138 (v0.138.0): started / finished / porcelain lines in the worktree after (the temp edits, when any)
+יום ג׳ נוב׳ 10 2026 22:14:07 IST
+יום ג׳ נוב׳ 10 2026 22:18:12 IST
+       0
+resend138 (v0.138.0): started / finished / porcelain lines in the worktree after (the temp edits, when any)
+יום ג׳ נוב׳ 10 2026 22:18:12 IST
+יום ג׳ נוב׳ 10 2026 22:23:34 IST
+       2
