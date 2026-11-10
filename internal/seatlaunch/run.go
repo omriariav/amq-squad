@@ -102,7 +102,7 @@ type Options struct {
 	// per-seat -c activity overlay. Admission reports the launch-time result
 	// per Codex seat to the scheduler; Warn says the owner step when missing.
 	CodexActivityTrust     func(codexDir, squadBin, amqBin, home string) seatexec.CodexActivityTrust
-	CodexActivityAdmission func(handle string, trusted bool)
+	CodexActivityAdmission func(handle string, trusted bool, launched time.Time)
 	Warn                   func(string)
 }
 
@@ -208,9 +208,10 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		codexDir := seatexec.CodexDir(o.Home, seatexec.Getenv(o.Env, "CODEX_HOME"))
 		q.CodexHookMissing = codexHookWhy(o.CodexDialogHook(codexDir))
 		trusted := o.CodexActivityTrust(codexDir, q.Wrapper, q.AMQPath, o.Home).Ready()
+		launched := o.Now().UTC()
 		for _, seat := range q.Seats {
 			if seat.Runtime == "codex" && o.CodexActivityAdmission != nil {
-				o.CodexActivityAdmission(seat.Handle, trusted)
+				o.CodexActivityAdmission(seat.Handle, trusted, launched)
 			}
 		}
 		if !trusted {

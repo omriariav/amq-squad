@@ -143,8 +143,12 @@ func renewLeaseOnToolResult(id hookIdentity, line hookLedgerLine, started time.T
 	case errors.Is(err, task.ErrBusy):
 		return "skipped", 0
 	case err == nil && renewed:
-		if t.Lease != nil && t.Lease.Renewals == 1 {
-			_ = schedproc.AppendDecision(id.Root, started, scheduler.Decision{Kind: "lease_renewed", TaskID: t.ID, Seat: id.Handle, Reason: fmt.Sprintf("first activity renewal of attempt %d", t.Attempt)})
+		if t.Lease != nil && t.Lease.ActivityRenewals == 1 {
+			reason := fmt.Sprintf("first activity renewal of attempt %d", t.Attempt)
+			if unlabelled := t.Lease.Renewals - t.Lease.ActivityRenewals - t.Lease.ManualRenewals; unlabelled > 0 {
+				reason += fmt.Sprintf(" after %d unlabelled renewals", unlabelled)
+			}
+			_ = schedproc.AppendDecision(id.Root, started, scheduler.Decision{Kind: "lease_renewed", TaskID: t.ID, Seat: id.Handle, Reason: reason})
 		}
 		return "renewed", t.Attempt
 	case err == nil:

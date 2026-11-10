@@ -703,7 +703,16 @@ func printTaskDetails(t task.Task) {
 		if !t.Lease.BudgetEndsAt.IsZero() {
 			budgetEnd = t.Lease.BudgetEndsAt.Format(time.RFC3339)
 		}
-		fmt.Printf("  lease:    %s, %s, expires %s, budget ends %s, %d renewals\n", t.Lease.Holder, claimed, t.Lease.ExpiresAt.Format(time.RFC3339), budgetEnd, t.Lease.Renewals)
+		unlabelled := t.Lease.Renewals - t.Lease.ActivityRenewals - t.Lease.ManualRenewals
+		if unlabelled < 0 {
+			unlabelled = 0
+		}
+		renewals := fmt.Sprintf("%d renewals (%d activity, %d manual", t.Lease.Renewals, t.Lease.ActivityRenewals, t.Lease.ManualRenewals)
+		if unlabelled > 0 {
+			renewals += fmt.Sprintf(", %d unlabelled", unlabelled)
+		}
+		renewals += ")"
+		fmt.Printf("  lease:    %s, %s, expires %s, budget ends %s, %s\n", t.Lease.Holder, claimed, t.Lease.ExpiresAt.Format(time.RFC3339), budgetEnd, renewals)
 	}
 	fmt.Printf("  attempt:  %d\n", t.Attempt)
 	for _, a := range t.Attempts {

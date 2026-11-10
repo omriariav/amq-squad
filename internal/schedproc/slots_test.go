@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/ledger"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -165,29 +167,83 @@ func TestDoorbellAndLeadNoticeSend(t *testing.T) {
 }
 
 func TestCodexLaunchAdmissionControlsTheDoorbellManualRenewFallback(t *testing.T) {
-	slots := &Slots{Squad: seatlaunch.Squad{Seats: []seatlaunch.Seat{
-		{Handle: "codex", Runtime: "codex"}, {Handle: "claude", Runtime: "claude"},
+	root := t.TempDir()
+	launch := time.Date(2026, 11, 10, 20, 0, 0, 0, time.UTC)
+	slots := &Slots{Root: root, Squad: seatlaunch.Squad{Seats: []seatlaunch.Seat{
+		{Handle: "codex", Runtime: "codex"}, {Handle: "trusted", Runtime: "codex"}, {Handle: "other", Runtime: "codex"}, {Handle: "claude", Runtime: "claude"},
 	}}}
 	if !slots.NeedsManualRenew("codex") || slots.NeedsManualRenew("claude") {
 		t.Fatal("an unadmitted Codex seat alone needs the fallback")
 	}
-	slots.AdmitCodexActivity("codex", true)
+	slots.AdmitCodexActivity("codex", true, launch)
 	if slots.NeedsManualRenew("codex") {
 		t.Fatal("a trusted Codex launch kept the manual fallback")
 	}
-	slots.AdmitCodexActivity("codex", false)
-	var sent []string
+	slots.AdmitCodexActivity("codex", false, launch)
+	appendActivityRow := func(pathHandle, rowHandle string, at time.Time) {
+		t.Helper()
+		if _, err := ledger.Append(ledger.Path(root, pathHandle), func(seq uint64) any {
+			return map[string]any{"schema": ledger.LineSchema, "seq": seq, "at": at.Format(time.RFC3339Nano), "handle": rowHandle, "event": "PostToolUse", "tool": "Bash", "outcome": "ok"}
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendActivity := func(handle string, at time.Time) { appendActivityRow(handle, handle, at) }
+	appendActivityRow("codex", "other", launch.Add(time.Second))
+	appendActivity("other", launch.Add(time.Second))
+	if !slots.NeedsManualRenew("codex") {
+		t.Fatal("another handle's ingest supplied Codex activity admission")
+	}
+	appendActivity("codex", launch.Add(time.Second))
+	if slots.NeedsManualRenew("codex") {
+		t.Fatal("this launch's own activity did not supply admission")
+	}
+	slots.AdmitCodexActivity("codex", false, launch.Add(2*time.Second))
+	if !slots.NeedsManualRenew("codex") {
+		t.Fatal("a relaunch retained the previous launch's activity admission")
+	}
+	appendActivity("codex", launch.Add(3*time.Second))
+	if slots.NeedsManualRenew("codex") {
+		t.Fatal("activity after the relaunch did not supply admission")
+	}
+	slots.AdmitCodexActivity("trusted", true, launch)
+
+	var bodies []string
 	s := Sender{AMQ: "/opt/amq", Root: "/r/s1", BaseRoot: "/r", Session: "s1", Run: func(_ context.Context, _ string, args, _ []string) ([]byte, error) {
-		sent = append([]string(nil), args...)
+		for i := range args {
+			if args[i] == "--body" && i+1 < len(args) {
+				bodies = append(bodies, args[i+1])
+			}
+		}
 		return nil, nil
 	}}
-	b := Doorbell{Sender: s, NeedsManualRenew: slots.NeedsManualRenew}
-	if err := b.Ring("codex", task.Task{ID: "t1", Title: "work", Class: "implement"}); err != nil {
-		t.Fatal(err)
+	callRule := "A command that runs longer than the lease (" + task.DefaultLeaseDuration.String() + ") loses it: run long work in the background and poll it."
+	manual := `This Codex seat's activity hooks are not trusted, so run amq-squad task renew --me "$AM_ME" after every tool batch and at least every 5 minutes while you hold the task; stop and block if renewal is refused.`
+	checks := []struct {
+		handle string
+		manual bool
+	}{
+		{"trusted", false},
+		{"other", true},
+		{"claude", false},
 	}
-	body := strings.Join(sent, " ")
-	if !strings.Contains(body, `amq-squad task renew --me "$AM_ME" after every tool batch and at least every 5 minutes`) ||
-		!strings.Contains(body, "stop and block if renewal is refused") {
-		t.Fatalf("doorbell = %q", body)
+	for _, check := range checks {
+		if err := (Doorbell{Sender: s, NeedsManualRenew: slots.NeedsManualRenew}).Ring(check.handle, task.Task{ID: "t1", Title: "work", Class: "implement"}); err != nil {
+			t.Fatal(err)
+		}
+		body := bodies[len(bodies)-1]
+		if strings.Count(body, callRule) != 1 || strings.Count(body, manual) != btoi(check.manual) {
+			t.Fatalf("%s doorbell = %q", check.handle, body)
+		}
+		if check.manual && strings.Index(body, callRule) > strings.Index(body, manual) {
+			t.Fatalf("call rule followed manual fallback: %q", body)
+		}
 	}
+}
+
+func btoi(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }

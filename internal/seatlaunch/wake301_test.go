@@ -287,7 +287,7 @@ func TestLaunchAdmitsCodexActivityTrustAndWarnsWithExactCommands(t *testing.T) {
 		return seatexec.CodexActivityTrust{Missing: []string{"/<session-flags>/config.toml:post_tool_use:0:0"}}
 	}
 	admitted := map[string]bool{}
-	o.CodexActivityAdmission = func(handle string, trusted bool) { admitted[handle] = trusted }
+	o.CodexActivityAdmission = func(handle string, trusted bool, _ time.Time) { admitted[handle] = trusted }
 	var warnings []string
 	o.Warn = func(s string) { warnings = append(warnings, s) }
 	o.RunAMQ, o.Wait = echoWakes(f, nil), 50*time.Millisecond
