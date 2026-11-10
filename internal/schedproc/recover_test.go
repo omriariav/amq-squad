@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
@@ -190,6 +191,139 @@ func kinds(ds []scheduler.Decision, kind string) []scheduler.Decision {
 		}
 	}
 	return out
+}
+
+func installLegacyTamperedLedger(t *testing.T, r *tamperedSeatRig) {
+	t.Helper()
+	p := filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")
+	if err := os.WriteFile(p, r.original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := seatcommit.ReadLedger(r.root, r.handle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := sealchain.SessionKey(r.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.Seal = nil
+	legacy := sealchain.Seal(key.Key, "amq-squad commits ledger v1", nil, l)
+	withSeal := l
+	withSeal.Seal = legacy
+	raw, err := json.MarshalIndent(withSeal, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = append(raw, '\n')
+	if err := sealchain.WriteHead(r.root, "commits."+r.handle, key, legacy, r.now); err != nil {
+		t.Fatal(err)
+	}
+	tampered := bytes.Replace(raw, []byte(l.Base), []byte(strings.Repeat("0", len(l.Base))), 1)
+	if bytes.Equal(raw, tampered) {
+		t.Fatal("legacy base was not edited")
+	}
+	if err := os.WriteFile(p, tampered, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.original, r.tampered = raw, tampered
+}
+
+func decisionKindCount(t *testing.T, root, kind string) int {
+	t.Helper()
+	lines, err := ReadDecisionsTail(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, line := range lines {
+		if line.Kind == kind {
+			n++
+		}
+	}
+	return n
+}
+
+func TestCrashedRecoveryReleasesOnceFromTheRealLedgerForRawAndLegacyHeads(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		for _, retry := range []bool{true, false} {
+			name := fmt.Sprintf("legacy=%v/retry=%v", legacy, retry)
+			t.Run(name, func(t *testing.T) {
+				r := newTamperedSeatRig(t)
+				if legacy {
+					installLegacyTamperedLedger(t, r)
+				}
+				r.ticks(3)
+				headPath := sealchain.HeadPath(r.root, "commits."+r.handle)
+				headBefore := mustRead(t, headPath)
+				recovery := Recovery{Root: r.root, Target: r.target, Git: "git", Now: func() time.Time { return r.now }}
+				req := RecoverRequest{Seat: r.handle, Seq: "1", Slot: 1, Reason: "understood"}
+				if _, err := recovery.Apply("lead", req); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(headPath, headBefore, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				crashedBody := mustRead(t, filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json"))
+				first := r.ticks(1)
+				if len(kinds(first, "ledger_hold_released")) != 1 || len(kinds(first, "task_reset")) != 1 || len(kinds(first, "dispatched")) != 1 {
+					t.Fatalf("first tick did not release, reset, and dispatch exactly once: %+v", first)
+				}
+				if retry {
+					decide := recoverDecision(r.s, r.root, recovery.Apply, func() time.Time { return r.now })
+					reply := decide("lead", req)
+					var result seatcommit.RecoverResult
+					if !reply.OK || json.Unmarshal(reply.Data, &result) != nil || !result.AlreadyRecovered {
+						t.Fatalf("retry = %+v, result %+v", reply, result)
+					}
+					if !bytes.Equal(crashedBody, mustRead(t, filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json"))) {
+						t.Fatal("retry changed the recovered body")
+					}
+					if got := decisionKindCount(t, r.root, DecisionLedgerRecovered); got != 1 {
+						t.Fatalf("ledger_recovered lines = %d, want 1", got)
+					}
+					if more := r.ticks(3); len(kinds(more, "ledger_hold_released")) != 0 {
+						t.Fatalf("retry released the hold twice: %+v", more)
+					}
+					return
+				}
+				if more := r.ticks(3); len(kinds(more, "ledger_hold_released")) != 0 {
+					t.Fatalf("ticks released the hold twice without a retry: %+v", more)
+				}
+				if _, err := seatcommit.RecordTarget(r.root, r.handle, r.target); err != nil {
+					t.Fatal(err)
+				}
+				l, err := seatcommit.ReadLedger(r.root, r.handle)
+				if err != nil || l.Recovered == nil {
+					t.Fatalf("ordinary continuation lost recovery: %+v, %v", l.Recovered, err)
+				}
+				body, seal, err := sealchain.SplitRaw(mustRead(t, filepath.Join(seatcommit.LedgerDir(r.root), r.handle+".json")))
+				if err != nil || len(body) == 0 {
+					t.Fatalf("ordinary continuation body = %v", err)
+				}
+				head, layout, err := sealchain.HeadLink("commits."+r.handle, mustSessionSeed(t, r.root), mustRead(t, headPath))
+				if err != nil || layout != sealchain.RawLayout || head.Tag != seal.Tag || l.Seal == nil || l.Seal.Tag != seal.Tag {
+					t.Fatalf("head is not raw and current: head=%+v seal=%+v layout=%q err=%v", head, seal, layout, err)
+				}
+				wantMigrations := 0
+				if legacy {
+					wantMigrations = 1
+				}
+				if got := decisionKindCount(t, r.root, sealchain.LayoutMigrationDecisionKind); got != wantMigrations {
+					t.Fatalf("migration lines = %d, want %d", got, wantMigrations)
+				}
+			})
+		}
+	}
+}
+
+func mustSessionSeed(t *testing.T, root string) sealchain.Seed {
+	t.Helper()
+	seed, err := sealchain.SessionKey(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return seed
 }
 
 // B2 (the process half), B3 and B1's exact-once over the real preparer: a
