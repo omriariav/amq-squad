@@ -102,9 +102,11 @@ path refuses on every tick: one copy; a prepare and then a writer refusing
 the same bytes with the same error are one refusal, and the slot records
 the first's verb and time). A marked or different slot tries
 `commits.<h>.seq<N>.2`, then
-`.3`, up to 100 slots per seq. A slot that is present but is not a
-published set (an empty directory, a set without `quarantine.txt`) is a
-named copy failure, never compared through, never renamed over (row A9).
+`.3`, up to 100 slots per seq. A slot that is present, carries no
+`recovered.txt` and is not a published set (an empty directory, a set
+without `quarantine.txt`) is a named copy failure, never compared through,
+never renamed over (row A9); a marked slot is passed over before that check,
+whatever else it holds.
 Leftovers of a copy that did not finish (`.copying-*` of a crash) are
 listed in the next sidecar as `leftover:` lines, never reused, never
 removed.
