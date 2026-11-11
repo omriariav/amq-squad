@@ -278,6 +278,8 @@ func TestLaunchAdmitsCodexActivityTrustAndWarnsWithExactCommands(t *testing.T) {
 	q := testSquad(t)
 	f := &fakeAMQ{t: t, prepare: preparedResult(), apply: launchapi.ApplyResultV1{ResultVersion: 1, Outcome: "applied", Disposition: "committed"}}
 	o := launchOpts(t, f, map[string]string{"sha256:a1": "trust_exact_subject"})
+	wantLaunch := time.Date(2026, 11, 11, 0, 30, 0, 0, time.UTC)
+	o.Now = func() time.Time { return wantLaunch }
 	o.Env = append(o.Env, "CODEX_HOME=/fake/codex-home")
 	o.CodexDialogHook = func(string) seatexec.CodexDialogHook { return seatexec.CodexDialogHook{} }
 	o.CodexActivityTrust = func(dir, squadBin, amqBin, home string) seatexec.CodexActivityTrust {
@@ -287,7 +289,11 @@ func TestLaunchAdmitsCodexActivityTrustAndWarnsWithExactCommands(t *testing.T) {
 		return seatexec.CodexActivityTrust{Missing: []string{"/<session-flags>/config.toml:post_tool_use:0:0"}}
 	}
 	admitted := map[string]bool{}
-	o.CodexActivityAdmission = func(handle string, trusted bool) { admitted[handle] = trusted }
+	admittedAt := map[string]time.Time{}
+	o.CodexActivityAdmission = func(handle string, trusted bool, launched time.Time) {
+		admitted[handle] = trusted
+		admittedAt[handle] = launched
+	}
 	var warnings []string
 	o.Warn = func(s string) { warnings = append(warnings, s) }
 	o.RunAMQ, o.Wait = echoWakes(f, nil), 50*time.Millisecond
@@ -298,6 +304,9 @@ func TestLaunchAdmitsCodexActivityTrustAndWarnsWithExactCommands(t *testing.T) {
 	res.proof.close()
 	if len(admitted) != 1 || admitted["dev"] {
 		t.Fatalf("admission = %v", admitted)
+	}
+	if admittedAt["dev"].IsZero() || !admittedAt["dev"].Equal(wantLaunch) {
+		t.Fatalf("admission launch time = %s, want %s", admittedAt["dev"], wantLaunch)
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "codex seats will not renew on their own until you trust the amq-squad hooks:") ||
 		!strings.Contains(warnings[0], q.Wrapper+"' evidence ingest") || !strings.Contains(warnings[0], q.AMQPath+"'") ||

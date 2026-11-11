@@ -106,12 +106,15 @@ type Task struct {
 // Lease is the current holder's lease. An unclaimed lease (ClaimedAt nil)
 // is an assignment the seat has not acknowledged; it is never renewed.
 type Lease struct {
-	Holder    string     `json:"holder"`
-	GrantedAt time.Time  `json:"granted_at"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	ClaimedAt *time.Time `json:"claimed_at"`
-	RenewedAt *time.Time `json:"renewed_at"`
-	Renewals  int        `json:"renewals"`
+	Holder           string     `json:"holder"`
+	GrantedAt        time.Time  `json:"granted_at"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	ClaimedAt        *time.Time `json:"claimed_at"`
+	RenewedAt        *time.Time `json:"renewed_at"`
+	Renewals         int        `json:"renewals"`
+	ActivityRenewals int        `json:"activity_renewals,omitempty"`
+	ManualRenewals   int        `json:"manual_renewals,omitempty"`
+	LastRenewal      string     `json:"last_renewal,omitempty"`
 	// Attempt binds observed activity to the lease incarnation. BudgetEndsAt
 	// is persisted so all renewal callers enforce the same absolute bound.
 	Attempt      int       `json:"attempt"`
