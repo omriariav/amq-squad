@@ -107,7 +107,7 @@ omriariav/amq-squad`. The skills (`amq-squad:wizard`, `amq-squad:cli`,
 
 `amq-squad doctor` probes all of these and names what is missing:
 
-- `amq` 0.116.2 or later on `PATH` (and `amq-remote`, `amq-owner-sign` at the
+- `amq` 0.140.0 or later on `PATH` (and `amq-remote`, `amq-owner-sign` at the
   same release when installed); `amq-squad doctor` refuses an older one
 - Claude Code (`claude`) for Claude seats, with the owner's pin and token file
   (below)
@@ -117,15 +117,15 @@ omriariav/amq-squad`. The skills (`amq-squad:wizard`, `amq-squad:cli`,
   `ollama` for local pi models
 - `tmux`: AMQ creates each seat as a tmux pane
 - `gh`, pinned in the registry, for the harness's PRs and HTTPS pushes
-- macOS on Apple silicon (see "Platforms" below); Go 1.25+ to build
+- macOS on Apple silicon (see "Platforms" below); Go 1.26.11+ to build
 - `pandoc` 3.11 only to regenerate or check `README.html` and `docs/skills.html`
 
-AMQ 0.116.2 is the minimum supported release: it is the AMQ module 3.0 links,
-and every 3.0 path needs its launch adapters (pi seats through the pi adapter,
+AMQ 0.140.0 is the minimum supported release: it is the AMQ module this build
+links, and every path needs its launch adapters (pi seats through the pi adapter,
 the Codex sandbox pins in the launch request) and its mailbox. `amq-squad
 doctor` refuses an installed `amq`, `amq-remote` or `amq-owner-sign` below it
 and prints the upgrade line (`amq upgrade --all -y`, or `brew upgrade
-avivsinai/tap/amq`). CI runs the real-AMQ lane at the pinned v0.116.2, which
+avivsinai/tap/amq`). CI runs the real-AMQ lane at the pinned v0.140.0, which
 is required, and at `latest` as a non-blocking canary; a canary failure reads
 as upstream drift, not as a support claim.
 

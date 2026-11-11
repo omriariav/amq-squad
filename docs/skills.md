@@ -75,9 +75,9 @@ Install the marketplace once; the skills are then discovered automatically.
 
 The primary skills are user-invocable and require the `amq-squad` binary on
 `PATH` (`go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.2.0-rc.2`) and
-`amq` 0.116.2 or later. AMQ 0.116.2 is the minimum supported release for 3.0;
+`amq` 0.140.0 or later. AMQ 0.140.0 is the minimum supported release for this build;
 `amq-squad doctor` refuses an older `amq`, `amq-remote` or `amq-owner-sign`. The
-real-AMQ lane runs at the pinned v0.116.2 (required) and at latest as a
+real-AMQ lane runs at the pinned v0.140.0 (required) and at latest as a
 non-blocking canary, which is not a support claim.
 
 The workflows are equivalent across the two marketplaces; the platform metadata

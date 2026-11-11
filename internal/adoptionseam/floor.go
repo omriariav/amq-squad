@@ -15,10 +15,11 @@ import (
 const AdoptionFloorAMQVersion = "v0.74.1"
 
 // PinnedAMQModule is the agent-message-queue module version this build links
-// (the go.mod pin; brief 5-amq-A moved it from v0.107.0 to v0.116.2). The
-// adoption floor above stays a floor: the pin must be at or above it, and
+// (the go.mod pin; brief 5-amq-A moved it from v0.107.0 to v0.116.2, and the
+// 3.3.0 pin move moved it from v0.116.2 to v0.140.0). The adoption floor above
+// stays a floor: the pin must be at or above it, and
 // TestLinkedAMQModuleIsThePin proves the linked module is this version.
-const PinnedAMQModule = "v0.116.2"
+const PinnedAMQModule = "v0.140.0"
 
 // AdoptionFloorContractSemver is the minimum launchapi contract semver this
 // backend requires. Deliberately distinct from internal/cli's
@@ -68,8 +69,10 @@ const AdoptionFloorContractSemver = ">=0.61.1"
 // Not required here: on_live, placement, executable_identity, wrapper,
 // lifecycle_v1, plan_only_commands_v1 — real features on v0.70.0 through
 // v0.75.0 (unchanged, see AdoptionFloorContractSemver's doc comment), but
-// nothing in this package calls the paths that need them yet. Extending
-// this list is a one-line change when that changes.
+// nothing in this package calls the paths that need them yet. AMQ v0.139.0
+// removed lifecycle_v1; this list was verified against v0.140.0's advertised
+// compatibility surface. Extending this list is a one-line change when that
+// changes.
 var AdoptionFloorFeatures = []string{
 	launchapi.FeatureBaseRoot,
 	launchapi.FeatureInitialInput,
