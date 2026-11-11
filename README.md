@@ -26,7 +26,7 @@ The model in five lines:
 
 ## Contents
 
-- [What's new in 3.2.0-rc.1](#whats-new-in-320-rc1)
+- [What's new in 3.2.0-rc.2](#whats-new-in-320-rc2)
 - [Install](#install)
 - [Requirements](#requirements)
 - [First run](#first-run)
@@ -38,31 +38,41 @@ The model in five lines:
 - [Upgrading from v2](#upgrading-from-v2)
 - [Where the plan and evidence live](#where-the-plan-and-evidence-live)
 
-## What's new in 3.2.0-rc.1
+## What's new in 3.2.0-rc.2
 
-3.2.0-rc.1 is the first candidate of 3.2, which fixes how the squad keeps
+3.2.0-rc.2 is the second candidate of 3.2, which fixes how the squad keeps
 working on its own: [docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md).
-In short:
+In short, with what rc.1 already had:
 
 - A seat's lease is renewed from its own work, never past its task's budget,
   with no `task renew` call needed. The budget is squad.yaml's `task_budget`
   (90 minutes by default) or `task add --budget`; the lead lengthens it with
-  `task extend ID --by DURATION`.
+  `task extend ID --by DURATION`. A lease from 3.1.2 gets a budget end at
+  least one lease after the restart; its own expiry is unchanged.
 - Codex seats need one owner step: after installing, launch one Codex seat,
   run Codex's `/hooks` and trust the amq-squad activity entries at the
   installed path. Nothing writes that trust for you. Until then doctor warns
   and a Codex seat renews by hand.
 - A commit ledger refused as tampered is copied to a quarantine directory
-  before anything else writes, so its evidence survives the next writer.
-- The merge train waits for GitHub's branch update, which answers with the old
-  head, and proves the new head (first parent and patch-id) before it binds
-  it. The lead's `merge-train rebind --pr N --from <sha> --to <sha>`
-  re-admits a head the train refused.
-- Until a 3.2.x fix, the lead lands a PR through the train only when its task
-  has no live lease and no queued commit result.
-- Rolling back to 3.1.2 works; a 3.1.2 rewrite of a task drops its budget
-  fields. The notes have the details, rc.1's known limits and what waits for
-  rc.2.
+  before anything else writes. A tamper alarm holds that seat once per alarm,
+  and the lead recovers the exact slot with `amq-squad scheduler recover`.
+- Commit and exits ledgers seal their exact bytes and their heads, and
+  migrate on their next write. After that, v3.1.2 and v3.2.0-rc.1 report the
+  ledgers as tampered, and `up --binary` refuses to install either.
+- A cancelled seat is closed, its work archived and its worktree cleaned
+  before the slot is released; `amq-squad seat clean` cleans a stopped seat.
+- With a live scheduler, `task claim` takes the scheduler's offer, and a
+  claim checks the seat's serving pool.
+- The lead's screen cuts every line to the pane's width. A seat handle with a
+  control character is refused, and status and the task listings replace
+  control characters.
+- The merge train waits for GitHub's branch update, asks the owner only
+  actionable questions, reads a diff with escape bytes, and skips legacy gate
+  records. Until a 3.2.x fix, the lead lands a PR through the train only when
+  its task has no live lease and no queued commit result.
+- The notes list rc.2's known limits, among them a Buzz answer that may need
+  sending again; what waits is in the 3.2.x list of
+  [docs/v3-followups.md](docs/v3-followups.md).
 
 Earlier releases are in their notes, listed under
 [Where the plan and evidence live](#where-the-plan-and-evidence-live).
@@ -70,7 +80,7 @@ Earlier releases are in their notes, listed under
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.2.0-rc.1
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.2.0-rc.2
 amq-squad version
 ```
 
