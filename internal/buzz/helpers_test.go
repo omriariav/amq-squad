@@ -211,6 +211,7 @@ type ownerDMSender struct {
 	channel     string
 	body        string
 	lastCreated int64
+	now         func() time.Time
 }
 
 // send publishes a fresh owner event. Nostr event ids include CreatedAt only
@@ -218,16 +219,21 @@ type ownerDMSender struct {
 // second rather than accidentally publishing the same id twice.
 func (s *ownerDMSender) send(ctx context.Context, t *testing.T, content, thread string) string {
 	t.Helper()
-	created := time.Now().Unix()
+	now := s.now
+	if now == nil {
+		now = time.Now
+	}
+	at := now()
+	created := at.Unix()
 	if created <= s.lastCreated {
-		timer := time.NewTimer(time.Until(time.Unix(s.lastCreated+1, 0)))
+		timer := time.NewTimer(time.Second - time.Duration(at.Nanosecond()))
 		defer timer.Stop()
 		select {
 		case <-timer.C:
 		case <-ctx.Done():
 			t.Fatalf("owner resend did not reach a fresh event second: %v", context.Cause(ctx))
 		}
-		created = time.Now().Unix()
+		created = max(now().Unix(), s.lastCreated+1)
 	}
 	tags := [][]string{{"h", s.channel}, {"p", s.body}}
 	if thread != "" {
