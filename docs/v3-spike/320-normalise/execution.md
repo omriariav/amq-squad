@@ -114,3 +114,14 @@ stamp alone therefore ends no attempt on the first scheduler tick. The lead
 gets `task_budget_warning` and at least one lease in which to run `task extend`
 for work that should keep running. An attempt still ends at the stamped budget
 end when it is not extended, and an already-expired own lease is not revived.
+
+## History
+
+Recorded by the rc.2 release PR from the lead's gate of #932 (the plan
+reviewer's ruling, 2026-11-10). The revert "7, write guard" above does not
+compile as written (`changed` unused); the lead's run used `_ = changed` and
+row 7 fails at `normalise320_tick_test.go:107`. The row 3 revert of the brief
+(drop the `IsZero` guard) does not fail row 3 (the attempt-bound skip fires
+first); the guard is pinned on row 7. The rc.2 notes do not use this note's
+"Release note" words: they carry the reviewer's corrected words for the two
+legacy-lease passages.
