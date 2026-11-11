@@ -1,0 +1,13 @@
+{"at":"2026-11-11T13:53:54.388896Z","kind":"scheduler_stopped"}
+{"at":"2026-11-11T13:53:57.611166Z","kind":"ledger_layout_migrated","ledger_kind":"exits","seq":409881,"reason":"legacy exits ledger migrated to raw-bytes-v1 at link 409881"}
+{"at":"2026-11-11T13:53:57.635341Z","kind":"seat_adopted","seat":"dev","pool":"codex:gpt-5.6-terra:medium","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-11T13:53:57.639076Z","kind":"seat_adopted","seat":"reviewer","pool":"codex:gpt-5.6-sol:high","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-11T13:53:57.642097Z","kind":"scheduler_started","reason":"incarnation 6aaf2fd93ca7"}
+{"at":"2026-11-11T13:53:59.109212Z","kind":"seat_clean_superseded","task_id":"t11","seat":"dev","reason":"seat dev holds a later lease (t7); the queued item for t11 attempt 1 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.113292Z","kind":"seat_clean_superseded","task_id":"t22","seat":"reviewer","reason":"seat reviewer holds a later lease (t24); the queued item for t22 attempt 1 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.117282Z","kind":"seat_clean_superseded","task_id":"t24","seat":"reviewer","reason":"seat reviewer holds a later lease (t26); the queued item for t24 attempt 1 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.120273Z","kind":"seat_clean_superseded","task_id":"t54","seat":"reviewer","reason":"seat reviewer holds a later lease (t55); the queued item for t54 attempt 1 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.12337Z","kind":"seat_clean_superseded","task_id":"t58","seat":"reviewer","reason":"seat reviewer holds a later lease (t59); the queued item for t58 attempt 1 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.126255Z","kind":"seat_clean_superseded","task_id":"t64","seat":"dev","reason":"seat dev holds a later lease (t70); the queued item for t64 attempt 2 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.129387Z","kind":"roster_incomplete","seat":"dev2","reason":"adopted dev,reviewer; no launch: AMQ refuses a fresh seat into the present binding (binding_present_without_resumable_conversation), so a task for a missing seat's pool blocks for the lead's relaunch (amq-squad scheduler relaunch)"}
+{"at":"2026-11-11T13:53:59.133623Z","kind":"decision_socket_open","reason":"/Users/omri/code/amq-squad/.agent-mail/v31/extensions/amq-squad/launch/scheduler-decide.sock"}

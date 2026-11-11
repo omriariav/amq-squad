@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "kind": "scheduler_relaunch",
+  "data": {
+    "ok": false,
+    "code": "not_lead",
+    "detail": "pid 18008 does not descend from the lead cto's recorded incarnation"
+  }
+}
