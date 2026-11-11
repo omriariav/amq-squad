@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
@@ -83,10 +84,12 @@ var (
 func reservedDir(dir string) string { return filepath.Join(dir, "reserved") }
 
 // SeatHandle is the one normalizer of a seat handle for the marker and the
-// lease (the fifth round's (f)): trimmed, non-empty, one path component.
+// lease (the fifth round's (f)): trimmed, valid UTF-8, free of control
+// characters, non-empty, and one path component.
 func SeatHandle(h string) (string, error) {
 	h = strings.TrimSpace(h)
-	if h == "" || h == "." || h == ".." || strings.ContainsAny(h, "/\\\x00") {
+	if h == "" || h == "." || h == ".." || strings.ContainsAny(h, "/\\\x00") ||
+		strings.ContainsFunc(h, func(r rune) bool { return r < 0x20 || r >= 0x7f && r <= 0x9f }) || !utf8.ValidString(h) {
 		return "", fmt.Errorf("seat handle %q is not one plain name", h)
 	}
 	return h, nil
