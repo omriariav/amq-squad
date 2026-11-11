@@ -112,7 +112,9 @@ func buildStatusContract(root, project, version string, now time.Time) status.St
 		Now: now, Gates: gates, PIDAlive: statusPIDAlive,
 	})
 	in.Warnings = append(warnings, in.Warnings...)
-	return withLaunchFailures(status.Build(in), in.Scheduler.LaunchFailures)
+	result := withLaunchFailures(status.Build(in), in.Scheduler.LaunchFailures)
+	status.Plain(&result)
+	return result
 }
 
 func writeStatusContractTable(out io.Writer, st status.Status) error {
