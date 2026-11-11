@@ -106,45 +106,74 @@ func Drift(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repo
 // train records each clearing in its audit log beside the alert's own
 // entry, so the log keeps both while status stops showing the alert.
 func DriftResolved(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repository string, now time.Time) (alerts, resolved []Alert, err error) {
+	run, err := DriftNoted(ctx, l, verify, root, repository, now)
+	for _, r := range run.Resolved {
+		resolved = append(resolved, r.Alert)
+	}
+	return run.Alerts, resolved, err
+}
+
+// DriftRun is one drift read: the alerts it raised, the earlier alerts it
+// resolved, and the one line of each legacy gate record it skipped.
+type DriftRun struct {
+	Alerts   []Alert
+	Resolved []ResolvedAlert
+	Notes    []string
+}
+
+// ResolvedAlert is an earlier alert a run removed, as it was written, and
+// why in words (the end of the train's alert_cleared entry).
+type ResolvedAlert struct {
+	Alert
+	Why string
+}
+
+// DriftNoted is DriftResolved that also returns the run's notes and each
+// resolved alert's reason (brief 320-train-escape-legacy): Drift and
+// DriftResolved keep their signatures and return the same alerts.
+func DriftNoted(ctx context.Context, l ReleaseLister, verify GateVerifier, root, repository string, now time.Time) (run DriftRun, err error) {
 	tags, err := l.Tags(ctx, repository)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list tags: %w", err)
+		return run, fmt.Errorf("list tags: %w", err)
 	}
 	releases, err := l.Releases(ctx, repository)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list releases: %w", err)
+		return run, fmt.Errorf("list releases: %w", err)
 	}
 	dir := AlertsDir(root)
 	bpath := filepath.Join(dir, "baseline-"+strings.ReplaceAll(repository, "/", "--")+".json")
 	raw, err := os.ReadFile(bpath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil, writeOnceJSON(bpath, baseline{Repository: repository, At: now.UTC().Format(time.RFC3339), Tags: tags, Releases: releases})
+		return run, writeOnceJSON(bpath, baseline{Repository: repository, At: now.UTC().Format(time.RFC3339), Tags: tags, Releases: releases})
 	}
 	if err != nil {
-		return nil, nil, err
+		return run, err
 	}
 	base, err := readBaseline(bpath, raw, releases)
 	if err != nil {
-		return nil, nil, err
+		return run, err
 	}
 	alert := func(a Alert) error {
 		if err := writeOnceJSON(filepath.Join(dir, a.ID+".json"), a); err != nil && !errors.Is(err, fs.ErrExist) {
 			return err
 		}
-		alerts = append(alerts, a)
+		run.Alerts = append(run.Alerts, a)
 		return nil
 	}
-	accepted, unreadable := sessionTargets(root, verify)
-	for _, u := range unreadable {
+	read := sessionTargets(root, verify)
+	accepted := read.accepted
+	run.Notes = read.notes
+	for _, u := range read.bad {
 		sum := sha256.Sum256([]byte(u.path))
 		if err := alert(Alert{ID: "gate-store-unreadable-" + hex.EncodeToString(sum[:6]), Repository: repository, Kind: "gate_store_unreadable", Name: u.path,
 			// brief 3.1.1-3 item 4: what happened in words above the rule;
 			// the record's path and error (which can carry long hex ids)
 			// below it
 			At: now.UTC().Format(time.RFC3339), Detail: fmt.Sprintf("a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line\n\n%s\nthe gate store %s could not be read (%v)", gatestore.Rule, u.path, u.err)}); err != nil {
-			return alerts, resolved, err
+			return run, err
 		}
 	}
+	run.Resolved = clearStoreAlerts(dir, read)
 	raised, covered := map[string]bool{}, map[string]bool{}
 	raise := func(kind, name, sha, object string, own []string, other ...string) error {
 		sum := sha256.Sum256([]byte(repository + "\x00" + kind + "\x00" + name + "\x00" + sha))
@@ -180,7 +209,7 @@ func DriftResolved(ctx context.Context, l ReleaseLister, verify GateVerifier, ro
 				continue // no earlier alert to resolve
 			}
 			if os.Remove(path) == nil {
-				resolved = append(resolved, a)
+				run.Resolved = append(run.Resolved, ResolvedAlert{Alert: a, Why: "a verified owner gate now covers it"})
 			}
 		}
 	}()
@@ -192,7 +221,7 @@ func DriftResolved(ctx context.Context, l ReleaseLister, verify GateVerifier, ro
 		// #854): a seat's gated `git tag NAME` or tag push names none, so it
 		// cannot say which commit the owner meant
 		if err := raise("tag", t.Name, t.SHA, "tag "+t.Name+"@"+t.SHA, nil, gatetarget.ReleaseTag(repository, t.Name, t.SHA)); err != nil {
-			return alerts, resolved, err
+			return run, err
 		}
 	}
 	for _, r := range releases {
@@ -201,10 +230,37 @@ func DriftResolved(ctx context.Context, l ReleaseLister, verify GateVerifier, ro
 		}
 		own := []string{gatetarget.Command("gh release create", r.Tag)}
 		if err := raise("release", r.Tag, "", "release "+strconv.FormatInt(r.ID, 10), own, gatetarget.ReleaseCreate(repository, r.Tag)); err != nil {
-			return alerts, resolved, err
+			return run, err
 		}
 	}
-	return alerts, resolved, nil
+	return run, nil
+}
+
+// clearStoreAlerts removes the gate_store_unreadable alerts on disk whose
+// path this run read, and returns them as they were written (brief
+// 320-train-escape-legacy, L4). The condition is positive (the plan
+// reviewer's bound): an alert goes only when this run loaded the record it
+// names, skipped that record as legacy, or listed the gates directory it
+// names. One whose path this run did not reach (the record absent, its
+// session directory missing, the sessions' parent unlistable) stays where it
+// is, and a path this run flagged again (read.bad) is never among the
+// reached.
+func clearStoreAlerts(dir string, read gateRead) (resolved []ResolvedAlert) {
+	paths, _ := filepath.Glob(filepath.Join(dir, "gate-store-unreadable-*.json"))
+	for _, path := range paths {
+		var a Alert
+		if raw, err := os.ReadFile(path); err != nil || json.Unmarshal(raw, &a) != nil || a.Kind != "gate_store_unreadable" {
+			continue
+		}
+		why, ok := read.reached[a.Name]
+		if !ok {
+			continue
+		}
+		if os.Remove(path) == nil {
+			resolved = append(resolved, ResolvedAlert{Alert: a, Why: why})
+		}
+	}
+	return resolved
 }
 
 // acceptedGate is a verified release gate: the key its coverage binds under
@@ -219,6 +275,18 @@ type unreadableStore struct {
 	err  error
 }
 
+// gateRead is one pass over the sessions' gate stores: the accepted release
+// gates by target, the stores and records that could not be read, the one
+// line of each legacy record skipped (gatestore.LegacyLine), and every path
+// the pass read (a record it loaded or skipped as legacy, a gates directory
+// it listed) with the words of that read.
+type gateRead struct {
+	accepted map[string][]acceptedGate
+	bad      []unreadableStore
+	notes    []string
+	reached  map[string]string
+}
+
 // sessionTargets maps the targets of every verified tag and release gate in
 // the gate stores of the sessions under the AMQ root (root's parent) to the
 // gates that accept them. The sessions are the root's parent's directory
@@ -226,14 +294,17 @@ type unreadableStore struct {
 // followed); one with no gate store is skipped. A record counts only when
 // it was raised in the session whose store holds it (its squad identity)
 // and verify accepts it. A store whose gate list cannot be read, or a record
-// in it that does not load, is returned as unreadable.
-func sessionTargets(root string, verify GateVerifier) (map[string][]acceptedGate, []unreadableStore) {
+// in it that does not load, is returned as unreadable; a record of a kind
+// the catalog no longer carries is skipped with its one line instead.
+func sessionTargets(root string, verify GateVerifier) gateRead {
 	out := map[string][]acceptedGate{}
 	var bad []unreadableStore
+	var notes []string
+	reached := map[string]string{}
 	parent := filepath.Dir(filepath.Clean(root))
 	entries, err := os.ReadDir(parent)
 	if err != nil {
-		return out, []unreadableStore{{path: parent, err: err}}
+		return gateRead{accepted: out, bad: []unreadableStore{{path: parent, err: err}}}
 	}
 	ownName := filepath.Base(filepath.Clean(root))
 	for _, e := range entries {
@@ -254,15 +325,26 @@ func sessionTargets(root string, verify GateVerifier) (map[string][]acceptedGate
 			bad = append(bad, unreadableStore{path: store.Dir("gates"), err: err})
 			continue
 		}
+		reached[store.Dir("gates")] = "the gate store can be listed again"
 		own := e.Name() == ownName
 		for _, id := range ids {
 			rec, err := store.Load(id)
 			if err != nil {
+				// brief 31-1's rule, as gate status and status apply it
+				// (brief 320-train-escape-legacy, L1): a record of a kind
+				// the catalog no longer carries is skipped with one line,
+				// never an alert
+				if kind, legacy := store.Legacy(id); legacy {
+					notes = append(notes, gatestore.LegacyLine(id, kind))
+					reached[filepath.Join(store.Dir("gates"), id+".json")] = "the record is a legacy kind and is skipped"
+					continue
+				}
 				// a record that does not load is named, never skipped
 				// silently (Codex P2 4 on #854)
 				bad = append(bad, unreadableStore{path: filepath.Join(store.Dir("gates"), id+".json"), err: err})
 				continue
 			}
+			reached[filepath.Join(store.Dir("gates"), id+".json")] = "the record now loads"
 			if gatetarget.Class(rec.Class) != gatetarget.ClassRelease || !SameSquad(rec, store.Squad()) {
 				continue
 			}
@@ -276,7 +358,7 @@ func sessionTargets(root string, verify GateVerifier) (map[string][]acceptedGate
 			out[rec.Target] = append(out[rec.Target], acceptedGate{bindKey: key, own: own})
 		}
 	}
-	return out, bad
+	return gateRead{accepted: out, bad: bad, notes: notes, reached: reached}
 }
 
 // bindCovered binds an accepted gate to the first object it covers and

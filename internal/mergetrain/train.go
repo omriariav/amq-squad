@@ -219,6 +219,7 @@ type Result struct {
 	Digest        string          `json:"digest"`
 	Digests       []string        `json:"digests,omitempty"` // every digest written, in order
 	Alerts        []Alert         `json:"alerts,omitempty"`  // ungated tags and releases (owner alerts)
+	Notes         []string        `json:"notes,omitempty"`   // one line per legacy gate record the drift reader skipped
 	PRs           []PlanPR        `json:"prs"`
 	Stopped       string          `json:"stopped,omitempty"`
 	WallMS        int64           `json:"wall_ms"`
@@ -288,14 +289,20 @@ func (t *Train) Run(ctx context.Context, req Request) (res Result, err error) {
 		return res, err
 	}
 	if l, ok := t.Forge.(ReleaseLister); ok && t.ReleaseGates != nil && t.Root != "" {
-		alerts, resolved, derr := DriftResolved(ctx, l, t.VerifyGate, t.Root, req.Repository, t.now())
-		res.Alerts = alerts
-		for _, a := range alerts {
+		drift, derr := DriftNoted(ctx, l, t.VerifyGate, t.Root, req.Repository, t.now())
+		res.Alerts, res.Notes = drift.Alerts, drift.Notes
+		for _, a := range drift.Alerts {
 			_ = entry(Entry{Kind: "alert", Detail: a.Detail, GateID: a.ID})
 		}
-		for _, a := range resolved {
+		for _, n := range drift.Notes {
+			// a skipped legacy gate record: a line of this run, never a
+			// stored alert (brief 320-train-escape-legacy, L3)
+			_ = entry(Entry{Kind: "note", Detail: n})
+		}
+		for _, a := range drift.Resolved {
 			// the alert's entry stays in the log; its clearing is recorded
-			_ = entry(Entry{Kind: "alert_cleared", Detail: a.Detail + "; a verified owner gate now covers it", GateID: a.ID})
+			// in the words of its own cause (L4)
+			_ = entry(Entry{Kind: "alert_cleared", Detail: a.Detail + "; " + a.Why, GateID: a.ID})
 		}
 		if errors.Is(derr, ErrBaselineInvalid) {
 			res.Stopped = derr.Error()
