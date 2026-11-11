@@ -91,6 +91,12 @@ function sec(ms: number | null | undefined): string {
 	return typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "-";
 }
 
+// Status text can contain values a seat wrote, including a path in an error,
+// a handle, or a file name. The screen and words.ts emit no escape sequences
+// of their own, so replace controls at both exits where a line reaches the
+// terminal.
+const controlChars = /[\u0000-\u001f\u007f-\u009f]/g;
+
 function short(s: string, n = 120): string {
 	const one = (s ?? "").replace(/\s+/g, " ").trim();
 	return one.length > n ? one.slice(0, n - 3) + "..." : one;
@@ -491,7 +497,7 @@ export class Screen {
 		if (!ui) return;
 		try {
 			if (!this.last) {
-				ui.setWidget(SCREEN_KEY, this.expanded ? [`amq-squad: ${this.error || "reading the team's status"}`, commandsLine("team")] : undefined, { placement: "belowEditor" });
+				ui.setWidget(SCREEN_KEY, this.expanded ? [`amq-squad: ${this.error.replace(controlChars, " ") || "reading the team's status"}`, commandsLine("team")] : undefined, { placement: "belowEditor" });
 				return;
 			}
 			if (this.expanded) {
@@ -500,7 +506,7 @@ export class Screen {
 					render: (width: number) => {
 						const now = new Date();
 						const rows = Math.max(0, Math.floor(tui.terminal.rows));
-						const fitWidth = (lines: string[]): string[] => lines.map((line) => truncateToWidth(line, width));
+						const fitWidth = (lines: string[]): string[] => lines.map((line) => truncateToWidth(line.replace(controlChars, " "), width));
 						const draw = (cap: number): string[] => {
 							const lines = this.drawScreen(status, now, this.lastKey, this.details, cap);
 							if (this.error) lines.splice(lines.length - 1, 0, `  (the screen may be stale: ${this.error})`);
