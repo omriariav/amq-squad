@@ -113,7 +113,9 @@ paragraph above.
 their cells. `holds` means both a seam and
 an existing test assert the statement; `does not hold` names the current
 contrary behavior; `not determinable` means the channel or assertion has no
-seam and test in this repository.
+seam and test in this repository. `holds, narrowed` is a fourth value, added
+with the corrections below: the seam exists; the test covers the part the
+cell names and no test covers the rest.
 
 | # | Statement | Today | Today's seam | Nearest existing test | Brief |
 | --- | --- | --- | --- | --- | --- |
@@ -128,7 +130,7 @@ seam and test in this repository.
 | 9 | Nothing typed in the lead's chat binds a gate (beyond /confirm for a team plan). | holds | `/answer` writes no answer; `/confirm` is a registered command accepted only from the spawned pi (`pi/extensions/lib/keys.ts:21-28`, `internal/cli/lead_start.go:427-445`). | `pi/test/keys.test.ts:317-340` asserts the answer key, for each of five actions across the four typed gates, runs gate status only and writes no answer. `internal/cli/lead_start_test.go:514-563` asserts a model-shell child cannot use the TUI door and the spawned pi can. | A3 |
 | 10 | A yes relayed by the Grok bot binds nothing. | not determinable | No Grok bot face or gate seam exists (`docs/v3-followups.md:615-623`); the scoped non-test code search above had 0 matches. | none found; same 0-match search. | A5 |
 | 11 | Every binding answer is the owner's signed Buzz reply, fetched by id and checked against the pinned key. | holds | Fetch and owner-event checks (`internal/buzz/inbound.go:224-265`, `internal/buzz/inbound.go:282-300`). | `internal/buzz/handler_test.go:172-247` asserts the handler acts only on the event fetched by id, never on the delivered text. `internal/gateverify/core_test.go:23-76` asserts owner success and wrong key, body key, forged signature and replay refusals on the raw event it is given. | A1, A2, A4, B3 |
-| 12 | No model output is an input of the binding decision. | holds, narrowed: model output is never accepted as the owner's answer (`internal/buzz/relay.go:646-683`, `internal/gateverify/verify.go:130-148`); the gate's id, action, target and window are chosen by the caller that raised it, and a programmatic raiser also supplies facts (`internal/cli/gate.go:138-139`, `internal/cli/gate.go:172`; `internal/cli/gate_store.go:99`); the harness renders the question text from those fields (`internal/gatestore/record.go:167-181`, `internal/gatestore/plain.go:161-172`), and `Verify` consumes the record and that text | Relay output is held back by shape; the core independently checks the signed owner event (`internal/buzz/relay.go:646-683`, `internal/gateverify/verify.go:130-148`). The question must carry the record's text (`internal/gateverify/verify.go:219-237`). | `internal/buzz/phone_test.go:250-300` and `internal/gateverify/core_test.go:34-49` assert the two layers. | A3, A5, B3 |
+| 12 | No model output is an input of the binding decision. | holds, narrowed: model output is never accepted as the owner's answer (`internal/buzz/relay.go:646-683`, `internal/gateverify/verify.go:130-148`); the gate's id, action, target and window are chosen by the caller that raised it, and a programmatic raiser also supplies facts (`internal/cli/gate.go:138-139`, `internal/cli/gate.go:172`; `internal/cli/gate_store.go:99`); the harness renders the question text from those fields together with the raiser's handle and the squad identity (`internal/gatestore/record.go:167-181`, `internal/gatestore/plain.go:161-172`), and `Verify` consumes the record and that text | Relay output is held back by shape; the core independently checks the signed owner event (`internal/buzz/relay.go:646-683`, `internal/gateverify/verify.go:130-148`). The question must carry the record's text (`internal/gateverify/verify.go:219-237`). | `internal/buzz/phone_test.go:250-300` and `internal/gateverify/core_test.go:34-49` assert the two layers. | A3, A5, B3 |
 
 No proposed row: D1 through D4's binding properties are represented by rows
 1 through 12. The free-conversation half of D1 is channel behavior, not an
@@ -336,8 +338,9 @@ is narrowed (item 5); no verdict on rows 1 to 7 and 9 to 11 changed.
 1. Row 12's Today cell said `holds` alone. That was broader than the code
    establishes: the caller that raises a gate chooses its id, action, target
    and window, a programmatic raiser also supplies facts, and the harness
-   renders from them the record and the question text `Verify` consumes. The
-   cell is narrowed; the statement's words are unchanged. Every A and B
+   renders from them, together with the raiser's handle and the squad
+   identity, the record and the question text `Verify` consumes. The cell is
+   narrowed; the statement's words are unchanged. Every A and B
    brief that carries row 12 carries the narrowed cell with it.
 2. The paragraph at :84-93 said "All seven ... and all thirteen ... were
    read. No path was found". The two searches behind it do not reach the
