@@ -182,10 +182,14 @@ was found using that code through the `task block` verb.
 Eleven names that `internal/routing/refusal.go:18-71` also classifies are not
 rows of the table above, because no product code writes any of them to the
 store as a block code. That is a statement about the product's own writers,
-not about the verb: `task block` refuses only the reason `ledger_tampered`
-(`internal/cli/task.go:634-636`, the set at `:768-770`) and the store refuses a
-reason only when it is empty (`internal/task/lease.go:815-816`), so a caller can
-still type any of the eleven as `task block --reason`. What each is:
+not about the verb: `ledger_tampered` is the only reason `task block` reserves
+(`internal/cli/task.go:634-636`, the set at `:768-770`). The store's tests of a
+reason are that it is not empty (`internal/task/lease.go:815-816`) and, for
+`widen_requested` only, that it comes with valid paths (`:848-855`) from the
+holder of a live attempt (`:869-870`); paths with any other reason are refused
+(`:857-858`). None of the eleven is `widen_requested`, so a caller who meets
+the store's state, holder and route tests can still type any of the eleven as
+`task block --reason`. What each is:
 
 | Name | What it is | Where |
 | --- | --- | --- |
@@ -196,7 +200,7 @@ still type any of the eleven as `task block --reason`. What each is:
 | `verifier_start_failed` | a verdict's reason; the block code is `verdict_failed` | declared `internal/seatcommit/verifier.go:65`; the verdict takes the run's reason at :236 and the step refuses with `verdict_failed` at :256-257 |
 | `verifier_timeout` | a verdict's reason; the block code is `verdict_failed` | declared `internal/seatcommit/verifier.go:63`; the same lines |
 | `verifier_output_exceeded` | a verdict's reason; the block code is `verdict_failed` | declared `internal/seatcommit/verifier.go:64`; the same lines |
-| `widen_snapshot_missing` | a widening dry run's refusal, returned in `task widen`'s answer | declared `internal/seatcommit/commit.go:176`; refused at :316, inside the branch at :299 that runs only when the step is given a snapshot attempt. Only `task widen` gives one (`internal/cli/task_widen.go:329`), and `Widen` runs the step as a dry run (`internal/seatcommit/widen.go:148`); a run with a snapshot attempt that is not a dry run is refused `worktree_mismatch` first (`commit.go:149-150`). `widen.go:160-162` copies the dry run's code into the widening's decision, and `task_widen.go:346-377` returns it as the verb's refusal; the only code it writes to the store there is `growth_gate_required` (:361) |
+| `widen_snapshot_missing` | a widening dry run's refusal, returned in `task widen`'s answer | declared `internal/seatcommit/commit.go:176`; refused at :316, inside the branch at :299 that runs only when the step is given a snapshot attempt. Only `task widen` gives one (`internal/cli/task_widen.go:329`), and `CheckWiden` runs the step as a dry run (`internal/seatcommit/widen.go:148`); a run with a snapshot attempt that is not a dry run is refused `worktree_mismatch` first (`commit.go:149-150`). `widen.go:160-162` copies the dry run's code into the widening's decision, and `task_widen.go:346-377` returns it as the verb's refusal; the only code it writes to the store there is `growth_gate_required` (:361) |
 | `widen_snapshot_attempt_mismatch` | the same | declared `internal/seatcommit/commit.go:177`; refused at :314; the same path |
 | `widen_invalid` | a widening's own refusal, returned in `task widen`'s answer | a literal with no constant (`internal/routing/refusal.go:58`); set on the widening's decision at `internal/seatcommit/widen.go:97`, `:111`, `:123` and `:140`, and on the verb's refusal at `internal/cli/task_widen.go:282`, `:297` and `:303` |
 | `widen_check_failed` | the same | a literal with no constant (`internal/routing/refusal.go:59`); set on the widening's decision at `internal/seatcommit/widen.go:153` and `:161` |
@@ -390,8 +394,12 @@ merge of #959, whose tree equals this round's head.
    `widen_snapshot_*` names and the literals `widen_invalid` and
    `widen_check_failed`; the two `widen_snapshot_*` rows were left in the table
    as dynamic refusal writes; and "none is written to the store as a block
-   code" was said without the verb, which refuses only the reason
-   `ledger_tampered`.
+   code" was said without the verb, which reserves only the reason
+   `ledger_tampered`. Codex's pass on the second commit
+   (4743946de2d8f0b5cdf623a3c134f1b2d1f17766) found two more in its words, and
+   the third commit corrects them: the store's tests of a reason were given as
+   one where `widen_requested` has its own, and `CheckWiden` was called
+   `Widen`.
 3. The decisions-log row names the two readers; the recovery path is a writer.
 4. The phone row: `Mailer.Send` at `route.go:158` and `:189` is an inbound
    delivery, not a phone-bound publish.
