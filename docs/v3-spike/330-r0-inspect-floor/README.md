@@ -218,8 +218,8 @@ reason to delete the kept-dead classifier in this task.
 - The adoption and registry pin constants, launch-verified row, doctor floor,
   and five floor tests moved with the module pin. (corrected, see Corrections)
 - The AMQ v0.140.0 scratch reading was completed. The Claude wake-hold probe
-  was not run because it remains a lead gate requiring a real provider/session,
-  outside this reviewer's local pin verification. (corrected, see Corrections)
+  was not run by the seat; the pin-move note lists it under "Not measured
+  here". (corrected, see Corrections)
 
 ## Not done here
 
@@ -249,3 +249,12 @@ The pin-move note records that run and the compiler-enforced replacement,
 including revert row 5's thirteen undefined removed names:
 `../330-pin-move-1/README.md`.
 
+## Corrections (2026-11-11, pin move 2: the words)
+
+A lead input, landed byte for byte by the seat task of that name.
+
+"Left for the pin move" stands as four bullets where the pin move's brief
+asked for one line. Its last bullet said the Claude wake-hold probe was
+"outside this reviewer's local pin verification", words that named the seat
+by its role in another task. The bullet now says who did not run the probe
+and where the pin-move note lists it.

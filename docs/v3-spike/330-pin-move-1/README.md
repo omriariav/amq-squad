@@ -40,11 +40,13 @@ nothing.
 
 ## 3. Upstream scratch reading and F3 row
 
-AMQ v0.140.0 still declares launchapi contract `0.61.1`. Its Unix
-`platformCompatibilityFeaturesV1` retains every feature used by
-`AdoptionFloorFeatures`; AMQ v0.139.0 removed the unused `lifecycle_v1`
-surface. The comment at `internal/adoptionseam/floor.go:68-72` now records
-that boundary.
+AMQ v0.140.0 still declares launchapi contract `0.61.1`. The six names in
+`AdoptionFloorFeatures` are all negotiable at v0.140.0
+(`TestNegotiateAdoptionFloorSatisfiedByPinnedAMQ` passes at the pin; see
+Corrections); AMQ v0.139.0 removed the unused `lifecycle_v1`
+surface. `internal/adoptionseam/floor.go:68-72` is the old comment on the
+base; on this PR's head the sentence that records that boundary is at
+`:72-74`. (corrected, see Corrections)
 
 The provider-static capability function is byte-identical at both module
 pins:
@@ -69,12 +71,15 @@ Older rows remain.
 
 ## 4. Pin, one floor, and five tests
 
-- `internal/adoptionseam/floor.go:21` and
+- `internal/adoptionseam/floor.go:21` (the constant's line on the base;
+  `:22` on this PR's head) and
   `internal/registry/versions.go:6` move the linked pin to v0.140.0.
 - `internal/cli/doctor.go:27` moves the one installed-binary floor to
   0.140.0.
 - `.github/workflows/ci.yml:99,113` moves the pinned real-AMQ lane, and line
-  142 drops only `TestRealLaunchapiInspectSessionTargetShape`. Before that
+  142 drops one name from the `CLI_TESTS` pattern,
+  `TestRealLaunchapiInspectSessionTargetShape` (the file's diff is three
+  changed lines; see Corrections). Before that
   edit, `grep -rn TestRealLaunchapiInspectSessionTargetShape
   --include='*_test.go' .` exited 1 with no output.
 - The moved expectations are
@@ -105,8 +110,9 @@ deletion, both documented removed-floor greps exited 1 with no output and
 
 ## 6. Five negative reverts
 
-Each revert first changed only its named target and produced a non-empty
-`git diff --stat`. After restoration,
+Each revert was an edit to its named target and produced a non-empty
+`git diff --stat` (the stat's file list was not recorded, so that no other
+file changed is the author's report). After restoration,
 `git diff --binary | shasum -a 256` returned the same baseline each time:
 
 ```text
@@ -197,14 +203,16 @@ $ git diff --binary | shasum -a 256
 | `go test ./internal/cli/ -run '^(TestDoctor|TestExecuteDoctor|TestGeneralOperationFloor|TestReleaseCheck)' -count=1` | exit 0 |
 | `go test ./internal/launchintent/ ./internal/seatlaunch/ -count=1` | exit 0 |
 | `gofmt -l internal/ cmd/` | exit 0, no output |
-| `PYTHONPATH=/private/tmp/amq-squad-reviewer-pyyaml python3 scripts/generate-plugin-skills.py --check` | exit 0, no output; PyYAML 6.0.3 was installed only in that temporary directory |
+| `PYTHONPATH=/private/tmp/amq-squad-reviewer-pyyaml python3 scripts/generate-plugin-skills.py --check` | exit 0, no output; PyYAML 6.0.3 was read from that temporary directory through `PYTHONPATH` (the install command was not recorded) |
 | `python3 scripts/check-release-version.py --print-amq-floor` | exit 0, `0.140.0` |
 | `go run ./scripts/redact-evidence -check docs/v3-spike/330-r0-inspect-floor/ docs/v3-spike/330-pin-move-1/` | exit 0, no output |
 | `git diff --check` | exit 0, no output |
 | `git diff --stat 6a0fe4b1742f5c331d8e3c87d6cf9a6c603a1e41` | exit 0; 26 tracked files, 123 insertions, 263 deletions before this note's final result-row update |
 | `git diff --no-index --stat /dev/null docs/v3-spike/330-pin-move-1/README.md` | expected exit 1; one new file, 225 insertions |
 
-No whole-tree `go test ./...`, `make ci`, or documentation render was run.
+No whole-tree `go test ./...`, `make ci`, or documentation render was run
+by the seat (the author's report; the lead's locked runs on the head are in
+the merge record of #972).
 
 ## 8. Not measured here
 
@@ -223,3 +231,44 @@ The move does not change `CodexDaemonVersion`, `ClaudeNativeVersion`,
 feature floors or their dated citations, or the go-installed `amq-remote`
 `"dev"` handling. Those are separate contracts, not consequences of the
 AMQ module pin.
+
+## Corrections (2026-11-11, pin move 2: the words)
+
+These are lead inputs, landed byte for byte by the seat task of that name.
+Each sentence corrected above carries "(see Corrections)" or is named here.
+
+- Section 3 said AMQ's Unix `platformCompatibilityFeaturesV1` "retains every
+  feature used by `AdoptionFloorFeatures`" with no command under it. The
+  count is six of six: at v0.140.0 `launchapi/compatibility_features_unix.go`
+  lists `launch_intent_v1` (`:9`), `prepare_apply_v1` (`:10`),
+  `managed_tmux_v1` (`:11`), `FeatureInitialInput` (`:13`),
+  `FeatureBaseRoot` (`:15`) and `FeatureCallerContext` (`:17`). The lead's
+  run on
+  `8b86ded84b4b0adbac623309c331adf8037e48ac`:
+  `go test ./internal/adoptionseam/ -run 'TestNegotiateAdoptionFloorSatisfiedByPinnedAMQ' -count=1 -v`,
+  exit 0, one PASS.
+- Section 3 cited `internal/adoptionseam/floor.go:68-72` for the comment that
+  "now records that boundary". Those lines are the old comment on the base
+  (`6a0fe4b1742f5c331d8e3c87d6cf9a6c603a1e41`); on #972's head
+  (`3876ee265401f08adf7f1e6d08d97b5286791c03`) the new sentence is at
+  `:72-74`. Pin move 2 rewrites that comment again, so neither range is its
+  place after this PR.
+- Section 4 cited `internal/adoptionseam/floor.go:21` for the pin constant.
+  That is its line on the base, as this note's heading says; on #972's head
+  the constant is at `:22`.
+- Section 4 said line 142 of `.github/workflows/ci.yml` "drops only"
+  `TestRealLaunchapiInspectSessionTargetShape`. The lead's
+  `git diff 6a0fe4b1742f5c331d8e3c87d6cf9a6c603a1e41 3876ee265401f08adf7f1e6d08d97b5286791c03 -- .github/workflows/ci.yml`
+  shows three changed lines: the comment's `v0.116.2` to `v0.140.0`, the
+  pinned lane's `amq-version` the same way, and the `CLI_TESTS` pattern
+  without that one name.
+- Section 6 said each revert "first changed only its named target". The note
+  records a non-empty `git diff --stat` and no file list, so "only" was the
+  author's report. The lead re-ran the five reverts on #972's head at the
+  gate: five of five exit 1 with this note's first-failure lines.
+- Section 7 said PyYAML 6.0.3 "was installed only in that temporary
+  directory". The note records the `PYTHONPATH` the command ran with and no
+  install command.
+- Section 7 said no whole-tree run was made. That is the seat's report of its
+  own runs; the lead's locked `make ci` and `make docs-html-check` on #972's
+  head both exited 0.

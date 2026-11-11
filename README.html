@@ -411,8 +411,9 @@ href="docs/skills.md">docs/skills.md</a>.</p>
 missing:</p>
 <ul>
 <li><code>amq</code> 0.140.0 or later on <code>PATH</code> (and
-<code>amq-remote</code>, <code>amq-owner-sign</code> at the same release
-when installed); <code>amq-squad doctor</code> refuses an older one</li>
+<code>amq-remote</code>, <code>amq-owner-sign</code>, each 0.140.0 or
+later when installed); <code>amq-squad doctor</code> refuses an older
+one</li>
 <li>Claude Code (<code>claude</code>) for Claude seats, with the owner's
 pin and token file (below)</li>
 <li>Codex (<code>codex</code>) for Codex seats, with each seat
@@ -736,7 +737,13 @@ scheduler launches every seat but the lead at start:</p>
 class="sourceCode sh"><code class="sourceCode bash"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="ex">amq-squad</span> lead <span class="at">--team</span> <span class="at">--dry-run</span></span></code></pre></div>
 <p>(drop <code>--dry-run</code> to start it; a pi-runtime build only).
 <code>scheduler run</code> creates an absent AMQ root and session the
-way <code>up</code> does. The lead takes squad.yaml's AMQ identity (its
+way <code>up</code> does, when the session directory does not exist.
+Started by <code>lead --team</code> it finds the directory the lead has
+already made and creates nothing: in a repository where
+<code>amq coop init</code> has not run, <code>lead --team</code> creates
+no session and the launch is refused
+(<code>base_root_unauthorized</code>); do host step 1 first, or start
+with <code>up</code>. The lead takes squad.yaml's AMQ identity (its
 session root, its <code>lead:</code> handle); an
 <code>AM_ME</code>/<code>AM_ROOT</code> already in the environment must
 match it or it refuses. One lead per root: a second
