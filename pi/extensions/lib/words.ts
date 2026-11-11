@@ -740,6 +740,9 @@ export const TRAIN_KIND_WORDS: Record<string, string> = {
 	protection: "read the branch protection",
 	alert: "raised an alert",
 	alert_cleared: "cleared an alert",
+	// 320-train-escape-legacy: the one line of a legacy gate record the
+	// drift reader skipped (mergetrain train.go, beside a run's alerts)
+	note: "noted a skipped legacy gate record",
 	stop: "stopped",
 	// a merge not recorded because the task's binding no longer matches:
 	// its head, its repository or PR binding with the same SHA, or a merge

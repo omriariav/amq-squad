@@ -1,0 +1,9 @@
+gate-lock: trainfix holds the lock after 2655s
+=== RUN   TestProbeDoctorOnALegacyGateRecord
+    doctor_probe_test.go:59: run 1: status=ok detail="every tag and release since the baseline has an accepted owner gate" on disk=[]
+    doctor_probe_test.go:59: run 2: status=fail detail="1 without an accepted owner gate (owner alert raised): gate_store_unreadable <base>/v31/extensions/amq-squad/gates/clear-0a227ca8d88dc97c65c540a4d0fa18a7.json" on disk=[gate_store_unreadable gate-store-unreadable-b44fc04f83a6]
+    doctor_probe_test.go:59: run 3: status=fail detail="1 without an accepted owner gate (owner alert raised): gate_store_unreadable <base>/v31/extensions/amq-squad/gates/clear-0a227ca8d88dc97c65c540a4d0fa18a7.json" on disk=[gate_store_unreadable gate-store-unreadable-b44fc04f83a6]
+--- PASS: TestProbeDoctorOnALegacyGateRecord (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.449s
+exit 0

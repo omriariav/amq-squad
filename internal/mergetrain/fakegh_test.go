@@ -86,6 +86,11 @@ type fakeState struct {
 	// a row can assert the request was journaled before the mutation.
 	AuditPath       string   `json:"audit_path,omitempty"`
 	AuditAtMutation []string `json:"audit_at_mutation,omitempty"`
+	// OldGH is a gh older than --allow-escape-sequences (brief
+	// 320-train-escape-legacy, E3): any call carrying the flag answers
+	// "unknown flag", and a response holding escape bytes is printed
+	// unrefused.
+	OldGH bool `json:"old_gh,omitempty"`
 }
 
 // pendingUpdate is an asynchronous update the fake server has performed
@@ -206,6 +211,10 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 		return nil
 	}
 	repoPrefix := "repos/" + s.Repo + "/"
+	allowEscape := slices.Contains(args, "--allow-escape-sequences")
+	if s.OldGH && allowEscape {
+		return fail("unknown flag: --allow-escape-sequences")
+	}
 	switch {
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "view" && slices.Contains(args, "id"):
 		fmt.Fprintln(stdout, "PR_"+args[2])
@@ -440,6 +449,13 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 			}
 			if slices.Contains(args, "Accept: application/vnd.github.diff") {
 				diff, _ := gitOut(s.Bare, "diff", "--binary", base+"..."+head)
+				// gh 2.100.0, measured by the lead on #948's diff: a
+				// response holding terminal escape bytes is refused, also
+				// when captured (exit 1, no bytes, these words), unless the
+				// flag is passed (brief 320-train-escape-legacy, E1)
+				if strings.Contains(diff, "\x1b") && !s.OldGH && !allowEscape {
+					return fail("the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway")
+				}
 				fmt.Fprintln(stdout, diff)
 				break
 			}

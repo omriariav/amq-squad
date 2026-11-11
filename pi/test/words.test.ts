@@ -183,6 +183,8 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	assert.equal(trainRunWords("made_up_kind"), "its last step is below the line");
 	// Codex on #873: reconcile is written for any binding change, not only a head mismatch
 	assert.equal(trainRunWords("reconcile"), "skipped recording a merge because its task binding no longer matches");
+	// 320-train-escape-legacy: the train's entry for a skipped legacy gate record
+	assert.equal(trainRunWords("note"), "noted a skipped legacy gate record");
 	const relay = goRelayNames();
 	assert.ok(relay.length >= 4, `the relay names were not found: ${relay}`);
 	for (const r of relay) assert.ok(has(RELAY_WORDS, r), `relay refusal ${r} has no words`);

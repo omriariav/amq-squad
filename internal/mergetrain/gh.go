@@ -240,8 +240,18 @@ func (g *GH) PatchID(ctx context.Context, repository, base, head string) (string
 	if meta.FileCount >= MaxCompareFiles || meta.MissingPatch > 0 {
 		return "", ErrIncompleteDiff
 	}
+	// gh refuses to print a response holding terminal escape bytes (a
+	// captured log in the diff), also when its output is captured, unless
+	// this flag is passed (brief 320-train-escape-legacy, E2). The bytes go
+	// only to git patch-id's stdin below; no other gh call passes it.
 	diff, err := g.run(ctx, "api", path,
-		"-H", "Accept: application/vnd.github.diff")
+		"-H", "Accept: application/vnd.github.diff", "--allow-escape-sequences")
+	if unknownEscapeFlag(err) {
+		// a gh older than the flag also prints the bytes unrefused: that
+		// answer, and no other, is read once more without it (E3, E4)
+		diff, err = g.run(ctx, "api", path,
+			"-H", "Accept: application/vnd.github.diff")
+	}
 	if err != nil {
 		if compareTooLarge(err) {
 			return "", ErrIncompleteDiff
@@ -259,6 +269,12 @@ func (g *GH) PatchID(ctx context.Context, repository, base, head string) (string
 		return "", errors.New("git patch-id --stable returned no patch id")
 	}
 	return fields[0], nil
+}
+
+// unknownEscapeFlag reports gh's own answer to a flag it does not carry.
+func unknownEscapeFlag(err error) bool {
+	var ge *GHError
+	return errors.As(err, &ge) && strings.Contains(ge.Stderr, "unknown flag: --allow-escape-sequences")
 }
 
 func compareTooLarge(err error) bool {

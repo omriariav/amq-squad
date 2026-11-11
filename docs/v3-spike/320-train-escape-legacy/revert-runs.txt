@@ -1,0 +1,170 @@
+gate-lock: trainfix holds the lock after 0s
+started 2026-11-11T02:40:45Z
+case 1 | row E1 | fixture mutation: the fake prints escape bytes without the flag
+  file: internal/mergetrain/fakegh_test.go
+  command: go test ./internal/mergetrain -run '^TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:60: escape bytes without the flag were not refused in gh's words: out="diff --git a/evidence/run.log b/evidence/run.log\nnew file mode 100644\nindex 0000000..15ce85c\n--- /dev/null\n+++ b/evidence/run.log\n@@ -0,0 +1,2 @@\n+\x1b[32mok\x1b[0m  \tpkg/a\t0.2s\n+\x1b[31mFAIL\x1b[0m\tpkg/b\t0.1s\n" stderr="" err=<nil>
+case 2 | row E1 | fixture mutation: the fake's older gh accepts the flag
+  file: internal/mergetrain/fakegh_test.go
+  command: go test ./internal/mergetrain -run '^TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:70: an older gh knows no such flag: out="diff --git a/evidence/run.log b/evidence/run.log\nnew file mode 100644\nindex 0000000..15ce85c\n--- /dev/null\n+++ b/evidence/run.log\n@@ -0,0 +1,2 @@\n+\x1b[32mok\x1b[0m  \tpkg/a\t0.2s\n+\x1b[31mFAIL\x1b[0m\tpkg/b\t0.1s\n" stderr="" err=<nil>
+case 3 | row E2 | the flag dropped from the diff read
+  file: internal/mergetrain/gh.go
+  command: go test ./internal/mergetrain -run '^TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:142: #6 was not rebased and merged: status skipped; force pushes recorded 0; head unchanged true; task bound to its old head true; audit: reconcile_read_failed: GitHub could not read PR #6 while proving its reviewed patch before mutation: prove the reviewed patch before updating #6: gh api repos/owner/fixture/compare/383b8641bb4cf4f393e26b7b8a7ddb9c72f4c188...487f6fae04322bb194dcd3578174f1588ef7e6b5 -H: exit status 1: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway; this PR was skipped and the run continued
+case 4 | row E3 | the retry removed
+  file: internal/mergetrain/gh.go
+  command: go test ./internal/mergetrain -run '^TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:169: #6 was not rebased and merged: status skipped; force pushes recorded 0; head unchanged true; task bound to its old head true; audit: reconcile_read_failed: GitHub could not read PR #6 while proving its reviewed patch before mutation: prove the reviewed patch before updating #6: gh api repos/owner/fixture/compare/b0f8b107f4e08edfda450a1eb75ab363a3a69d99...2ca54760bf59b82283285be6c1860ef2a671404e -H: exit status 1: unknown flag: --allow-escape-sequences; this PR was skipped and the run continued
+case 5 | row E4 | the retry on any error
+  file: internal/mergetrain/gh.go
+  command: go test ./internal/mergetrain -run '^TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead$/^HTTP_502$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:221: diff reads: want 1 (the first with the flag, a second without), got 2: [["api" "repos/owner/fixture/compare/dce82a87e7a6a5131f4db01375a8342e37ffa699...5e9af35b654bfa211ce63804e8bb965d2dff9224" "-H" "Accept: application/vnd.github.diff" "--allow-escape-sequences"] ["api" "repos/owner/fixture/compare/dce82a87e7a6a5131f4db01375a8342e37ffa699...5e9af35b654bfa211ce63804e8bb965d2dff9224" "-H" "Accept: application/vnd.github.diff"]] (error gh api repos/owner/fixture/compare/dce82a87e7a6a5131f4db01375a8342e37ffa699...5e9af35b654bfa211ce63804e8bb965d2dff9224 -H: exit status 1: )
+case 6 | row E4 | the retry on any error (a diff too large)
+  file: internal/mergetrain/gh.go
+  command: go test ./internal/mergetrain -run '^TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead$/^a_diff_too_large$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:221: diff reads: want 1 (the first with the flag, a second without), got 2: [["api" "repos/owner/fixture/compare/223361fc56e2de0abff5047d802e4ecb237d1aa3...8b44eb8da4431368578490b8c6e6db37c8970147" "-H" "Accept: application/vnd.github.diff" "--allow-escape-sequences"] ["api" "repos/owner/fixture/compare/223361fc56e2de0abff5047d802e4ecb237d1aa3...8b44eb8da4431368578490b8c6e6db37c8970147" "-H" "Accept: application/vnd.github.diff"]] (error gh api repos/owner/fixture/compare/223361fc56e2de0abff5047d802e4ecb237d1aa3...8b44eb8da4431368578490b8c6e6db37c8970147 -H: exit status 1: )
+case 7 | row E4 | the retry on any error (gh's own refusal of the bytes)
+  file: internal/mergetrain/gh.go
+  command: go test ./internal/mergetrain -run '^TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead$/^gh'"'"'s_own_refusal_of_the_bytes$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:221: diff reads: want 1 (the first with the flag, a second without), got 2: [["api" "repos/owner/fixture/compare/b0ff51f606b2f32a4c2190b6e2dadcfa9558bffb...38398f74cffaf408ace0120f04733778c30303e2" "-H" "Accept: application/vnd.github.diff" "--allow-escape-sequences"] ["api" "repos/owner/fixture/compare/b0ff51f606b2f32a4c2190b6e2dadcfa9558bffb...38398f74cffaf408ace0120f04733778c30303e2" "-H" "Accept: application/vnd.github.diff"]] (error gh api repos/owner/fixture/compare/b0ff51f606b2f32a4c2190b6e2dadcfa9558bffb...38398f74cffaf408ace0120f04733778c30303e2 -H: exit status 1: )
+case 8 | row E4 | a failed second read returns the first read's error
+  file: internal/mergetrain/gh.go
+  command: go test ./internal/mergetrain -run '^TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead$/^an_unknown_flag,_then_HTTP_502$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:230: the error returned: want gh's "gh: Bad Gateway (HTTP 502)", got gh api repos/owner/fixture/compare/d64e73c16b9a52638a71e1f934a8047808882c78...e9cd5d8b928ca547f4f3fb8f55b408538666f343 -H: exit status 1: unknown flag: --allow-escape-sequences
+case 9 | row L1 | the skip removed
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftSkipsALegacyGateRecordWithOneLine$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:326: run 1: a legacy record beside an accepted release gate raised an alert: <nil> [{ID:gate-store-unreadable-93584e8e8d04 Repository:owner/app Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDriftSkipsALegacyGateRecordWithOneLine1436635160/001/v320/extensions/amq-squad/gates/clear-0a227ca8d88dc97c65c540a4d0fa18a7.json SHA: At:2026-11-11T00:00:00Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line
+case 10 | row L2 | the skip applied to every load error (a known kind with a bad target)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftStillNamesAMalformedGateRecord$/^a_known_kind_with_a_bad_target$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:367: a malformed record raised no alert naming it: <nil> [], on disk []
+case 11 | row L2 | the skip applied to every load error (a legacy kind under another gate id)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftStillNamesAMalformedGateRecord$/^a_legacy_kind_under_another_gate_id$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:367: a malformed record raised no alert naming it: <nil> [], on disk []
+case 12 | row L2 | the skip applied to every load error (torn JSON, the earlier row)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftNamesAGateRecordThatDoesNotLoad$' -count=1
+  result: caught (exit 1)
+  first failing line: brief3112_test.go:196: a torn gate record: <nil> []
+case 13 | row L3 | the line dropped by the drift reader
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestTrainNotesASkippedLegacyGateRecord$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:445: run 1: the result's notes: []
+case 14 | row L3 | the line dropped by the drift reader (the drift row)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftSkipsALegacyGateRecordWithOneLine$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:329: run 1: the legacy line, once, naming the kind and the gate id: []
+case 15 | row L3 | the line not carried into the train's result
+  file: internal/mergetrain/train.go
+  command: go test ./internal/mergetrain -run '^TestTrainNotesASkippedLegacyGateRecord$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:445: run 1: the result's notes: []
+case 16 | row L3 | the note entry not journaled
+  file: internal/mergetrain/train.go
+  command: go test ./internal/mergetrain -run '^TestTrainNotesASkippedLegacyGateRecord$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:452: run 1: one note entry a run: []
+case 17 | row L3 | notes encoded when empty (omitempty dropped)
+  file: internal/mergetrain/train.go
+  command: go test ./internal/mergetrain -run '^TestTrainNotesASkippedLegacyGateRecord$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:438: a run with no legacy record encodes a notes field: {"run":"mt-20261111T024116Z-12c2fbdb","repository":"owner/fixture","base":"main","base_sha":"a5b8fe5449c2f4d44bf83243c8ace281c704f490","dry_run":true,"manual":false,"protection":{"required_checks":[{"context":"ci","app_id":15368}],"direct_push_refused":true,"force_push_refused":true,"strict_required_status_checks_policy":false,"sources":["ruleset 7"]},"protection_met":true,"ci_checks":[{"context":"ci","app_id":15368}],"pairs":[{"number":1,"head":"1130191e2034cd92ea7003b7d51d0b6bc0a73c3f"}],"digest":"sha256:686ec6978be9262933d545a82abf223b54612d02cc36758a6aaafcbc5a743384","digests":["sha256:686ec6978be9262933d545a82abf223b54612d02cc36758a6aaafcbc5a743384"],"notes":null,"prs":[{"number":1,"task":"T1","head":"1130191e2034cd92ea7003b7d51d0b6bc0a73c3f","draft":true,"changed_lines":2,"files":["pkg/a.go"],"status":"planned"}],"wall_ms":81}
+case 18 | row L3 | the line not printed (the train's dry run)
+  file: internal/cli/merge_train.go
+  command: go test ./internal/mergetrain -run '^TestTrainDryRunPrintsASkippedLegacyGateRecordOnce$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_text_test.go:24: the legacy line, once, on its own line after the protection line ("gate clear-0a227ca8d88dc97c65c540a4d0fa18a7 is a legacy quarantine_clear gate (a kind this build no longer carries); skipped"):
+case 19 | row L3 | the line not printed (the print row)
+  file: internal/cli/merge_train.go
+  command: go test ./internal/cli -run '^TestMergeTrainPrintsEachNoteOnItsOwnLineAfterTheProtectionLine$' -count=1
+  result: caught (exit 1)
+  first failing line: merge_train_test.go:60: the notes, one a line, after the protection line:
+case 20 | row L3 | the note kind's words removed from the pi table
+  file: pi/extensions/lib/words.ts
+  command: cd pi && node --test test/words.test.ts
+  result: caught (exit 1)
+  first failing line: not ok 1 - row 7: every wait and block reason in Go's sources maps to plain words in the one table | error: 'train entry kind note has no words'
+case 21 | row L4 | no removal (a)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftClearsAStoreAlertOnlyForAPathThisRunRead$/^a_legacy_record_this_run_skipped$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:573: the alert was not cleared in its own words ("the record is a legacy kind and is skipped"): resolved [], on disk [{ID:gate-store-unreadable-f97d716643f8 Repository:owner/app Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDriftClearsAStoreAlertOnlyForAPathThisRunReada_legacy_recor3696537500/001/v320/extensions/amq-squad/gates/clear-0a227ca8d88dc97c65c540a4d0fa18a7.json SHA: At:2026-11-05T17:20:00Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line
+case 22 | row L4 | no removal (b)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftClearsAStoreAlertOnlyForAPathThisRunRead$/^a_record_this_run_loaded$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:573: the alert was not cleared in its own words ("the record now loads"): resolved [], on disk [{ID:gate-store-unreadable-d398c971f7f0 Repository:owner/app Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDriftClearsAStoreAlertOnlyForAPathThisRunReada_record_this_120622330/001/v320/extensions/amq-squad/gates/rel-fixed.json SHA: At:2026-11-05T17:20:00Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line
+case 23 | row L4 | no removal (a gates directory)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftClearsAStoreAlertOnlyForAPathThisRunRead$/^a_gates_directory_this_run_listed$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:573: the alert was not cleared in its own words ("the gate store can be listed again"): resolved [], on disk [{ID:gate-store-unreadable-65114754b63b Repository:owner/app Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDriftClearsAStoreAlertOnlyForAPathThisRunReada_gates_direct3905944428/001/v320/extensions/amq-squad/gates SHA: At:2026-11-05T17:20:00Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line
+case 24 | row L4 | no removal (the train's entries)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestTrainRecordsAStoreAlertsClearingInItsOwnWords$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:601: run 2: <nil> [], on disk [{ID:gate-store-unreadable-a853e01567f4 Repository:owner/fixture Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestTrainRecordsAStoreAlertsClearingInItsOwnWords2347364060/001/root/extensions/amq-squad/gates/clear-0a227ca8d88dc97c65c540a4d0fa18a7.json SHA: At:2026-11-05T17:20:00Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line
+case 25 | row L4 | removal on the negative condition, not flagged this run (c: the record absent)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftClearsAStoreAlertOnlyForAPathThisRunRead$/^the_record_absent$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:568: an alert this run had no cause to clear (its path not read, or flagged again) was removed: resolved [{Alert:{ID:gate-store-unreadable-cfd13c221d6e Repository:owner/app Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDriftClearsAStoreAlertOnlyForAPathThisRunReadthe_record_abs1527621258/001/v320/extensions/amq-squad/gates/rel-gone.json SHA: At:2026-11-05T17:20:00Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line
+case 26 | row L4 | removal on the negative condition, not flagged this run (c: its session directory missing)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftClearsAStoreAlertOnlyForAPathThisRunRead$/^its_session_directory_missing$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:568: an alert this run had no cause to clear (its path not read, or flagged again) was removed: resolved [{Alert:{ID:gate-store-unreadable-a7ec8737a1e3 Repository:owner/app Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDriftClearsAStoreAlertOnlyForAPathThisRunReadits_session_di1674037373/001/v300/extensions/amq-squad/gates/clear-0a227ca8d88dc97c65c540a4d0fa18a7.json SHA: At:2026-11-05T17:20:00Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line
+case 27 | row L4 | removal on the negative condition, not flagged this run (c: the parent of the sessions unlistable)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftClearsAStoreAlertOnlyForAPathThisRunRead$/^the_parent_of_the_sessions_unlistable$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:568: an alert this run had no cause to clear (its path not read, or flagged again) was removed: resolved [{Alert:{ID:gate-store-unreadable-fb3f661d1365 Repository:owner/app Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDriftClearsAStoreAlertOnlyForAPathThisRunReadthe_parent_of_4060610029/001/v320/extensions/amq-squad/gates/clear-0a227ca8d88dc97c65c540a4d0fa18a7.json SHA: At:2026-11-05T17:20:00Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line
+case 28 | row L4 | removal on the negative condition, not flagged this run (a gates directory this run did not list)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftClearsAStoreAlertOnlyForAPathThisRunRead$/^a_gates_directory_this_run_did_not_list$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:568: an alert this run had no cause to clear (its path not read, or flagged again) was removed: resolved [{Alert:{ID:gate-store-unreadable-900e36193be0 Repository:owner/app Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDriftClearsAStoreAlertOnlyForAPathThisRunReada_gates_direct804107447/001/v320/extensions/amq-squad/gates SHA: At:2026-11-05T17:20:00Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line
+case 29 | row L4 | removal of every store alert on disk (d: an alert this run raises again)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftClearsAStoreAlertOnlyForAPathThisRunRead$/^an_alert_this_run_raises_again$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:568: an alert this run had no cause to clear (its path not read, or flagged again) was removed: resolved [{Alert:{ID:gate-store-unreadable-e98820b3db1e Repository:owner/app Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDriftClearsAStoreAlertOnlyForAPathThisRunReadan_alert_this_3700270719/001/v320/extensions/amq-squad/gates/rel-torn.json SHA: At:2026-11-05T17:20:00Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line
+case 30 | row L4 | every clearing in the covered alert's words
+  file: internal/mergetrain/train.go
+  command: go test ./internal/mergetrain -run '^TestTrainRecordsAStoreAlertsClearingInItsOwnWords$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:617: the clearing of gate-store-unreadable-4e9acf5861de, once, in its own words ("the record is a legacy kind and is skipped"): ["a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line\n\n----------\nthe gate store /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestTrainRecordsAStoreAlertsClearingInItsOwnWords1356130975/001/root/extensions/amq-squad/gates/clear-0a227ca8d88dc97c65c540a4d0fa18a7.json could not be read (gate record is malformed); a verified owner gate now covers it"]
+case 31 | row L4 | the gates directory marked as listed whatever the path is, as on b203e8fe (a gates path that is a dangling symlink)
+  file: internal/mergetrain/drift.go
+  command: go test ./internal/mergetrain -run '^TestDriftClearsAStoreAlertOnlyForAPathThisRunRead$/^a_gates_path_that_is_a_dangling_symlink$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:568: an alert this run had no cause to clear (its path not read, or flagged again) was removed: resolved [{Alert:{ID:gate-store-unreadable-e24b85e25f23 Repository:owner/app Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestDriftClearsAStoreAlertOnlyForAPathThisRunReada_gates_path_t3396341819/001/v320/extensions/amq-squad/gates SHA: At:2026-11-05T17:20:00Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line
+case 32 | row E4 | M2: any unknown flag answered by a second read (another flag's refusal)
+  file: internal/mergetrain/gh.go
+  command: go test ./internal/mergetrain -run '^TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead$/^another_flag'"'"'s_refusal$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:221: diff reads: want 1 (the first with the flag, a second without), got 2: [["api" "repos/owner/fixture/compare/2470675f2169e838be2ea6c6938c47e0bbd07b1d...a156ab6b3b252331c10b8cfa94bfd0c7633d5692" "-H" "Accept: application/vnd.github.diff" "--allow-escape-sequences"] ["api" "repos/owner/fixture/compare/2470675f2169e838be2ea6c6938c47e0bbd07b1d...a156ab6b3b252331c10b8cfa94bfd0c7633d5692" "-H" "Accept: application/vnd.github.diff"]] (error gh api repos/owner/fixture/compare/2470675f2169e838be2ea6c6938c47e0bbd07b1d...a156ab6b3b252331c10b8cfa94bfd0c7633d5692 -H: exit status 1: )
+case 33 | row E4 | M3: the read without the flag made up to twice (an unknown flag twice)
+  file: internal/mergetrain/gh.go
+  command: go test ./internal/mergetrain -run '^TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead$/^an_unknown_flag_twice$' -count=1
+  result: caught (exit 1)
+  first failing line: escape_legacy_320_test.go:221: diff reads: want 2 (the first with the flag, a second without), got 3: [["api" "repos/owner/fixture/compare/a06d5cdf4c038b8272ca155f00afb40734ae8a55...b04fee1a47d2bb969b706f62d372e019c2cacda1" "-H" "Accept: application/vnd.github.diff" "--allow-escape-sequences"] ["api" "repos/owner/fixture/compare/a06d5cdf4c038b8272ca155f00afb40734ae8a55...b04fee1a47d2bb969b706f62d372e019c2cacda1" "-H" "Accept: application/vnd.github.diff"] ["api" "repos/owner/fixture/compare/a06d5cdf4c038b8272ca155f00afb40734ae8a55...b04fee1a47d2bb969b706f62d372e019c2cacda1" "-H" "Accept: application/vnd.github.diff"]] (error gh api repos/owner/fixture/compare/a06d5cdf4c038b8272ca155f00afb40734ae8a55...b04fee1a47d2bb969b706f62d372e019c2cacda1 -H: exit status 1: unknown flag: --allow-escape-sequences)
+33 cases, 33 caught, 0 missed
+exit 0
+ended 2026-11-11T02:41:39Z
