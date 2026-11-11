@@ -42,7 +42,7 @@ channel under D1.
 | Cell | Today | Decided |
 | --- | --- | --- |
 | Who | The attachment fetches the event named by id and routes a gate-shaped owner DM to the core. The core accepts a decision only after the owner checks below and a successful commit (`internal/buzz/inbound.go:224-265`, `internal/gateverify/core.go:167-246`). | The owner, through the owner's signed Buzz reply. No model output counts. |
-| Proof | The fetched event's id must recompute; its public key must equal the pinned owner key; its signature must verify; it must be kind 9; and its `h` tag must be exactly the pinned channel (`internal/buzz/inbound.go:282-300`). `Verify` repeats those checks, then checks the record, tuple or bare word, digest, window, question and thread (`internal/gateverify/verify.go:115-212`). | Keep the fetch by id and all five owner-event checks. The pinned Buzz signature, not carrier or model provenance, is the sender proof. |
+| Proof | The fetched event's id must recompute; its public key must equal the pinned owner key; its signature must verify; it must be kind 9; and its `h` tag must be exactly the pinned channel (`internal/buzz/inbound.go:282-300`). `Verify` first validates the gate record, its squad, the pin and the record's owner (`internal/gateverify/verify.go:115-129`), then repeats those checks on the event, then checks the tuple or bare word, digest, window, question and thread (`internal/gateverify/verify.go:115-212`). | Keep the fetch by id and all five owner-event checks. The pinned Buzz signature, not carrier or model provenance, is the sender proof. |
 | Replay | Before verification the core recovers a half-written decision, then refuses a consumed gate or event. The store checks both durable marks (`internal/gateverify/core.go:191-207`, `internal/gatestore/store.go:484-501`). | A binding event is single-use and cannot move to another gate or a new window. |
 | Window | The answer's `created_at` must be inside the record's original window and presentation must be no later than `not_after` (`internal/gateverify/verify.go:169-178`). A re-ask is made only while that same record is open; an expired record gets no new window (`internal/gateverify/core.go:298-305`). | A lapsed gate is asked again in the same thread with a new window. An answer created before that re-ask cannot approve it. A2 supplies the new-window record and comparison. |
 | Words | `ParseBare` trims space, rejects embedded CR/LF, lowercases, strips **all** trailing Unicode punctuation, and accepts only `yes`, `no`, `approve`, `deny`. Therefore `yes!!` parses as approve today (`internal/gatestore/plain.go:555-572`). | D3's one Go list, including the short and Hebrew forms, and no more than one trailing mark. The model does not classify. A1 closes the gap. |
@@ -57,7 +57,7 @@ channel under D1.
 | Replay | The lead witnesses the selected team-plan digest in memory. This replay behavior belongs to team start, not the gate store. No chat event can be consumed as a gate answer. | Gate replay remains a Buzz/core property. |
 | Window | `/confirm` offers live team plans younger than 30 minutes. It has no typed-gate window (`pi/extensions/lib/team.ts:538-574`). | The chat displays open gate questions; it does not own or renew their windows. |
 | Words | `/confirm` is a slash command and a dialog, not a free-text yes parser. The removed shell door is refused because one uid cannot distinguish the owner's shell from a tree the model built (`internal/cli/lead_start.go:301-308`). | Nothing typed as chat text binds. D3's words are interpreted only on the binding Buzz path. |
-| Ambiguity | When several team plans are live, `/confirm` asks the owner to select one before the dialog. There is no analogous typed-gate selection in the pane (`pi/extensions/lib/team.ts:545-564`). | The pane may display multiple gates, but A4 keeps the binding which-gate choice in Buzz. |
+| Ambiguity | When several team plans are live, `/confirm` asks the owner to select one before the dialog. There is no analogous binding typed-gate selection in the pane (`pi/extensions/lib/team.ts:545-564`): `/answer` asks which open gate to show, and the choice selects what is displayed or posted, never an answer (`pi/extensions/lib/keys.ts:295-328`). | The pane may display multiple gates, but A4 keeps the binding which-gate choice in Buzz. |
 
 ### The Grok bot
 
@@ -79,6 +79,10 @@ rg -n 'HandleEvent(ID)?\(|ownerEvent\(|FetchEvent\(' --glob '*.go' --glob '!**/*
 13 matches
 rg -n -i 'grok bot|grokbot' --glob '!docs/**' --glob '!README.html' --glob '!**/*_test.go' --glob '!**/*.test.ts' .
 0 matches
+rg -n '\bVerify\(' --glob '*.go' --glob '!**/*_test.go' internal/gateverify
+3 matches
+rg -n 'gateverify\.Verify\(' --glob '*.go' --glob '!**/*_test.go' .
+0 matches
 ```
 
 All seven `ParseBare` sites and all thirteen binding-entry/fetch sites were
@@ -92,9 +96,21 @@ before a decision. A continuation shaped like an answer remains conversation
 text and leaves the gate open (`internal/buzz/phone_test.go:444-472`). A seat
 message is refused as the wrong public key (`internal/gateverify/core_test.go:238-243`).
 
+The first two searches do not reach every caller of `Verify`. The fourth and
+fifth do: of the three matches one is the definition
+(`internal/gateverify/verify.go:115-212`) and two are callers, both inside the
+package. The core's call is the path read above
+(`internal/gateverify/core.go:207`). The other is `VerifyAnswerFile`
+(`internal/gateverify/answer.go:197`), reached through `Verifier.Accepted`
+(`internal/gateverify/growth.go:25-41`): it verifies again the signed event
+stored with an answer the core already accepted. It is a re-verification of
+the same signed owner event, not a second way in, and it was not read for the
+paragraph above.
+
 ## Rows every A and B brief must carry
 
-"Today" uses exactly the three requested values. `holds` means both a seam and
+"Today" uses the three requested values; row 12's is narrowed in its cell,
+and row 8's test covers half of its statement. `holds` means both a seam and
 an existing test assert the statement; `does not hold` names the current
 contrary behavior; `not determinable` means the channel or assertion has no
 seam and test in this repository.
@@ -108,11 +124,11 @@ seam and test in this repository.
 | 5 | An unthreaded answer binds only when one gate is open and its question is the latest the squad showed the owner in that channel. | does not hold | One open gate is selected, then the answer is re-asked solely because it is unthreaded; there is no latest-question comparison (`internal/gateverify/core.go:249-295`). | `internal/gateverify/bare311_test.go:61-92` asserts the one-gate re-ask and multi-gate refusal. | A1, A4 |
 | 6 | A yes never binds a gate raised after it. | does not hold | The verifier permits `created_at` as early as `issued_at - 60 s`; it has no strict answer-after-raise comparison (`internal/gatestore/record.go:38-46`, `internal/gateverify/verify.go:169-178`). | `internal/gateverify/core_test.go:155-166` asserts the skew/window edges, not the D4 ordering rule. | A1, B3 |
 | 7 | An answer created before a re-ask does not approve the re-asked question. | does not hold | A valid re-ask id is added to the allowed thread ids, but `Verify` compares time only with the original record window (`internal/gateverify/verify.go:169-204`). | `internal/gateverify/core_test.go:221-228` asserts a reply to the re-ask is accepted; it has no pre-re-ask timestamp refusal. | A2, A4 |
-| 8 | One decision per event id survives the re-ask. | holds | Gate and event consumption marks are checked before verification (`internal/gatestore/store.go:484-501`). | `internal/gateverify/core_test.go:71-76` asserts the same event and a later decision are replay refusals. | A2, B3 |
-| 9 | Nothing typed in the lead's chat binds a gate (beyond /confirm for a team plan). | holds | `/answer` writes no answer; `/confirm` is a registered command accepted only from the spawned pi (`pi/extensions/lib/keys.ts:21-28`, `internal/cli/lead_start.go:427-445`). | `internal/cli/lead_start_test.go:514-563` asserts a model-shell child cannot use the TUI door and the spawned pi can. | A3 |
+| 8 | One decision per event id survives the re-ask. | holds | Gate and event consumption marks are checked before verification (`internal/gatestore/store.go:484-501`). | `internal/gateverify/core_test.go:71-76` asserts the same event and a later decision are replay refusals, with no re-ask in the test. The re-ask test accepts one reply and replays nothing (`internal/gateverify/core_test.go:187-228`). No existing test replays an event after a re-ask. | A2, B3 |
+| 9 | Nothing typed in the lead's chat binds a gate (beyond /confirm for a team plan). | holds | `/answer` writes no answer; `/confirm` is a registered command accepted only from the spawned pi (`pi/extensions/lib/keys.ts:21-28`, `internal/cli/lead_start.go:427-445`). | `pi/test/keys.test.ts:317-340` asserts the answer key on each of the four typed gate kinds runs gate status only and writes no answer. `internal/cli/lead_start_test.go:514-563` asserts a model-shell child cannot use the TUI door and the spawned pi can. | A3 |
 | 10 | A yes relayed by the Grok bot binds nothing. | not determinable | No Grok bot face or gate seam exists (`docs/v3-followups.md:615-623`); the scoped non-test code search above had 0 matches. | none found; same 0-match search. | A5 |
-| 11 | Every binding answer is the owner's signed Buzz reply, fetched by id and checked against the pinned key. | holds | Fetch and owner-event checks (`internal/buzz/inbound.go:224-265`, `internal/buzz/inbound.go:282-300`). | `internal/gateverify/core_test.go:23-76` asserts owner success and wrong key, body key, forged signature and replay refusals. | A1, A2, A4, B3 |
-| 12 | No model output is an input of the binding decision. | holds | Relay output is held back by shape; the core independently checks the signed owner event (`internal/buzz/relay.go:646-683`, `internal/gateverify/verify.go:130-148`). | `internal/buzz/phone_test.go:250-300` and `internal/gateverify/core_test.go:34-49` assert the two layers. | A3, A5, B3 |
+| 11 | Every binding answer is the owner's signed Buzz reply, fetched by id and checked against the pinned key. | holds | Fetch and owner-event checks (`internal/buzz/inbound.go:224-265`, `internal/buzz/inbound.go:282-300`). | `internal/buzz/handler_test.go:172-247` asserts the handler acts only on the event fetched by id, never on the delivered text. `internal/gateverify/core_test.go:23-76` asserts owner success and wrong key, body key, forged signature and replay refusals on the raw event it is given. | A1, A2, A4, B3 |
+| 12 | No model output is an input of the binding decision. | holds, narrowed: model output is never accepted as the owner's answer (`internal/buzz/relay.go:646-683`, `internal/gateverify/verify.go:130-148`); the gate's target and its question text are written by the caller that raised it (`internal/cli/gate.go:138-139`, `internal/cli/gate.go:172`; `internal/cli/gate_store.go:99`; `internal/gatestore/record.go:171-181`) and `Verify` consumes them | Relay output is held back by shape; the core independently checks the signed owner event (`internal/buzz/relay.go:646-683`, `internal/gateverify/verify.go:130-148`). The question must carry the record's text (`internal/gateverify/verify.go:219-237`). | `internal/buzz/phone_test.go:250-300` and `internal/gateverify/core_test.go:34-49` assert the two layers. | A3, A5, B3 |
 
 No proposed row: D1 through D4's binding properties are represented by rows
 1 through 12. The free-conversation half of D1 is channel behavior, not an
@@ -259,6 +275,19 @@ past commit.
 | `internal/gateverify/core_test.go:34-49` | `// wrong digest prefix, a tuple for another gate, wrong key, forged signature` |
 | `internal/gateverify/core_test.go:71-76` | `// replay: the same event, and a later deny` |
 | `internal/gateverify/core_test.go:155-166` | `// the window edges: created_at - 60 s <= now <= not_after` |
+| `internal/gateverify/verify.go:115-129` | `func Verify(raw []byte, rec gatestore.Record, q *gatestore.Question, reask *gatestore.Reask, pin Pin, now time.Time) (Outcome, error) {` |
+| `internal/gateverify/verify.go:219-237` | `func checkQuestion(q *gatestore.Question, rec gatestore.Record, pin Pin) error {` |
+| `internal/gateverify/core.go:207` | `o, err := Verify(raw, rec, q, reask, c.Pin, now)` |
+| `internal/gateverify/answer.go:197` | `o, err := Verify(raw, rec, q, reask, pin, verifiedAt)` |
+| `internal/gateverify/growth.go:25-41` | `func (v Verifier) Accepted(store gatestore.Store, rec gatestore.Record) error {` |
+| `internal/cli/gate.go:138-139` | `target, note := *targetFlag, *noteFlag` |
+| `internal/cli/gate.go:172` | `return storeGateRaise(ctx, gate, capability.Action, target, *windowFlag, *jsonOut, os.Stdout)` |
+| `internal/cli/gate_store.go:99` | `spec := gatestore.Spec{GateID: id, Action: action, Target: target, RaisedBy: sel.Handle, Window: window, Squad: core.Store.Squad()}` |
+| `internal/gatestore/record.go:171-181` | `digest := gatetarget.Digest(s.Action, s.Target)` |
+| `pi/extensions/lib/keys.ts:295-328` | `async answer(ctx: ExtensionContext, st: ScreenStatus): Promise<KeyOutcome> {` |
+| `pi/test/keys.test.ts:317-340` | `// Row 9 (Q7 answered no): each of the four typed gate kinds shows "waiting` |
+| `internal/buzz/handler_test.go:172-247` | `// Acceptance 2 and the principle: the attachment never reads the DM` |
+| `internal/gateverify/core_test.go:187-228` | `func TestThreadReask(t *testing.T) {` |
 | `internal/gateverify/core_test.go:221-228` | `// a reply to the re-ask in the same thread also counts (second gate)` |
 | `internal/gateverify/core_test.go:238-243` | `// a seat's plain message naming the gate gets no re-ask either` |
 | `internal/cli/lead_start_test.go:514-563` | `// Row 1c of the witness design (the lead's half): the TUI door is accepted` |
@@ -292,4 +321,35 @@ past commit.
    signed event's `created_at`, relay receipt time, or a stored fetch time?
    Today verification has only the signed `created_at` and the original record
    window (`internal/gateverify/verify.go:169-204`).
+6. A model-written caller chooses a gate's target and the facts in its
+   question, and the owner's yes binds that text. Who may raise a gate and
+   what a question may carry is not decided by D1 to D4.
 
+## Corrections
+
+2026-11-11, the lead's docs PR after the read-only Codex pass on #967 (head
+`d1b4c18db59a82f23ff80387c8f66bd144ea30a4`). Line numbers below are the
+note's as merged in `0c72f069e388ef461e6c0b341a9156c291a4d4a4`. No verdict on
+rows 1 to 11 changed.
+
+1. Row 12's Today cell said `holds` alone. That was broader than the code
+   establishes: the caller that raises a gate writes its target and facts, and
+   those become the record and the question text `Verify` consumes. The cell
+   is narrowed; the statement's twelve words are unchanged. Every A and B
+   brief that carries row 12 carries the narrowed cell with it.
+2. The paragraph at :84-93 said "All seven ... and all thirteen ... were
+   read. No path was found". The two searches behind it do not reach the
+   second caller of `Verify`, `VerifyAnswerFile`. Two searches and a
+   paragraph are added; the second caller re-verifies the same signed event.
+3. :45 said `Verify` repeats the event checks and then checks the record. It
+   validates the record first.
+4. :60 said the pane has no typed-gate selection. `/answer` has one, for
+   display; the sentence now says "binding".
+5. Row 8's test cell cited a replay test with no re-ask in it. The cell says
+   so, and that no existing test replays an event after a re-ask; the seam
+   cell is unchanged. A2's brief adds that test row.
+6. Row 9's test cell gains the test that asserts `/answer` writes no answer.
+7. Row 11's test cell gains the test of the fetch by id; the test it cited
+   checks the raw event it is given.
+8. Open question 6 is added.
+9. The file ended with a blank line; removed.
