@@ -87,8 +87,8 @@ type Squad struct {
 	CodexHookMissing string `json:"-"`
 }
 
-// Runtimes the compiler knows: the providers AMQ v0.116.2's launch adapters
-// serve (internal/launch/adapter.go:21-36 there; brief 31-1, Q4). pi admits
+// Runtimes the compiler knows: the five providers AMQ v0.140.0 names at
+// internal/launch/adapter.go:21-36 (brief 31-1, Q4; acp is not one). pi admits
 // no provider arguments (amendment 23 (b)); its model reaches the embedded
 // runtime's launcher (seatexec.PiLauncherArgv).
 var Runtimes = []string{"claude", "codex", "cursor-agent", "grok", "pi"}
@@ -115,15 +115,15 @@ var CodexSandboxArgs = []string{"--sandbox", "workspace-write", "--ask-for-appro
 // inbox idles after its first turn unless an AMQ wake turns that message
 // into terminal input (found 2026-10-30, session v31, seat dev). AMQ's
 // grammar forbids an audit reason on an enabled wake
-// (internal/launch/execution_options_grammar.go:35-38 at v0.116.2), so the
+// (internal/launch/execution_options_grammar.go:35-38 at v0.140.0), so the
 // rule lives here and in the execution note, not in the launch request.
 const WakeRule = "amq-squad 3.0.1: the scheduler's doorbell is the seat's next turn"
 
 // PiWakeAuditReason is a pi seat's disabled-wake audit reason. AMQ's coop
-// exec would wake a pi seat too (paste, internal/harness/harness.go:85), but
-// its dialog guard runs only when pi loads AMQ's pi extension
-// (docs/wake-operations.md:587-599), which the embedded runtime does not, so
-// a doorbell could answer pi's folder-trust or an extension prompt.
+// exec would wake a pi seat too (paste, internal/harness/harness.go:91 at
+// v0.140.0), but its dialog guard runs only when pi loads AMQ's pi extension
+// (docs/wake-operations.md:730-743 there), which the embedded runtime does
+// not, so a doorbell could answer pi's folder-trust or an extension prompt.
 const PiWakeAuditReason = "amq-squad 3.0.1: a pi seat has no AMQ wake until its embedded runtime loads AMQ's pi extension (the doorbell's dialog guard)"
 
 // CodexNoWake begins a Codex seat's disabled-wake audit reason.
@@ -132,16 +132,16 @@ const CodexNoWake = "amq-squad: no AMQ wake for this Codex seat: "
 // SeatWake is a seat's AMQ wake policy (brief 31-1): on for Claude Code; on
 // for Codex when AMQ's Codex dialog hook is on the host (codexHookMissing
 // is ""), because a doorbell at a Codex approval prompt cancels the pending
-// command (AMQ docs/wake-operations.md:460-461 at v0.116.2), else off with
+// command (AMQ docs/wake-operations.md:596-597 at v0.140.0), else off with
 // the reason; off for pi (PiWakeAuditReason) and for any other runtime. The wake never refuses a
 // launch: a seat without one idles after its first turn, a line on the
 // screen. An enabled wake is the one amq coop exec
 // starts beside the provider (internal/launch/commands.go:135-150 at
-// v0.116.2 maps it to --require-wake and --wake-inject-mode), typing raw:
+// v0.140.0 maps it to --require-wake and --wake-inject-mode), typing raw:
 // AMQ's own choice for both harnesses, whose Ink input drops a
-// bracketed-paste Enter (internal/harness/harness.go:61-64, 81-82).
+// bracketed-paste Enter (internal/harness/harness.go:67-70, 87-88).
 // claude-native is not open to a seat: it refuses a wrapper and a custom
-// CLAUDE_CONFIG_DIR (internal/cli/wake_claude_native_unix.go:56-60), and
+// CLAUDE_CONFIG_DIR (internal/cli/wake_claude_native_unix.go:55-61), and
 // every seat runs behind seat-exec. A Claude seat rung at a dialog under
 // dontAsk can stall there: a stalled seat is a status line with its state,
 // never a refusal (plan 7.2 (b) item 5).
@@ -176,8 +176,8 @@ func codexHookWhy(h seatexec.CodexDialogHook) string {
 }
 
 // SeatWakeFacts is a seat's wake as AMQ reports it: Prepare's echo of the
-// participant's execution options (launchapi/prepare.go:200-203,
-// fromInternalExecutionOptions at :249 in v0.116.2). AMQ's ApplyResult and
+// participant's execution options (launchapi/prepare.go:202-205,
+// fromInternalExecutionOptions at :251 in v0.140.0). AMQ's ApplyResult and
 // its observations carry no wake field, and the wake process itself is
 // started by amq coop exec in the seat's pane, bound to the coop exec pid
 // that seat-exec and the provider keep by exec; it exits with the seat, so
@@ -357,8 +357,8 @@ var handlePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 // ProviderArgs returns the provider arguments of a seat: model and effort
 // (and Codex's sandbox and approval flags and its two sandbox pins) for
 // Claude and Codex; --model and --effort for grok and --model for
-// cursor-agent, the forms AMQ v0.116.2's adapters admit
-// (internal/launch/adapter_grok.go:133-134, adapter_cursor.go:135 there;
+// cursor-agent, the forms AMQ v0.140.0's adapters admit
+// (internal/launch/adapter_grok.go:129-130, adapter_cursor.go:127 there;
 // CheckArgumentForms checks them against the advertisement); none for pi.
 func ProviderArgs(s Seat) []string {
 	var args []string

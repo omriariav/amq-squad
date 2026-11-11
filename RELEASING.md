@@ -7,8 +7,8 @@ cannot merge without the matching regenerated `README.html` (see step 1).
 The AMQ floor is 0.140.0, the release `go.mod` pins: `amq-squad doctor` fails
 on an installed `amq`, `amq-remote` or `amq-owner-sign` below it. Release
 validation must keep the doctor floor, the active README/CLI-skill policy and
-the pinned real-AMQ CI lane aligned on `v0.140.0`; the `latest` lane is a
-non-blocking canary.
+the pinned real-AMQ CI lane aligned on `v0.140.0`, and must keep the `latest`
+lane running as a non-blocking canary.
 
 ## Patch Release Checklist
 
@@ -27,7 +27,7 @@ non-blocking canary.
    drifts from its manifest.
    Confirm the doctor minimum, README and CLI-skill support text, release-policy
    checker, and the pinned real-AMQ lane still agree on AMQ 0.140.0 / `v0.140.0`,
-   with `latest` as the canary lane.
+   and that the `latest` canary lane still runs.
 Who does each step: the lead runs the cut. A release agent the lead starts may
 prepare and check (the notes, the skew check, the tag build, the evidence) but never
 publishes. The publish (steps 3 and 4, through `amq-squad release publish` once the

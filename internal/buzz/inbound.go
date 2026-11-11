@@ -18,12 +18,12 @@ import (
 
 // The share's declared target is amq-remote's mailbox adapter (AMQ v0.111.0
 // and later, PR #1226; strict replies from the carrier from v0.112.0, PR
-// #1230; the floor is v0.116.2). amq-remote serve subscribes to the owner's
-// DM channel, checks the DM surface (owner, channel membership, the
-// admission window, redelivery) and submits each owner DM to the target:
+// #1230; doctor's floor is doctorMinAMQVersion). amq-remote serve subscribes
+// to the owner's DM channel, checks the DM surface (owner, channel membership,
+// the admission window, redelivery) and submits each owner DM to the target:
 // one AMQ message to MailboxHandle in the share root, from the carrier
 // `buzz`, on thread cockpit/<channel>, with the labels acp, buzz and
-// nostr:<event id> (v0.116.2 internal/remote/mailbox/mailbox.go, prompt).
+// nostr:<event id> (v0.140.0 internal/remote/mailbox/mailbox.go, prompt).
 // The handle's newest reply that is not --kind status and has a body is the
 // request's result, which serve posts as the body's result row in the DM;
 // with no such reply within reply_timeout the request fails (mailbox.go,
@@ -46,7 +46,7 @@ const (
 )
 
 // ServePromptSuffix starts the instructions serve appends to a Buzz DM's
-// text (v0.116.2 internal/remote/mailbox/mailbox.go, prompt).
+// text (v0.140.0 internal/remote/mailbox/mailbox.go, prompt).
 const ServePromptSuffix = "\n\nThis came from the owner's Buzz DM."
 
 // Prompt is one message serve delivered to the handle.
@@ -128,7 +128,7 @@ type Handled struct {
 
 // RouteWindow is how old a phone message may be when it is routed, and
 // FutureSkew how far ahead of this clock it may be dated (serve admits a DM
-// within 2 minutes, v0.116.2 buzzio/normalize.go MutationWindow; the reply
+// within 2 minutes, v0.140.0 buzzio/normalize.go MutationWindow; the reply
 // may come later).
 const (
 	RouteWindow = 10 * time.Minute

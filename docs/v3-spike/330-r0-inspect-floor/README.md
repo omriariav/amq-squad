@@ -254,7 +254,10 @@ including revert row 5's thirteen undefined removed names:
 A lead input, landed byte for byte by the seat task of that name.
 
 "Left for the pin move" stands as four bullets where the pin move's brief
-asked for one line. Its last bullet said the Claude wake-hold probe was
+(t167's brief as dispatched, lines 328-330, sha256
+319cda6a19d7e5fcec1c4f9a551145e13eedd5badafe4981b5d456e547ea709f) asked for
+"one line saying which items this PR did, and that the wake-hold probe was
+not run and why". Its last bullet said the Claude wake-hold probe was
 "outside this reviewer's local pin verification", words that named the seat
 by its role in another task. The bullet now says who did not run the probe
 and where the pin-move note lists it.

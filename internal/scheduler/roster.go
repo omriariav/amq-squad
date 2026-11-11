@@ -12,15 +12,17 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
-// The roster launch (3.0.1 t16, reviewer ruling 2026-10-30). AMQ v0.116.2
-// refuses a fresh seat into a present binding (internal/launch/reconcile.go:
-// a fresh seat is a write, line 1204; a write makes attachSafe false, line
-// 374; a present binding without attachSafe is action_required
-// binding_present_without_resumable_conversation, line 1358). So a squad
-// whose seats start one launch each is single-seat. In roster mode the
-// scheduler launches every seat of the roster in one AMQ apply, parks the
-// seats that hold no lease, and dispatches to them; a seat that is gone is
-// replaced only by relaunching the whole roster, the lead's decision.
+// The roster launch (3.0.1 t16, reviewer ruling 2026-10-30). AMQ v0.140.0
+// refuses a fresh seat into a present binding of its backend and profile when
+// no participant names on_live keep, and no seat launch does
+// (internal/launch/reconcile.go:1246, :397-400 and :1399-1403, which answers
+// binding_present_without_resumable_conversation; liveseat.go:121-131 is the
+// keep path). So a squad whose seats start one launch each is single-seat. In
+// roster mode the scheduler launches every seat of the roster in one AMQ apply,
+// parks the seats that hold no lease, and dispatches to them; a seat that is
+// gone is replaced only by relaunching the whole roster, the lead's decision.
+// (No seat launch names on_live keep: checked by `git grep -n OnLive -- '*.go'
+// ':!*_test.go'`, two lines beside this one, 2026-11-11.)
 
 // RosterSeat is one seat of the squad's roster: the typed seat list's seats
 // that can start (a worktree of their own).

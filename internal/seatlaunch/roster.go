@@ -17,14 +17,14 @@ import (
 )
 
 // LaunchRoster launches the whole roster in one AMQ prepare and one apply
-// (3.0.1 t16): AMQ v0.116.2 refuses a fresh seat into a present binding
-// (binding_present_without_resumable_conversation), so seats launched one
-// apply each leave a squad with one live seat. Each request names its roster
-// seat; each seat carries its request id into its launch record, and every
-// seat that proves posts its SeatUp with that id, as a single launch does.
-// Each request keeps the single launch's state machine (settle), so a seat
-// that did not prove is cancelled or closed through CancelSeatRequest like
-// any request. It returns once the launch settled.
+// (3.0.1 t16): AMQ v0.140.0 refuses a fresh seat into a present binding of
+// its backend and profile when no participant names on_live keep, so seats
+// launched one apply each leave a squad with one live seat. Each request
+// names its roster seat; each seat carries its request id into its launch
+// record, and every seat that proves posts its SeatUp with that id, as a
+// single launch does. Each request keeps the single launch's state machine
+// (settle), so a seat that did not prove is cancelled or closed through
+// CancelSeatRequest like any request. It returns once the launch settled.
 func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOutcome {
 	fail := func(format string, a ...any) scheduler.RosterOutcome {
 		return scheduler.RosterOutcome{Stage: "launch_error", Detail: fmt.Sprintf(format, a...)}

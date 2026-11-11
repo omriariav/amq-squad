@@ -50,7 +50,7 @@ const (
 	// it posts when it passes. Answers and results are not bounded, but
 	// each lead reply is at most one post (no fan-out).
 	ProgressBound = 2 * time.Minute
-	// DMLimit is one Buzz DM's text limit in bytes (amq-remote v0.116.2
+	// DMLimit is one Buzz DM's text limit in bytes (amq-remote v0.140.0
 	// internal/remote/buzzio/carrier.go maxRowText); a longer post is split
 	// at paragraph boundaries into at most MaxParts parts.
 	DMLimit  = 4000

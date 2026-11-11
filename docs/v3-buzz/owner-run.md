@@ -31,9 +31,9 @@ What it proves:
 
 This run needs amq, amq-remote and amq-owner-sign 0.140.0 or later
 installed by the owner (his AMQ upgrade): 0.140.0 is doctor's floor for this
-build, and the mailbox adapter needs amq-remote v0.116.2 or later
-(`enroll.sh`'s own check). The checkpoint of 5-amq-B ran its
-rows against binaries built from the v0.116.2 module in a scratch
+build, and `enroll.sh` refuses an amq-remote below v0.116.2 (its own check;
+the mailbox kind itself dates from AMQ v0.111.0). The checkpoint of 5-amq-B
+ran its rows against binaries built from the v0.116.2 module in a scratch
 directory, never installed (`docs/v3-spike/5-amq-execution.md`, part B);
 the rows here are the live rows against the installed binaries.
 
@@ -52,8 +52,7 @@ amq --version; amq-remote --version; amq-owner-sign --version
 ```
 
 Expected: `0.140.0` or later, three times (record the versions). An older
-one stops the run here: doctor's floor is 0.140.0 (0.1b), and the mailbox
-adapter needs amq-remote v0.116.2.
+one stops the run here: doctor's floor is 0.140.0 (0.1b).
 
 0.1b Doctor (5-amq-B row): `amq-squad doctor` names the AMQ floor 0.140.0
 and passes it (part A); with an older amq-remote it fails and names the
@@ -271,8 +270,10 @@ echoed). Record T7 (the handled line's `at`) and T7b (the result row seen).
 The busy window (a 3.0 limit, plan R42; upstream ask 18): amq-remote
 v0.116.2 ran one request at a time on the mailbox target and answered a DM
 sent before the previous one's result row as `busy`; that DM never reached
-the attachment, and serve did not tell the attachment about it, so nothing
-on the Mac recorded it. At amq-remote 0.140.0, this build's floor, a
+the attachment, and serve did not tell the attachment about it, so
+amq-squad's own state has no record of it (amq-remote kept its own rejected
+record: v0.116.2 internal/remote/core/admission.go:159-184). At amq-remote
+0.140.0, this build's floor, a
 mailbox target admits concurrent requests: two owner DMs sent about 100 ms
 apart were both routed (the lead's run of 2026-11-11; at 0.116.2 the same
 two gave one routed and one `busy`). In this run the owner still waits for

@@ -111,8 +111,8 @@ deletion, both documented removed-floor greps exited 1 with no output and
 ## 6. Five negative reverts
 
 Each revert was an edit to its named target and produced a non-empty
-`git diff --stat` (the stat's file list was not recorded, so that no other
-file changed is the author's report). After restoration,
+`git diff --stat`; the stat's file list was not recorded (the lead's re-run
+with the file lists is in the Corrections section). After restoration,
 `git diff --binary | shasum -a 256` returned the same baseline each time:
 
 ```text
@@ -210,9 +210,8 @@ $ git diff --binary | shasum -a 256
 | `git diff --stat 6a0fe4b1742f5c331d8e3c87d6cf9a6c603a1e41` | exit 0; 26 tracked files, 123 insertions, 263 deletions before this note's final result-row update |
 | `git diff --no-index --stat /dev/null docs/v3-spike/330-pin-move-1/README.md` | expected exit 1; one new file, 225 insertions |
 
-No whole-tree `go test ./...`, `make ci`, or documentation render was run
-by the seat (the author's report; the lead's locked runs on the head are in
-the merge record of #972).
+The table above holds no `go test ./...`, no `make ci` and no documentation
+render (the lead's locked runs on the head are in the merge record of #972).
 
 ## 8. Not measured here
 
@@ -263,12 +262,19 @@ Each sentence corrected above carries "(see Corrections)" or is named here.
   pinned lane's `amq-version` the same way, and the `CLI_TESTS` pattern
   without that one name.
 - Section 6 said each revert "first changed only its named target". The note
-  records a non-empty `git diff --stat` and no file list, so "only" was the
-  author's report. The lead re-ran the five reverts on #972's head at the
-  gate: five of five exit 1 with this note's first-failure lines.
+  records a non-empty `git diff --stat` and no file list. The lead re-ran the
+  five on `3876ee265401f08adf7f1e6d08d97b5286791c03` with section 6's commands
+  (2026-11-11): `git diff --stat` named one file for each of rows 1 to 4
+  (`internal/registry/versions.go`, `internal/adoptionseam/floor.go`,
+  `internal/registry/versions.go`, `internal/cli/doctor.go`), and
+  `git status --porcelain` named one untracked file for row 5, the probe
+  (`internal/adoptionseam/zz_removed_name_probe.go`). Five of five exit 1:
+  rows 1 to 3 print the row's line, row 4 fails the row's ten test names, and
+  row 5 prints the row's thirteen `undefined:` lines.
 - Section 7 said PyYAML 6.0.3 "was installed only in that temporary
   directory". The note records the `PYTHONPATH` the command ran with and no
   install command.
-- Section 7 said no whole-tree run was made. That is the seat's report of its
-  own runs; the lead's locked `make ci` and `make docs-html-check` on #972's
-  head both exited 0.
+- Section 7 said no whole-tree `go test ./...`, `make ci` or documentation
+  render was run by the seat. The section's table holds none of the three; the
+  lead's locked `make ci` and `make docs-html-check` on #972's head both
+  exited 0.
