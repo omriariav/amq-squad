@@ -1,0 +1,266 @@
+{
+ "about": "The lead's pins for #950 round 2 (2026-11-11). width = visibleWidth of the carry fe6fdc2c's pi/extensions/lib/width.ts; expected = truncateToWidth(text, max_width) under the brief's rule (the lead's reference, probe only); carry and head are fe6fdc2c's and fcd95493's outputs, for the note. Strings are JSON-escaped; U+001B is \\u001b.",
+ "widths": [
+  {
+   "name": "W01 double ESC then SGR",
+   "text": "\u001b\u001b[31m",
+   "width": 2,
+   "head_fcd95493": 8,
+   "pi_tui_1_3_0": 0
+  },
+  {
+   "name": "W02 double ESC then SGR then text",
+   "text": "\u001b\u001b[31mred",
+   "width": 5,
+   "head_fcd95493": 11,
+   "pi_tui_1_3_0": 3
+  },
+  {
+   "name": "W03 stray ESC then text",
+   "text": "\u001babc",
+   "width": 5,
+   "head_fcd95493": 5,
+   "pi_tui_1_3_0": 3
+  },
+  {
+   "name": "W04 stray ESC then Hebrew",
+   "text": "\u001bשלום",
+   "width": 6,
+   "head_fcd95493": 6,
+   "pi_tui_1_3_0": 4
+  },
+  {
+   "name": "W05 stray ESC then control then text",
+   "text": "\u001b\u0001status ok",
+   "width": 13,
+   "head_fcd95493": 13,
+   "pi_tui_1_3_0": 9
+  },
+  {
+   "name": "W06 ESC at end",
+   "text": "abc\u001b",
+   "width": 5,
+   "head_fcd95493": 5,
+   "pi_tui_1_3_0": 3
+  },
+  {
+   "name": "W07 charset select",
+   "text": "\u001b(Btail",
+   "width": 8,
+   "head_fcd95493": 8,
+   "pi_tui_1_3_0": 6
+  },
+  {
+   "name": "W08 DCS plain",
+   "text": "\u001bPq#0\u001b\\tail",
+   "width": 13,
+   "head_fcd95493": 13,
+   "pi_tui_1_3_0": 9
+  },
+  {
+   "name": "W09 DCS with inner SGR",
+   "text": "\u001bP\u001b[31mq\u001b\\tail",
+   "width": 11,
+   "head_fcd95493": 17,
+   "pi_tui_1_3_0": 7
+  },
+  {
+   "name": "W10 SOS with inner SGR",
+   "text": "\u001bX\u001b[1msos\u0007tail",
+   "width": 12,
+   "head_fcd95493": 17,
+   "pi_tui_1_3_0": 8
+  },
+  {
+   "name": "W11 PM with inner OSC 8",
+   "text": "\u001b^\u001b]8;;http://x\u0007pm\u001b\\tail",
+   "width": 12,
+   "head_fcd95493": 28,
+   "pi_tui_1_3_0": 8
+  },
+  {
+   "name": "W12 DCS unterminated",
+   "text": "\u001bPq#0 tail of the line",
+   "width": 23,
+   "head_fcd95493": 23,
+   "pi_tui_1_3_0": 21
+  },
+  {
+   "name": "W13 unsupported CSI",
+   "text": "\u001b[?25lprivate",
+   "width": 14,
+   "head_fcd95493": 14,
+   "pi_tui_1_3_0": 12
+  },
+  {
+   "name": "W14 SGR only",
+   "text": "\u001b[31mred\u001b[0m",
+   "width": 3,
+   "head_fcd95493": 3,
+   "pi_tui_1_3_0": 3
+  },
+  {
+   "name": "W15 straddle: DCS ended by BEL inside a CSI whose final lies after it",
+   "text": "\u001bP\u001b[31\u0007m tail",
+   "width": 8,
+   "head_fcd95493": 16,
+   "pi_tui_1_3_0": 6
+  },
+  {
+   "name": "W16 straddle: SOS ended by ST inside an OSC 8 ended by that ST, BEL later",
+   "text": "\u001bX\u001b]8;;u\u001b\\x\u0007 tail",
+   "width": 11,
+   "head_fcd95493": 21,
+   "pi_tui_1_3_0": 7
+  },
+  {
+   "name": "W17 straddle: DCS ended by BEL inside an incomplete CSI",
+   "text": "\u001bP\u001b[31\u0007rest",
+   "width": 14,
+   "head_fcd95493": 14,
+   "pi_tui_1_3_0": 8
+  },
+  {
+   "name": "W18 incomplete run: ESC, U+0001, Hebrew",
+   "text": "ab\u001b\u0001שלום",
+   "width": 10,
+   "head_fcd95493": 10,
+   "pi_tui_1_3_0": 6
+  },
+  {
+   "name": "W19 incomplete run: ESC, intermediate, U+0001",
+   "text": "ab\u001b \u0001cdef",
+   "width": 11,
+   "head_fcd95493": 11,
+   "pi_tui_1_3_0": 7
+  },
+  {
+   "name": "W20 ESC chain at the end",
+   "text": "abc\u001b\u001b",
+   "width": 7,
+   "head_fcd95493": 7,
+   "pi_tui_1_3_0": 3
+  },
+  {
+   "name": "W21 ESC chain then incomplete run",
+   "text": "ab\u001b\u001b\u0001שלום",
+   "width": 12,
+   "head_fcd95493": 12,
+   "pi_tui_1_3_0": 6
+  }
+ ],
+ "truncations": [
+  {
+   "name": "T01 fits: whole",
+   "text": "\u001b\u001b[31mred",
+   "max_width": 10,
+   "expected": "\u001b\u001b[31mred",
+   "carry_fe6fdc2c": "\u001b\u001b[31mred",
+   "head_fcd95493": "\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T02 ESC chain joins the SGR",
+   "text": "abc\u001b\u001b[31mdefghijklmnop",
+   "max_width": 10,
+   "expected": "abc\u001b\u001b[31mde\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "abc\u001b\u001b[31mde\u001b[0m...\u001b[0m",
+   "head_fcd95493": "abc\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T03 ESC chain kept whole, no text after it fits",
+   "text": "abc\u001b\u001b[31mdefghijklmnop",
+   "max_width": 8,
+   "expected": "abc\u001b\u001b[31m\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "abc\u001b\u001b[0m...\u001b[0m",
+   "head_fcd95493": "abc\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T04 ESC chain does not fit: the cut is before the first ESC",
+   "text": "abc\u001b\u001b[31mdefghijklmnop",
+   "max_width": 7,
+   "expected": "abc\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "abc\u001b[0m...\u001b[0m",
+   "head_fcd95493": "abc\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T05 straddle W15: the unit ends after the CSI's final",
+   "text": "\u001bP\u001b[31\u0007m tail",
+   "max_width": 7,
+   "expected": "\u001bP\u001b[31\u0007m \u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "\u001bP\u001b[31\u0007m \u001b[0m...\u001b[0m",
+   "head_fcd95493": "\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T06 straddle W15: the unit does not fit",
+   "text": "\u001bP\u001b[31\u0007m tail",
+   "max_width": 5,
+   "expected": "\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "\u001b\u001b[0m...\u001b[0m",
+   "head_fcd95493": "\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T07 straddle W16: the link is closed after the cut",
+   "text": "\u001bX\u001b]8;;u\u001b\\x\u0007 tail",
+   "max_width": 7,
+   "expected": "\u001bX\u001b]8;;u\u001b\\x\u001b]8;;\u001b\\\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "\u001bX\u001b]8;;u\u001b\\x\u001b]8;;\u001b\\\u001b[0m...\u001b[0m",
+   "head_fcd95493": "\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T08 straddle W17: the unit is the whole text",
+   "text": "\u001bP\u001b[31\u0007rest",
+   "max_width": 13,
+   "expected": "\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "\u001bP\u001b[0m...\u001b[0m",
+   "head_fcd95493": "\u001bP\u001b[31\u0007\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T09 G5: incomplete run, cut before the ESC",
+   "text": "ab\u001b\u0001שלום",
+   "max_width": 7,
+   "expected": "ab\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "ab\u001b\u001b[0m...\u001b[0m",
+   "head_fcd95493": "ab\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T10 G5: the same at 8",
+   "text": "ab\u001b\u0001שלום",
+   "max_width": 8,
+   "expected": "ab\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "ab\u001b\u001b[0m...\u001b[0m",
+   "head_fcd95493": "ab\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T11 G5: fits whole",
+   "text": "\u001b\u0001ש",
+   "max_width": 5,
+   "expected": "\u001b\u0001ש",
+   "carry_fe6fdc2c": "\u001b\u0001ש",
+   "head_fcd95493": "\u001b\u0001ש"
+  },
+  {
+   "name": "T12 G5: ESC, intermediate, U+0001",
+   "text": "ab\u001b \u0001cdef",
+   "max_width": 8,
+   "expected": "ab\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "ab\u001b \u001b[0m...\u001b[0m",
+   "head_fcd95493": "ab\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T13 ESC chain then incomplete run",
+   "text": "ab\u001b\u001b\u0001שלום",
+   "max_width": 9,
+   "expected": "ab\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "ab\u001b\u001b\u001b[0m...\u001b[0m",
+   "head_fcd95493": "ab\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T14 ESC chain at the end does not fit",
+   "text": "abc\u001b\u001b",
+   "max_width": 6,
+   "expected": "abc\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "abc\u001b[0m...\u001b[0m",
+   "head_fcd95493": "abc\u001b[0m...\u001b[0m"
+  }
+ ]
+}
