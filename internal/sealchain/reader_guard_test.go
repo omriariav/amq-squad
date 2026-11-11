@@ -31,6 +31,7 @@ func TestExternalSealedDocumentPathUsesAreDeclared(t *testing.T) {
 		"internal/mergetrain/gh.go:(*GH).Checks":        {note: "GitHub commits API URL, not a sealed-document path"},
 		"internal/mergetrain/gh.go:(*GH).FirstParent":   {note: "GitHub commits API URL, not a sealed-document path"},
 		"internal/releaseflow/gh.go:(*GH).CommitExists": {note: "GitHub commits API URL, not a sealed-document path"},
+		"internal/cli/up.go:sessionRawLayout":           {note: "captures each document once and delegates authenticated migration recognition to its owning ledger package"},
 		"internal/schedproc/process.go:Run":             {note: "constructs scheduler.Config.ExitsPath; the scheduler owns the reader"},
 		"internal/status/collect.go:pushURLMissing":     {reader: true, note: "reads commit ledgers for status"},
 		"internal/uninstall/busy.go:commitSteps":        {reader: true, note: "reads the exits ledger for the busy check"},

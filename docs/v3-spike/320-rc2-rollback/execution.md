@@ -240,7 +240,8 @@ The inventory command, run immediately around every old-build pair, was:
 find "$root" -type f -exec shasum -a 256 {} \; | sort -k2
 ```
 
-The tables below are the complete inventory, with paths relative to each
+The tables below are the round-1 inventory (line numbers in round 1 are as of
+8a79e6a1537069e025d637ea5898b04d1e10fc2b). Paths are relative to each
 fixture root. `-` means the file did not exist before the old-build run.
 
 ### v3.1.2
@@ -347,8 +348,8 @@ legacy document and its head, which the probe deliberately asked the old tag
 to advance. v3.1.2 did not change, move, or delete any migrated live sealed
 document or head. rc.1 also did not change, move, or delete one; its
 quarantine copies were additions outside the live paths. Neither old
-scheduler appended to the existing current decision log because it could not
-load the raw exits ledger.
+scheduler appended in this round-1 bare-Scheduler probe; round 2 replaces the
+cause with the process-path measurement below. (round 2)
 
 ## M7: roll forward
 
@@ -421,11 +422,11 @@ v3.2.0-rc.1 F4
     raw_exits_test.go:166: roll-forward decision: exit_check_deferred reason=the preflight copy is unreadable
 ```
 
-All sixteen tests passed. F2 completed cleanly on the current writer. F3's
-old-tag legacy commit migrated cleanly. rc.1's quarantine copy and the old
-tamper result did not change the current answer. The current tick retained
-the queued seats and deferred their exit checks because this fixture has no
-preflight copies; it emitted no tamper decision.
+All sixteen tests passed. A read alone leaves F2's qa head legacy; the next
+ordinary write completes its raw head and records exactly one migration.
+F3's old-tag legacy commit migrates once on its next current write. (round 2)
+The `the preflight copy is unreadable` text above comes from the round-1 test
+double; the real process-path result is in P5/P6 below. (round 2)
 
 ## M8: downgrade refusal
 
@@ -507,20 +508,182 @@ Run in the seat sandbox with an isolated Go build cache:
 All disposable tag trees, baseline roots, fixture roots, and the isolated Go
 cache were removed after the final gates.
 
+## Round 2
+
+Round 2 is measured on base
+`30f4607e09a78cd025d5911161aea6053344b0d3`; the task's carried attempt was
+applied byte-for-byte before the four reissued rows were run. The measurements
+below complete P6's 12-root reader/current-process matrix, P9's saved-probe
+comparison, P15's real rc.1 executable rewrite, and the required negative
+controls.
+The production rows are `internal/cli/up_raw_layout_test.go`,
+`internal/seatcommit/raw_compat_test.go`,
+`internal/scheduler/raw_exits_test.go`,
+`internal/schedproc/rollback_rows_test.go`, and the `rollback_rows_test.go`
+guards in sealchain, task, routing, mergetrain, and cli. File:line citations
+in this section refer to the round-2 head.
+
+### P1 to P4: interrupted migration preflight
+
+The table-driven row at `internal/cli/up_raw_layout_test.go:204` records the
+preflight answer for commit and exits ledgers:
+
+| Legacy head plus document | Answer |
+| --- | --- |
+| legacy document | admitted |
+| authenticated exact raw successor | refused as `ledger_layout_downgrade` for v3.1.2 and rc.1; current and later admitted |
+| raw shape with a bad seal | admitted by preflight |
+| wrong sequence or predecessor | admitted by preflight |
+| no document | admitted |
+| neither layout | admitted |
+
+Malformed forms remain the ledger reader's tamper decision, not the install
+preflight's. The caller captures every head and document once and delegates
+recognition to `InterruptedMigrationWriter` and
+`InterruptedExitsMigrationWriter`. The AST guard at
+`internal/cli/up_raw_layout_test.go:266` keeps production
+`CheckRawMigration` users and CLI queries aligned.
+
+### P5 and P6: process rows
+
+`compat_probe_process_test.go.txt` ran each tag's real `schedproc.Run` for
+exactly three deterministic wake-driven ticks on F1 through F5b. For every
+tag and fixture each tick appended, verbatim, one `ledger_tampered` line and
+one `exits_ledger_unwritable` line naming the raw exits document; process
+error was nil. The saved state named roster seat `qa`, no
+`LedgerTampered` hold, and every queued task remained pending. Thus the old
+process does append to its decision log: the round-1 absence was caused by
+using a bare Scheduler whose decisions only went to `t.Logf`. (round 2)
+
+The before/after inventory changed only by append/addition of
+`scheduler/decisions.jsonl`, `scheduler.json`, `scheduler/launch.json`, and
+`scheduler/run.lock`; task `.generation`, `.lock`, and task JSON were added
+only where the probe created its queued task. No live sealed document or
+head changed. In F5a the reserved marker and both task files were byte-equal;
+in F5b both task files were byte-equal, so the old decoder did not rewrite
+away `cleaned_at`.
+
+The current process row at `internal/schedproc/rollback_rows_test.go:55`
+dedupes every earlier migration tuple without changing the log and drives
+real `schedproc.Run` for exactly three ticks. The CLI reader row is
+`internal/cli/rollback_rows_test.go:18`. Before the current ticks, every one
+of the 12 roots gave `UpRosterOutcome` the expected `roster_wait_timeout`,
+and status retained three `ledger_tampered` plus three
+`exits_ledger_unwritable` old-process decisions:
+
+| Tag | Fixture | Reader result | Current-process result |
+| --- | --- | --- | --- |
+| v3.1.2 | F1 | roster timeout; status 3/3 | three ticks; pending; no current tamper; no recover |
+| v3.1.2 | F2 | roster timeout; status 3/3 | three ticks; pending; no current tamper; no recover |
+| v3.1.2 | F3 | roster timeout; status 3/3 | three ticks; pending; no current tamper; no recover |
+| v3.1.2 | F4 | roster timeout; status 3/3 | three ticks; pending; no current tamper; no recover |
+| v3.1.2 | F5a | roster timeout; status 3/3 | marker wait 0s; cancellation survived ticks; `seat clean` freed it |
+| v3.1.2 | F5b | roster timeout; status 3/3 | preserved `cleaned_at`; no unresolved cancellation or clean needed |
+| v3.2.0-rc.1 | F1 | roster timeout; status 3/3 | three ticks; pending; no current tamper; no recover |
+| v3.2.0-rc.1 | F2 | roster timeout; status 3/3 | three ticks; pending; no current tamper; no recover |
+| v3.2.0-rc.1 | F3 | roster timeout; status 3/3 | three ticks; pending; no current tamper; no recover |
+| v3.2.0-rc.1 | F4 | roster timeout; status 3/3 | three ticks; pending; no current tamper; no recover |
+| v3.2.0-rc.1 | F5a | roster timeout; status 3/3 | marker wait 0s; cancellation survived ticks; `seat clean` freed it |
+| v3.2.0-rc.1 | F5b | roster timeout; status 3/3 | preserved `cleaned_at`; no unresolved cancellation or clean needed |
+
+For F1 through F4 it appends
+`scheduler_started`, exit deferrals, at most one `seat_requested`, and
+`scheduler_stopped`, with no new `ledger_tampered` or `tick_error`; the task
+remains pending and no recovery decision is needed.
+
+### P7 and P8: roll forward and inventory
+
+The roll-forward rows require nil tick error, raw heads at the asserted
+sequence and predecessor, exactly one `ledger_layout_migrated` per ledger,
+no current tamper decision, and byte-equal rc.1 quarantine slots. F2 read
+alone leaves qa's legacy head; qa's next ordinary write completes it once.
+Both qa and legacy commit ledgers are deliberately written in round 2, so P8
+differs from the lead's earlier inventory by changing both commit documents
+and both heads. The exits document/head, decisions log, scheduler state and
+launch record, and queued-task bookkeeping also advance for their named
+writers; quarantine files and the seed remain byte-equal.
+
+### P9: round-1 saved-probe comparison
+
+The saved seatcommit and scheduler probes were rerun from the exact v3.1.2 and
+v3.2.0-rc.1 archives on eight fresh, in-place roots. M1 through M5 matched
+round 1: v3.1.2 refused migrated `qa` without a quarantine copy, rc.1 added
+the same `sequnknown` or `seq2` copy, both read `legacy`, and only the F3
+`read_and_commit_legacy` case advanced the legacy document and head. M6 also
+matched: live migrated documents and heads were byte-equal except for that
+deliberate F3 advance; rc.1 only added its refusal copies, and both schedulers
+added the already-recorded empty task-store lock. There is no round-2 behavior
+difference to add to the release note.
+
+### P10 to P15
+
+P10 and P11 construct the rc.1 commit and exits bodies as frozen literals,
+seal those exact bytes, and use a frozen head type with no layout key. Each
+reads without quarantine, migrates on its first ordinary write, and records
+one migration after a second write. P12 freezes tag-era keys separately from
+post-tag keys and names the covering row. After rc.2, any sealed field bumps
+the schema, and the row shows the old reader's answer; P12 guards the shape
+while P10 and P11 guard the bytes. `Attempt.cleaned_at` and marker keys
+`pid`, `start`, and `cancel` are not listed because no tag is computed over
+those unsealed records.
+
+P13 used product writers in both directions. Current-written verdict,
+snapshot, and outcome rows were accepted by v3.1.2 and rc.1; rows written by
+each tag were accepted by current, with no skipped, refused, or tampered row.
+The dispatch-tip diff remained 35 lines in outcome.go (one insertion and 34
+deletions) and 12 insertions in class.go; v3.1.2 to rc.1 remained empty.
+P14's frozen `quarantine_clear` record raises no train alert and both status
+commands print `gatestore.LegacyLine`. P15's saved probe
+`compat_probe_rc1_binary_test.go.txt`, installed at
+`internal/cli/rollback_rows_test.go:153`, built the exact v3.2.0-rc.1 archive
+offline and ran that executable's `task renew` against a live current task
+store. The old binary rewrote the lease to two renewals with all three newer
+labels absent; current `task show` retained the exact expiry and printed
+`2 renewals (0 activity, 0 manual, 2 unlabelled)`. The next activity logged
+`first activity renewal of attempt 1 after 2 unlabelled renewals` once, and
+the following activity inside the interval logged nothing.
+
+### Revert proofs
+
+Each command below was run alone; its first failure line is copied from that
+run.
+
+- Commit recognizer removed; `go test ./internal/cli -run '^TestUpDowngradeInterruptedMigrationMatrix$' -count=1`: `up_raw_layout_test.go:228: interrupted migration downgrade = <nil>`.
+- Exits recognizer removed; the same command: `up_raw_layout_test.go:228: interrupted migration downgrade = <nil>`.
+- Downgrade comparison unreachable; `go test ./internal/cli -run '^(TestUpRefusesEveryBinaryBeforeTheRawLayout|TestUpDowngradeInterruptedMigrationMatrix|TestUpRefusesAnUnparseableTargetWhenRawLedgersExist)$' -count=1`: `up_raw_layout_test.go:191: v3.1.2: <nil>`.
+- First head only; `go test ./internal/cli -run '^TestUpRefusesEveryBinaryBeforeTheRawLayout/migrated_chain_with_legacy_sibling$' -count=1`: `up_raw_layout_test.go:191: v3.1.2: <nil>`.
+- `Recovered` without `omitempty`; `go test ./internal/seatcommit -run '^TestRC1WrittenCommitLedgerReadsAndMigratesOnce$' -count=1`: `raw_compat_test.go:86: frozen rc.1 read: commit ledger qa: ledger_tampered: the tag of commits.qa link 1 fails; the refused document is quarantined at /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRC1WrittenCommitLedgerReadsAndMigratesOnce3907382642/001/extensions/amq-squad/quarantine/commits.qa.seq1`.
+- Head layout without `omitempty`; `go test ./internal/seatcommit -run '^TestRC1WrittenCommitLedgerReadsAndMigratesOnce$' -count=1`: `raw_compat_test.go:86: frozen rc.1 read: commit ledger qa: ledger_tampered: the head of commits.qa does not decode or its tag fails; the refused document is quarantined at /var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRC1WrittenCommitLedgerReadsAndMigratesOnce182856714/001/extensions/amq-squad/quarantine/commits.qa.seq1`; `go test ./internal/scheduler -run '^TestRC1WrittenExitsLedgerReadsAndMigratesOnce$' -count=1`: `raw_exits_test.go:83: frozen rc.1 load = err ledger_tampered: the head of exits does not decode or its tag fails queue []`.
+- Planted `Ledger.extra`; `go test ./internal/seatcommit -run '^TestRC1CommitSealedTypeKeyGuard$' -count=1`: `raw_compat_test.go:205: add a frozen rc.1 row for Ledger.extra and list it here`.
+- Planted `verdictBody.extra`; `go test ./internal/task -run '^TestRC1TaskSealedRowKeyGuard$' -count=1`: `rollback_rows_test.go:87: add a frozen rc.1 row for verdictBody.extra and list it here`.
+- Planted `Row.extra`; `go test ./internal/routing -run '^TestRC1RoutingOutcomeRowKeyGuard$' -count=1`: `rollback_rows_test.go:85: add a frozen rc.1 row for Row.extra and list it here`.
+- Legacy drift skip disabled; `go test ./internal/mergetrain -run '^TestRollbackLegacyGateDoesNotRaiseTrainAlert$' -count=1`: `rollback_rows_test.go:53: legacy dry run: err=<nil> alerts=[{ID:gate-store-unreadable-55f9a5e9014a Repository:owner/fixture Kind:gate_store_unreadable Name:/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestRollbackLegacyGateDoesNotRaiseTrainAlert3897014411/001/rollback-root/extensions/amq-squad/gates/clear-0a227ca8d88dc97c65c540a4d0fa18a7.json SHA: At:2026-11-11T09:57:15Z Detail:a gate store of this squad could not be read, so no gate in it clears an alert; fix or remove the record named below the line`.
+- Renewal suffix disabled; `go test ./internal/cli -run '^TestRollbackRC1RewriteLeavesUnlabelledRenewals$' -count=1`: `rollback_rows_test.go:142: post-rc.1 decisions = [{At:2026-10-23 12:00:00 +0000 UTC Decision:{Kind:lease_renewed TaskID:t1 Seat:cto Pool: Reason:first activity renewal of attempt 1 Stage: ReasonCode:}} {At:2026-10-23 12:00:00 +0000 UTC Decision:{Kind:lease_renewed TaskID:t1 Seat:cto Pool: Reason:first activity renewal of attempt 1 Stage: ReasonCode:}}] err=<nil>`.
+
+### Round-2 gates
+
+- `go build ./...` exited 0; Go printed only the non-fatal host module-stat-cache sandbox warning.
+- `go vet ./internal/cli ./internal/scheduler ./internal/schedproc ./internal/sealchain ./internal/seatcommit ./internal/task ./internal/routing ./internal/mergetrain` exited 0.
+- Full individual package tests for seatcommit, scheduler, schedproc, sealchain, task, routing, and mergetrain exited 0. Seatcommit and schedproc were rerun outside the sandbox after their first runs reached only prohibited loopback or Unix-socket binds.
+- The targeted CLI rollback/up command, including the actual rc.1 executable row, exited 0.
+- `go run ./scripts/redact-evidence -check docs/v3-spike/320-rc2-rollback/` exited 0.
+
 ## Release note
 
-Installing v3.1.2 over a session whose legacy ledger rc.2 migrated makes the old commit reader and scheduler report `ledger_tampered`, leaves an untouched legacy sibling readable, and creates no quarantine copy (M1).
+Installing either older version over a completed raw-layout migration makes its commit and exits readers report `ledger_tampered`; rc.1 additionally preserves refusal copies without changing live sealed files. (M1-M5)
 
-Installing v3.2.0-rc.1 produces the same refusal and additionally copies the refused commit document and head to `commits.<seat>.sequnknown` without changing the live files (M2).
+The old process appends one `ledger_tampered` and one `exits_ledger_unwritable` decision per tick, saves scheduler state without a durable tamper hold, leaves tasks pending, and does not alter live sealed documents or heads. (P5)
 
-If rc.2 stopped after writing the raw successor but before completing its head, both old versions still refuse it, and rc.1 names the copy from the verified legacy sequence when it can (M3).
+Rolling forward consumes the old process rows without another tamper alarm, dedupes migration decisions, leaves the queued task available without `scheduler recover`, takes over F5a's dead marker immediately so `seat clean` can release its unresolved cancellation, and preserves F5b's `cleaned_at`. (P6)
 
-In a mixed session, both old versions can still read and commit an untouched legacy seat, but they refuse the migrated seat and cannot load the migrated exits queue (M4).
+The next ordinary current write completes each interrupted or legacy ledger migration exactly once; both commit heads and the exits head become raw while existing rc.1 quarantine evidence remains byte-equal. (P7-P8)
 
-A ledger recovered under rc.2 is still a raw-layout ledger to both old versions; v3.1.2 refuses it in place and rc.1 preserves the recovery slot while adding its own refusal copy (M5).
+`amq-squad up --binary` refuses v3.1.2 and rc.1 both for a completed raw layout and for an authenticated interrupted migration, but deliberately leaves bad-seal, wrong-predecessor, missing, and non-layout documents to the owning reader's tamper check. (P1-P4)
 
-Neither old version changes, moves, or deletes a migrated live sealed document or head; the only live changes measured were the explicitly requested old-format F3 commit and its matching legacy head, while rc.1's quarantine and the task lock were additions outside live sealed paths (M6).
+Frozen rc.1 commit and exits bytes remain readable and migrate once; new sealed fields require a schema bump and a frozen old-reader row. (P10-P12)
 
-Rolling forward to rc.2 verifies every measured root, cleanly migrates the F3 legacy commit made during rollback, retains only the expected quarantine and decision evidence, and emits exit-check deferrals rather than `ledger_tampered` (M7).
+Verdict, snapshot, and routing outcome rows cross current, v3.1.2, and rc.1 in both directions with no alarm and no refusal either way. (P13)
 
-The supported path prevents this state: `amq-squad up --binary` refuses v3.1.2 and v3.2.0-rc.1 for both a migrated root and a mixed migrated-plus-legacy root, so an owner must roll forward or start a new session (M8).
+Legacy `quarantine_clear` gates are reported as legacy records and skipped by merge-train drift instead of raising an unreadable-store alert. (P14)
+
+After the actual rc.1 executable rewrites a current task and drops renewal labels, status reports the renewals as unlabelled and the next activity renewal logs once with their count. (P15)

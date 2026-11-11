@@ -8,7 +8,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +19,198 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
+
+// rc1FrozenHead is the exact legacy head shape at v3.2.0-rc.1,
+// 3966afb72b85e1ab6c0fc8c879f1c5ef03f92a40,
+// internal/sealchain/sealchain.go:261-270. In particular it has no layout
+// field. Production head types must not write this fixture.
+type rc1FrozenHead struct {
+	Schema  int       `json:"schema"`
+	Name    string    `json:"name"`
+	Seq     int       `json:"seq"`
+	Link    string    `json:"link_tag"`
+	SeedDev uint64    `json:"seed_dev"`
+	SeedIno uint64    `json:"seed_ino"`
+	At      time.Time `json:"at"`
+	Tag     string    `json:"tag,omitempty"`
+}
+
+func (h rc1FrozenHead) signed(key []byte) rc1FrozenHead {
+	h.Tag = ""
+	h.Tag = sealchain.Tag(key, "amq-squad sealed head v1", h)
+	return h
+}
+
+func installFrozenRC1CommitLedger(t *testing.T, root string) {
+	t.Helper()
+	key, err := sealchain.SessionKey(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Frozen field set and order from v3.2.0-rc.1 internal/seatcommit/ledger.go
+	// :32-77, including a commit, lease and discard. The seal is over these
+	// literal bytes via json.RawMessage, never over the current Ledger type.
+	const body = `{"schema":1,"handle":"qa","worktree":"/tmp/qa","branch":"seat/qa","base":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","commits":[{"task":"t1","commit":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","parent":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","tree":"cccccccccccccccccccccccccccccccccccccccc","at":"1970-01-01T00:00:03Z","pushed":false,"branch":"seat/qa-t1","base":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],"at":"1970-01-01T00:00:04Z","discarded":[{"task_id":"t0","attempt":1,"reason":"retry","parent":"dddddddddddddddddddddddddddddddddddddddd","tree":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","diff_digest":"sha256:discard","at":"1970-01-01T00:00:02Z"}],"lease":{"task":"t1","branch":"seat/qa-t1","base":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","start":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","at":"1970-01-01T00:00:01Z"}}`
+	link := sealchain.Seal(key.Key, ledgerLabel, nil, json.RawMessage(body))
+	linkBytes, err := json.Marshal(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := append([]byte(body[:len(body)-1]), []byte(`,"seal":`)...)
+	document = append(document, linkBytes...)
+	document = append(document, '}')
+	if err := os.MkdirAll(LedgerDir(root), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(ledgerPath(root, "qa"), document, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	head := rc1FrozenHead{Schema: 1, Name: ledgerHeadName("qa"), Seq: link.Seq, Link: link.Tag, SeedDev: key.Dev, SeedIno: key.Ino, At: time.Unix(5, 0).UTC()}.signed(key.Key)
+	headBytes, err := json.Marshal(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(sealchain.HeadPath(root, ledgerHeadName("qa"))), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealchain.HeadPath(root, ledgerHeadName("qa")), headBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRC1WrittenCommitLedgerReadsAndMigratesOnce(t *testing.T) {
+	root := t.TempDir()
+	installFrozenRC1CommitLedger(t, root)
+	l, err := ReadLedger(root, "qa")
+	if err != nil {
+		t.Fatalf("frozen rc.1 read: %v", err)
+	}
+	if len(l.Commits) != 1 || l.Commits[0].Task != "t1" || l.Lease == nil || l.Lease.Task != "t1" || len(l.Discarded) != 1 || l.Discarded[0].TaskID != "t0" || l.Recovered != nil {
+		t.Fatalf("frozen rc.1 values = %+v", l)
+	}
+	if _, statErr := os.Stat(QuarantineDir(root)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("frozen rc.1 read created quarantine: %v", statErr)
+	}
+	l.At = time.Unix(6, 0).UTC()
+	if err := writeLedger(root, l, "frozen rc.1 first write"); err != nil {
+		t.Fatal(err)
+	}
+	key, ok, err := sealchain.ReadKey(root)
+	if err != nil || !ok {
+		t.Fatalf("key = %v, %v", ok, err)
+	}
+	headBytes := readFile(t, sealchain.HeadPath(root, ledgerHeadName("qa")))
+	firstLink, layout, err := sealchain.HeadLink(ledgerHeadName("qa"), key, headBytes)
+	if err != nil || layout != sealchain.RawLayout || firstLink.Seq != 2 {
+		t.Fatalf("first write head = %+v layout %q err %v", firstLink, layout, err)
+	}
+	decisionPath := filepath.Join(root, "extensions", "amq-squad", "scheduler", "decisions.jsonl")
+	if got := bytes.Count(readFile(t, decisionPath), []byte(`"kind":"ledger_layout_migrated"`)); got != 1 {
+		t.Fatalf("first write migration records = %d", got)
+	}
+	l, err = ReadLedger(root, "qa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.At = time.Unix(7, 0).UTC()
+	if err := writeLedger(root, l, "frozen rc.1 second write"); err != nil {
+		t.Fatal(err)
+	}
+	if got := bytes.Count(readFile(t, decisionPath), []byte(`"kind":"ledger_layout_migrated"`)); got != 1 {
+		t.Fatalf("second write migration records = %d", got)
+	}
+}
+
+func rollbackJSONKeys(typ reflect.Type) []string {
+	if typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	var keys []string
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		tag := strings.Split(field.Tag.Get("json"), ",")[0]
+		if tag == "-" {
+			continue
+		}
+		if field.Anonymous && tag == "" {
+			keys = append(keys, rollbackJSONKeys(field.Type)...)
+			continue
+		}
+		if tag == "" {
+			tag = field.Name
+		}
+		keys = append(keys, tag)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func rollbackKeySet(keys string) map[string]bool {
+	out := map[string]bool{}
+	for _, key := range strings.Fields(keys) {
+		out[key] = true
+	}
+	return out
+}
+
+func TestRC1CommitSealedTypeKeyGuard(t *testing.T) {
+	// Tag key sets are from v3.2.0-rc.1 3966afb7,
+	// internal/seatcommit/ledger.go:32-302 and commit.go's Change. Keys added
+	// since the tag are separate and name the frozen row that covers their
+	// absence from rc.1 bytes.
+	tag := map[string]string{
+		"Ledger":             "schema handle worktree branch base head commits at quarantine cleared seeded discarded evidence_seq repository base_branch push_url local_push_ack gh_path gh_sha256 gh_pin_path rest lease seal",
+		"Target":             "repository base_branch push_url local_push_ack gh_path gh_sha256 gh_pin_path",
+		"LedgerDiscard":      "task_id attempt reason parent tree diff_digest at ref ref_tree retain_until",
+		"EvidenceRef":        "ref ref_tree retain_until",
+		"LedgerQuarantine":   "task reason parent tree diff_digest snapshot_error config_changes launch at cleared_at cleared_by ref ref_tree retain_until clear",
+		"legacyConfigChange": "File Preflight Detail",
+		"legacyClearRecord":  "schema seat task tree diff_digest quarantined_at cleared_at key_id gate_id event_id config_digest launch condition signature",
+		"LedgerLease":        "task branch base start at",
+		"LedgerCommit":       "task commit parent tree at pushed branch base declared_digest diff_digest lines changes",
+		"Change":             "path added deleted binary",
+		"LedgerRecovery":     "",
+	}
+	post := map[string]map[string]string{
+		"Ledger":         {"recovered": "TestRC1WrittenCommitLedgerReadsAndMigratesOnce"},
+		"LedgerCommit":   {"note": "TestRC1WrittenCommitLedgerReadsAndMigratesOnce"},
+		"LedgerRecovery": {},
+	}
+	for _, key := range strings.Fields("quarantine_seq quarantine_path body_sha256 head_sha256 by reason at carried verified link seq_from alarm") {
+		post["LedgerRecovery"][key] = "TestRC1WrittenCommitLedgerReadsAndMigratesOnce"
+	}
+	types := map[string]reflect.Type{
+		"Ledger": reflect.TypeOf(Ledger{}), "Target": reflect.TypeOf(Target{}),
+		"LedgerDiscard": reflect.TypeOf(LedgerDiscard{}), "EvidenceRef": reflect.TypeOf(EvidenceRef{}),
+		"LedgerQuarantine": reflect.TypeOf(LedgerQuarantine{}), "legacyConfigChange": reflect.TypeOf(legacyConfigChange{}),
+		"legacyClearRecord": reflect.TypeOf(legacyClearRecord{}), "LedgerLease": reflect.TypeOf(LedgerLease{}),
+		"LedgerCommit": reflect.TypeOf(LedgerCommit{}), "Change": reflect.TypeOf(Change{}),
+		"LedgerRecovery": reflect.TypeOf(LedgerRecovery{}),
+	}
+	source, err := os.ReadFile("raw_compat_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for typeName, typ := range types {
+		atTag := rollbackKeySet(tag[typeName])
+		for _, key := range rollbackJSONKeys(typ) {
+			if atTag[key] {
+				continue
+			}
+			row := post[typeName][key]
+			if row == "" {
+				t.Errorf("add a frozen rc.1 row for %s.%s and list it here", typeName, key)
+				continue
+			}
+			if !bytes.Contains(source, []byte("func "+row+"(")) {
+				t.Errorf("listed frozen rc.1 row %s for %s.%s does not exist", row, typeName, key)
+			}
+		}
+	}
+}
 
 func writeUnknownCommitField(t *testing.T, f *fixture, version string, schema int) {
 	t.Helper()
@@ -140,10 +334,23 @@ func TestRollbackRollForwardCompatibility(t *testing.T) {
 	if root == "" {
 		t.Skip("set AMQSQ_ROLLFORWARD_ROOT")
 	}
+	beforeSlots := snapshotRollbackQuarantine(t, root)
+	decisionPath := filepath.Join(root, "extensions", "amq-squad", "scheduler", "decisions.jsonl")
+	beforeDecisions, _ := os.ReadFile(decisionPath)
+	key, ok, err := sealchain.ReadKey(root)
+	if err != nil || !ok {
+		t.Fatalf("roll-forward key = %v, %v", ok, err)
+	}
 	for _, handle := range []string{"qa", "legacy"} {
 		path := ledgerPath(root, handle)
 		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			continue
+		}
+		headPath := sealchain.HeadPath(root, ledgerHeadName(handle))
+		beforeHead := readFile(t, headPath)
+		beforeLink, beforeLayout, err := sealchain.HeadLink(ledgerHeadName(handle), key, beforeHead)
+		if err != nil {
+			t.Fatalf("before head %s = %v", handle, err)
 		}
 		l, err := ReadLedger(root, handle)
 		t.Logf("roll-forward read handle=%s error=%v", handle, err)
@@ -153,16 +360,75 @@ func TestRollbackRollForwardCompatibility(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if handle == "legacy" {
-			l.At = time.Unix(50, 0)
-			if err := writeLedger(root, l, "rollback roll-forward fixture"); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := ReadLedger(root, handle); err != nil {
-				t.Fatalf("migrated legacy seat = %v", err)
-			}
+		if afterRead := readFile(t, headPath); !bytes.Equal(afterRead, beforeHead) {
+			t.Fatalf("read alone changed %s head (layout %q seq %d)", handle, beforeLayout, beforeLink.Seq)
+		}
+		l.At = time.Unix(50, 0)
+		if err := writeLedger(root, l, "rollback roll-forward fixture"); err != nil {
+			t.Fatal(err)
+		}
+		afterHead := readFile(t, headPath)
+		afterLink, afterLayout, err := sealchain.HeadLink(ledgerHeadName(handle), key, afterHead)
+		if err != nil || afterLayout != sealchain.RawLayout || afterLink.Seq <= beforeLink.Seq || afterLink.Tag == "" {
+			t.Fatalf("roll-forward head %s = %+v layout %q err %v; before %+v %q", handle, afterLink, afterLayout, err, beforeLink, beforeLayout)
+		}
+		if _, err := ReadLedger(root, handle); err != nil {
+			t.Fatalf("migrated seat %s = %v", handle, err)
 		}
 	}
+	decisions := readFile(t, decisionPath)
+	if !bytes.HasPrefix(decisions, beforeDecisions) {
+		t.Fatal("roll-forward rewrote the decision log instead of appending")
+	}
+	if bytes.Contains(decisions[len(beforeDecisions):], []byte(`"kind":"ledger_tampered"`)) {
+		t.Fatal("roll-forward appended ledger_tampered")
+	}
+	for _, handle := range []string{"qa", "legacy"} {
+		count := 0
+		for _, line := range bytes.Split(decisions, []byte{'\n'}) {
+			var row struct {
+				Kind       string `json:"kind"`
+				LedgerKind string `json:"ledger_kind"`
+				Seat       string `json:"seat"`
+			}
+			if json.Unmarshal(line, &row) == nil && row.Kind == sealchain.LayoutMigrationDecisionKind && row.LedgerKind == "commits" && row.Seat == handle {
+				count++
+			}
+		}
+		if count != 1 {
+			t.Fatalf("commit migration records for %s = %d", handle, count)
+		}
+	}
+	afterSlots := snapshotRollbackQuarantine(t, root)
+	if len(afterSlots) != len(beforeSlots) {
+		t.Fatalf("roll-forward quarantine file count changed: before %d after %d", len(beforeSlots), len(afterSlots))
+	}
+	for path, before := range beforeSlots {
+		if !bytes.Equal(afterSlots[path], before) {
+			t.Fatalf("roll-forward changed quarantine slot file %s", path)
+		}
+	}
+}
+
+func snapshotRollbackQuarantine(t *testing.T, root string) map[string][]byte {
+	t.Helper()
+	base := QuarantineDir(root)
+	out := map[string][]byte{}
+	err := filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil || info.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(base, path)
+		out[rel] = readFile(t, path)
+		return nil
+	})
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	return out
 }
 
 func TestCommitCompatibilityRefusalsAreTypedAndNotQuarantined(t *testing.T) {
