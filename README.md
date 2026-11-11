@@ -70,7 +70,7 @@ Earlier releases are in their notes, listed under
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.2.0-rc.1
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.2.0-rc.2
 amq-squad version
 ```
 
