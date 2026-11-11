@@ -47,7 +47,7 @@ skew-check.md, before the prepare. `git diff --stat 3966afb72b85e1ab6c0fc8c879f1
 
 Unlike rc.1, the result is not "no sealed struct changed". rc.2 changes the sealed layout: the commit and exits ledgers move to the raw-byte layout, and `FirstRawLayoutVersion` is "v3.2.0-rc.2" (internal/sealchain/raw.go:30). What each older build answers when it meets the new layout, and what `up --binary` refuses, is measured in docs/v3-spike/320-rc2-rollback/execution.md (rows M1-M5 and P1-P15) and stated in the notes' "Upgrading from rc.1 or 3.1.2" and "Rolling back" sections. This note adds no cross-version claim of its own.
 
-The rollback line (rollback.txt), written from those two sections for the restart of the squad's own lead, which has not run (see step 6): before this build has written a commit or exits ledger in session v31, stop the rc.2 lead and run `/Users/omri/scratch-v320rc1/build/pi/amq-squad up --binary /Users/omri/scratch-v320rc1/build/pi/amq-squad`, which prints amq-squad v3.2.0-rc.1; once a raw-layout head or an authenticated interrupted migration exists, `up --binary` refuses every target before v3.2.0-rc.2 with `ledger_layout_downgrade`, and the way is forward or a new session.
+The rollback line (rollback.txt), written from those two sections for the restart of the squad's own lead, which had not run when this line was written (see step 6): before this build has written a commit or exits ledger in session v31, stop the rc.2 lead and run `/Users/omri/scratch-v320rc1/build/pi/amq-squad up --binary /Users/omri/scratch-v320rc1/build/pi/amq-squad`, which prints amq-squad v3.2.0-rc.1; once a raw-layout head or an authenticated interrupted migration exists, `up --binary` refuses every target before v3.2.0-rc.2 with `ledger_layout_downgrade`, and the way is forward or a new session.
 
 ## The build
 
@@ -57,7 +57,7 @@ Built from the tag in the scratch worktree /Users/omri/scratch-v320rc2 (detached
 
 ## Step 6: the lead's first screen, the scratch-repository route
 
-RELEASING.md step 6 gives two routes: restart the squad's own lead on the new binary, or run `amq-squad lead --team -- --offline` in a scratch repository. This note records the second. The squad's own lead has not been restarted: at 13:44Z it was still the rc.1 lead of 2026-11-07 (pid 26009, `/Users/omri/go/bin/amq-squad lead --team`), and the installed binary is still v3.2.0-rc.1. The restart and the install wait for the owner's word, asked at 15:20 IST; ending a live lead is his to approve. Under RELEASING.md step 6 the release does not count as done until the installed binary is the rc.2 build and the squad's own lead runs on it; this note closes the first-screen record only.
+RELEASING.md step 6 gives two routes: restart the squad's own lead on the new binary, or run `amq-squad lead --team -- --offline` in a scratch repository. This note records the second. The squad's own lead has not been restarted: at 13:44Z it was still the rc.1 lead of 2026-11-07 (pid 26009, `/Users/omri/go/bin/amq-squad lead --team`), and the installed binary is still v3.2.0-rc.1. The restart and the install wait for the owner's word, asked at 15:20 IST; ending a live lead is his to approve. Under RELEASING.md step 6 the release does not count as done until the installed binary is the rc.2 build and the squad's own lead runs on it; this note closes the first-screen record only. Added after the restart: since 2026-11-11T13:53:57Z the installed binary is the rc.2 build and the squad's own lead runs on it; the record is the section "Step 6: the squad's own lead on the installed rc.2 build" below.
 
 - The run is the lead session's own (scratch-lead.sh, as it ran; scratch-lead-run.txt), 13:44:12Z to 13:44:24Z, with the scratch repository RELEASING.md names and otherwise in the form of the 3.1.2 note (docs/v3-spike/312-evidence/hotfix-hostfacts.md, "Load proof: the built lead in tmux"): a new directory under /private/tmp with an empty `git init` repository and no `squad.yaml`, a scratch `HOME`, a tmux server on its own socket, and `env -i` with `HOME`, `PATH=/usr/bin:/bin:/usr/sbin:/sbin`, `TERM` and `GIT_CEILING_DIRECTORIES` only (no `amq` on PATH, no key). The command is `/Users/omri/scratch-v320rc2/build/pi/amq-squad lead --team -- --offline`, the binary built from the tag above, which prints `amq-squad v3.2.0-rc.2`.
 - At 3 s and at 10 s the pane was alive: `dead=0 cmd=amq-squad` (pane pid 5041 at 10 s).
@@ -81,7 +81,71 @@ RELEASING.md step 6 gives two routes: restart the squad's own lead on the new bi
   The team screen is up and the capture holds no "Failed to load extension" line (`grep -c` prints 0).
 - The tmux server was then killed; afterwards no process named the scratch directory or the tag build's binary, and none had its working directory there (the lead session's `ps` and `lsof -d cwd` after the run; scratch-lead-run.txt holds the listing for the scratch directory only).
 
-What this route does not show is the squad's own session on rc.2: the adopted roster, the scheduler's first pass over session v31, and the first rc.2 ledger write there, after which the rollback line in rollback.txt applies. Those are recorded when the owner's restart runs.
+What this route does not show is the squad's own session on rc.2: the adopted roster, the scheduler's first pass over session v31, and the first rc.2 ledger write there, after which the rollback line in rollback.txt applies. Those are recorded when the owner's restart runs. Added after the restart: they are in the section "Step 6: the squad's own lead on the installed rc.2 build" below.
+
+## Step 6: the squad's own lead on the installed rc.2 build
+
+The owner's word, typed in the lead session at 15:52 IST (13:52Z) on 2026-11-11 in answer to the restart ask (dated 15:20 IST under the scratch-repository route above): "Approved all. Restart what u need". The lead session read it as approval to end the squad's own lead with SIGTERM and to run `up --binary` with the tag build, and not as approval for anything the permission system refuses, for typing into a pane, or for any outward message; at 15:56 IST it also read a `scheduler relaunch` from its own shell as inside those words (owner-approvals-excerpt-restart.txt: three whole lines copied from the job's approvals record, which stays in scratch).
+
+The run is the lead session's own (restart-lead.sh, as it ran; restart-pre.txt, restart-run.txt, up-320rc2.json, restart-post.txt):
+
+- Before, at 13:53:53Z (restart-pre.txt): the installed binary printed `amq-squad v3.2.0-rc.1`; the lead was pid 26009 and its scheduler pid 26011, both started 2026-11-07 18:55:34 IST; sixteen processes had their working directory in a seat worktree, the two Codex seats (pids 18592 and 18598) and their children; status read "1 needs you, 0 working, 1 ready, 162 inactive"; the scheduler's decisions log had 21542 lines.
+- SIGTERM to pid 26009 at 13:53:54Z. The lead and the scheduler were gone 1 s later; the scheduler's last line is `scheduler_stopped` at 13:53:54.388896Z. No SIGKILL was sent; the script stops without one if either pid outlives 30 s.
+- `/Users/omri/scratch-v320rc2/build/pi/amq-squad up --binary /Users/omri/scratch-v320rc2/build/pi/amq-squad --json` started at 13:53:55.309533Z and was collected with exit status 0 at 13:54:25Z, after the second screen capture (restart-run.txt; restart-lead.sh waits for both captures before it collects the status). Its stderr file, up-320rc2.err in the job's scratch, is 0 bytes and is not copied. Its steps (up-320rc2.json): compile ok, "4 seats, lead cto, session v31"; install ok, "installed /Users/omri/scratch-v320rc2/build/pi/amq-squad (v3.2.0-rc.2) at /Users/omri/go/bin/amq-squad by temp name and rename"; session skipped, the root exists; doctor ok, "41 checks, none failed (5 warnings)"; lead ok, "no recorded lead or scheduler is running"; tmux ok; roster ok with `roster_incomplete` (below).
+- After: `/Users/omri/go/bin/amq-squad version` prints `amq-squad v3.2.0-rc.2`, and its sha256 equals the tag build's, e978bdeff8e5df78631090f39f4eb8208804b7a89f97917ba4a99bb9914491df (the lead session's `shasum -a 256` of both at 14:08Z; no record file). The lead is pid 15222 on pane %149 and its scheduler pid 15228, both started 15:53:57 IST (restart-run.txt, restart-post.txt).
+
+Doctor's five warnings (doctor-warnings.txt, from `amq-squad doctor --json` at 13:55Z, 36 ok and 5 warn) are the registry file out of date, five unverified pi registry entries, the amq-remote login service absent (two checks) and eleven old pi runtime versions. None is a Codex hook trust warning, so the notes' step 4 was not needed on this host. Step 5 is for an upgrade from 3.1.2 with a task in progress; this was an upgrade from rc.1 with none (working 0).
+
+### The adopted roster
+
+The scheduler adopted the two seats that were alive: `seat_adopted` for dev (pool codex:gpt-5.6-terra:medium, pid 18592) at 13:53:57.635341Z and for reviewer (pool codex:gpt-5.6-sol:high, pid 18598) at 13:53:57.639076Z, each with the reason "alive from a previous incarnation; its accepted proof's pid and start stamp match the live process". Both were launched on 2026-11-10T14:06:08Z (up-320rc2.json, each roster row's launch timing), when the installed binary was the rc.1 build, so neither has been through rc.2's launch path; the sixteen worktree processes are the same sixteen at 13:59:57Z (restart-post.txt). So this record shows no seat launched by the rc.2 binary; that is for the soak's record.
+
+The third seat of the working squad.yaml, dev2, was not launched: `roster_incomplete` at 13:53:59.129387Z, "adopted dev,reviewer; no launch: AMQ refuses a fresh seat into the present binding (binding_present_without_resumable_conversation), so a task for a missing seat's pool blocks for the lead's relaunch (amq-squad scheduler relaunch)". See Things seen 4.
+
+### The scheduler's first pass over session v31
+
+decisions-after-restart.jsonl is the log from the stop on: lines 21543 to 21555, thirteen lines, and no line was added between 13:53:59Z and 13:59:57Z (restart-post.txt counts 21555). By kind: 1 `scheduler_stopped`, 1 `ledger_layout_migrated`, 2 `seat_adopted`, 1 `scheduler_started` ("incarnation 6aaf2fd93ca7", 13:53:57.642097Z), 6 `seat_clean_superseded`, 1 `roster_incomplete`, 1 `decision_socket_open`. The six `seat_clean_superseded` lines drop queued clean items of earlier attempts (t11, t22, t24, t54, t58, t64) because the seat holds a later lease; each says "nothing is closed or cleaned for it". No refusal, no `ledger_tampered`, no lease decision.
+
+Status at 13:54:53Z (`amq-squad status --session v31 --json`, producer version v3.2.0-rc.2; the file stays in the job's scratch: 251293 bytes, sha256 660c7a48e045cd9c28055bfcd6d5fba9d13e7fb2be2d8d0e8db30fd7c14b77b5): counts all 164, needs_you 1, working 0, ready 1, inactive 162; 161 task rows, 91 completed and 70 cancelled; the lead object is handle cto, pid 15222, pane %149, recorded_at 2026-11-11T13:53:57.549956Z, live true; the scheduler object is pid 15228, started_at 2026-11-11T13:53:57.599413Z, launch_start 2026-11-11T13:53:55.309533Z, live_seats 2, live true. The one needs_you item is the reviewer seat's question of 2026-11-05 on thread gate/t94-cli-test-scope, which was there before the restart. The three warnings are in Things seen 3.
+
+### The first rc.2 ledger write
+
+One line, once: `ledger_layout_migrated` at 13:53:57.611166Z, ledger_kind exits, seq 409881, "legacy exits ledger migrated to raw-bytes-v1 at link 409881". `scheduler/exits.json` was 226 bytes before and is 230 after (restart-pre.txt, restart-post.txt). From that line on the rollback line in rollback.txt applies in its second form: `up --binary` to a build before v3.2.0-rc.2 is refused with `ledger_layout_downgrade`. No rollback attempt is recorded here.
+
+The restart itself wrote no per-seat commit ledger: `commits/dev.json` (10852 bytes) and `commits/reviewer.json` (269978 bytes) have the same sizes and times before and after (restart-pre.txt, restart-post.txt). The reviewer seat's ledger migrated at the dispatch of its first rc.2 task, not at a commit: `ledger_layout_migrated` at 14:05:35.731785Z, ledger_kind commits, seat reviewer, seq 454, "legacy commit ledger migrated to raw-bytes-v1 at link 454", half a second before the `dispatched` line for t162 at 14:05:36.252341Z (decisions-first-dispatch.jsonl, lines 21556 to 21558 of the same log; the third is t162's first activity renewal). The dev seat's ledger had not been written by rc.2 when this record closed; its line, if one comes, is for the soak's record.
+
+### The lead's first screen
+
+Captured 12 s after `up` started (13:54:07Z, lead-first-screen.txt) and again at 30 s (13:54:25Z, lead-screen-30s.txt), with `tmux capture-pane` on session squad-lead-amq-squad-f42a4; at both the pane was `%149 pid=15222 cmd=amq-squad dead=0`. The two captures are equal byte for byte. Every non-blank line but the two rule lines and the first, which is the tail of pi's own tmux notice:
+
+```
+amq-squad: lead cto (pid 15222, pane %149) · root /Users/omri/code/amq-squad...
+seats (3)
+  cto  -  stopped
+  dev  codex gpt-5.6-terra medium  idle  · up in 3.4s, first message 39007.6s
+  reviewer  codex gpt-5.6-sol high  waiting: on your answer to its question  ...
+  the roster came up without seat dev2; ask the lead to relaunch the roster
+tasks (161)
+  161 closed
+train
+  running: none
+  last run: merged a PR, 3h ago; PRs #961; 1 merged
+waiting on you (0)
+  Nothing is waiting on you.
+  ! the gate store could not be read; its error is below the line
+----------
+  roster_incomplete: dev2 adopted dev,reviewer; no launch: AMQ refuses a fres...
+  train last run: mt-20261111T104912Z-0a791de1 merge
+  gate store: gate clear-0a227ca8d88dc97c65c540a4d0fa18a7 is a legacy quarant...
+~/code/amq-squad (v3)
+0.0%/131k (auto)                                            qwen3.6:27b • medium
+```
+
+The team screen is up and neither capture holds a "Failed to load extension" line (`grep -c` prints 0 for each).
+
+### A relaunch from outside the lead is refused
+
+At 13:55:56Z the lead session ran `amq-squad scheduler relaunch` from its own shell (with the session's root, a one-sentence reason and `--json`; the command line was not saved), to bring dev2 in. The build refused it: exit 15, `not_lead`, "pid 18008 does not descend from the lead cto's recorded incarnation" (relaunch.json, relaunch-err.txt, relaunch-times.txt). It was not retried. The lead-origin check held on the live squad: only a process that descends from the recorded lead may relaunch the roster. The relaunch from the lead's pane is the owner's.
 
 ## Things seen
 
@@ -93,8 +157,18 @@ The prepare posted both gate questions to the owner's Buzz channel (question_sen
 
 The notes' "Owner and lead steps for 3.2.0-rc.2" say the release flow never marks a release as a prerelease, so the owner marks it after the publish. In a hand cut `gh release create` takes `--prerelease --latest=false` itself; the edit after it changed nothing.
 
+### 3. The lead's screen says the gate store could not be read when three legacy records were skipped
+
+On the squad's own first rc.2 screen (Step 6, the squad's own lead): "! the gate store could not be read; its error is below the line". The store was read. Status carried three warnings and no read error (gate-store-warnings.txt): `gate store: gate clear-<id> is a legacy quarantine_clear gate (a kind this build no longer carries); skipped`, for the ids 0a227ca8d88dc97c65c540a4d0fa18a7, a48ee38fac1fd3503e010e1c66554a58 and a93731e99c650d475b3a19ed6854f9a6. `internal/cli/status.go:98` gives a skipped legacy record the same `gate store: ` prefix as a failed read (:93), and `pi/extensions/lib/screen.ts:336-342` prints the could-not-be-read line when a warning starts `gate store:` and no gate alert takes the line (lines on da109b496787ffb7b8a716b8d2d75af19e98a045). The shared prefix is in every release since v3.1.0 (`git tag --contains 0f566282` for `internal/gatestore/legacy.go`; v3.1.0's status.go:93 and :98), where the screen printed the warning itself, shortened, after "refusal: " (v3.1.0's screen.ts:169-171 and :104-106). The could-not-be-read sentence is in every release since v3.1.1 (screen.ts:271 in v3.1.1 and v3.1.2; v3.2.0-rc.1's screen.ts:294-299). The fix is the first task of the rc.2 soak, t162 of session v31, dispatched to the reviewer seat at 14:05:36.252341Z (decisions-first-dispatch.jsonl).
+
+### 4. dev2 was not launched: `roster_incomplete`
+
+The squad.yaml that `up` compiled ("4 seats, lead cto") names three seats besides the lead: dev, reviewer and dev2. It is the lead session's working copy, an uncommitted edit (`git status --porcelain squad.yaml` prints ` M squad.yaml` there; no record file); the committed squad.yaml names other seats. `up` adopted the two live seats and launched nothing, with the words quoted under "The adopted roster". Those words are the scheduler's own fixed sentence, not an answer AMQ gave in this run: `internal/scheduler/roster.go:307-325` logs `roster_incomplete` when some roster seats are live and some are missing, and tries no launch, on the ground its comment gives at :15-23, that AMQ v0.116.2 refuses a fresh seat into a present binding (the reason's name is the constant at :83). A missing seat comes in only with a relaunch of the whole roster, the lead's verb, and here the owner's to ask from the lead's pane. This run did not establish why dev2 was absent before the restart or what that relaunch returns.
+
 ## The files
 
 All copied from the job's scratch records through `go run ./scripts/redact-evidence` (rule 18; it replaced no value, and `-check` is clean):
 
 build.log, build-times.txt, cut-binary-version.txt, describe.txt, gate-questions.txt, lead-first-screen-scratch.txt, notes-body.sha256, owner-approvals-excerpt.txt, prepare-time.txt, prepared-note.txt, publish-by-hand-out.txt (the job's publish-by-hand.out, renamed because the repository ignores `*.out`), publish-by-hand.sh, release-api.json, release-check.log, release-prepare.json, release-smoke.log, rollback.txt, scratch-lead-run.txt, scratch-lead.sh, skew-check.md, squadid-expected.txt, tag-create.json. owner-approvals-excerpt.txt holds whole lines 8, 9, 10, 14, 15, 17, 1327 and 1328 of the job's approvals record; the published body is not copied (it is the notes file at the tag).
+
+Added with the record of the restart: decisions-after-restart.jsonl, decisions-first-dispatch.jsonl, doctor-warnings.txt, gate-store-warnings.txt, lead-first-screen.txt, lead-screen-30s.txt, owner-approvals-excerpt-restart.txt, relaunch.json, relaunch-err.txt, relaunch-times.txt, restart-lead.sh, restart-post.txt, restart-pre.txt, restart-run.txt, up-320rc2.json. doctor-warnings.txt and gate-store-warnings.txt are the lead session's extracts, each with one heading line, of the doctor and status documents; neither document is copied, and the status document's size and sha256 are in the section above. The lead ran `go run ./scripts/redact-evidence` over the folder, which replaced no value, and `go run ./scripts/redact-evidence -check` on it exits 0.
