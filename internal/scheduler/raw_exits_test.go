@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +16,152 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
+
+// schedulerRC1Head freezes v3.2.0-rc.1's legacy head fields at 3966afb7,
+// internal/sealchain/sealchain.go:261-270. It deliberately has no layout
+// field and is independent of the current production head type.
+type schedulerRC1Head struct {
+	Schema  int       `json:"schema"`
+	Name    string    `json:"name"`
+	Seq     int       `json:"seq"`
+	Link    string    `json:"link_tag"`
+	SeedDev uint64    `json:"seed_dev"`
+	SeedIno uint64    `json:"seed_ino"`
+	At      time.Time `json:"at"`
+	Tag     string    `json:"tag,omitempty"`
+}
+
+func (h schedulerRC1Head) signed(key []byte) schedulerRC1Head {
+	h.Tag = ""
+	h.Tag = sealchain.Tag(key, "amq-squad sealed head v1", h)
+	return h
+}
+
+func installLiteralRC1Exits(t *testing.T, root, path string) {
+	t.Helper()
+	key, err := sealchain.SessionKey(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Frozen from v3.2.0-rc.1 internal/scheduler/exits.go:73-85 and
+	// :165-173. Current exitItem and exitsLedger do not write this fixture.
+	const body = `{"schema":1,"queue":[{"handle":"old-1","task_id":"t1","why":"restart","gone":true,"at":"1970-01-01T00:00:01Z","deferrals":2,"attempt":"launch-1"}]}`
+	link := sealchain.Seal(key.Key, exitsLabel, nil, json.RawMessage(body))
+	linkBytes, err := json.Marshal(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := append([]byte(body[:len(body)-1]), []byte(`,"seal":`)...)
+	document = append(document, linkBytes...)
+	document = append(document, '}')
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, document, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	head := schedulerRC1Head{Schema: 1, Name: exitsHeadName, Seq: link.Seq, Link: link.Tag, SeedDev: key.Dev, SeedIno: key.Ino, At: time.Unix(2, 0).UTC()}.signed(key.Key)
+	headBytes, err := json.Marshal(head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(sealchain.HeadPath(root, exitsHeadName)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sealchain.HeadPath(root, exitsHeadName), headBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRC1WrittenExitsLedgerReadsAndMigratesOnce(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "extensions", "amq-squad", "scheduler", "exits.json")
+	installLiteralRC1Exits(t, root, path)
+	s := &Scheduler{Config: Config{ExitsPath: path, SealRoot: root}, Exits: &deferringExits{}}
+	s.loadExits()
+	if s.exitsErr != nil || len(s.exitQueue) != 1 || s.exitQueue[0].TaskAttempt != 0 || s.exitQueue[0].Close {
+		t.Fatalf("frozen rc.1 load = err %v queue %+v", s.exitsErr, s.exitQueue)
+	}
+	key, ok, err := sealchain.ReadKey(root)
+	if err != nil || !ok {
+		t.Fatalf("key = %v, %v", ok, err)
+	}
+	head := readRawExitsFile(t, sealchain.HeadPath(root, exitsHeadName))
+	link, layout, err := sealchain.HeadLink(exitsHeadName, key, head)
+	if err != nil || layout != sealchain.RawLayout || link.Seq != 2 {
+		t.Fatalf("first write head = %+v layout %q err %v", link, layout, err)
+	}
+	decisionPath := filepath.Join(root, "extensions", "amq-squad", "scheduler", "decisions.jsonl")
+	if got := bytes.Count(readRawExitsFile(t, decisionPath), []byte(`"kind":"ledger_layout_migrated"`)); got != 1 {
+		t.Fatalf("first write migration records = %d", got)
+	}
+	if err := s.saveExits(); err != nil {
+		t.Fatal(err)
+	}
+	if got := bytes.Count(readRawExitsFile(t, decisionPath), []byte(`"kind":"ledger_layout_migrated"`)); got != 1 {
+		t.Fatalf("second write migration records = %d", got)
+	}
+}
+
+func schedulerRollbackJSONKeys(typ reflect.Type) []string {
+	var keys []string
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if field.PkgPath != "" {
+			continue
+		}
+		key := strings.Split(field.Tag.Get("json"), ",")[0]
+		if key == "" {
+			key = field.Name
+		}
+		if key != "-" {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func TestRC1ExitsSealedTypeKeyGuard(t *testing.T) {
+	tag := map[string]map[string]bool{
+		"exitsLedger": {"schema": true, "queue": true, "seal": true},
+		"exitItem":    {"handle": true, "task_id": true, "why": true, "gone": true, "at": true, "deferrals": true, "attempt": true},
+	}
+	post := map[string]map[string]string{
+		"exitItem": {
+			"task_attempt": "TestExitsLedgerWrittenByRC1ReadsWithTheNewFieldsAbsent",
+			"close":        "TestExitsLedgerWrittenByRC1ReadsWithTheNewFieldsAbsent",
+		},
+	}
+	types := map[string]reflect.Type{"exitsLedger": reflect.TypeOf(exitsLedger{}), "exitItem": reflect.TypeOf(exitItem{})}
+	var packageTests []byte
+	paths, err := filepath.Glob("*_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		packageTests = append(packageTests, raw...)
+	}
+	for typeName, typ := range types {
+		for _, key := range schedulerRollbackJSONKeys(typ) {
+			if tag[typeName][key] {
+				continue
+			}
+			row := post[typeName][key]
+			if row == "" {
+				t.Errorf("add a frozen rc.1 row for %s.%s and list it here", typeName, key)
+				continue
+			}
+			if !bytes.Contains(packageTests, []byte("func "+row+"(")) {
+				t.Errorf("listed frozen rc.1 row %s for %s.%s does not exist", row, typeName, key)
+			}
+		}
+	}
+}
 
 func readRawExitsFile(t *testing.T, path string) []byte {
 	t.Helper()
@@ -108,7 +256,7 @@ func TestWriteRawExitsCompatibilityFixture(t *testing.T) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(root, "exits.json")
+	path := filepath.Join(root, "extensions", "amq-squad", "scheduler", "exits.json")
 	s := &Scheduler{Config: Config{ExitsPath: path, SealRoot: root}, Exits: &deferringExits{}}
 	s.AdoptClosing("old-1", sonnet, time.Unix(10, 0))
 	if s.exitsErr != nil {
@@ -125,7 +273,7 @@ func TestContinueRollbackExitsFixture(t *testing.T) {
 	if root == "" || mode == "" {
 		t.Skip("set AMQSQ_ROLLBACK_FIXTURE_ROOT and AMQSQ_ROLLBACK_MODE")
 	}
-	path := filepath.Join(root, "exits.json")
+	path := filepath.Join(root, "extensions", "amq-squad", "scheduler", "exits.json")
 	s := &Scheduler{Config: Config{ExitsPath: path, SealRoot: root}, Exits: &deferringExits{}}
 	if mode == "f2" {
 		crash := errors.New("rollback exits fixture crash after migration decision")
@@ -160,9 +308,22 @@ func TestRollbackRollForwardSchedulerCompatibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Scheduler{Store: store, Now: func() time.Time { return time.Unix(60, 0) }, Exits: &deferringExits{}, Config: Config{ExitsPath: filepath.Join(root, "exits.json"), SealRoot: root, IdleTimeout: time.Hour}}
+	key, ok, err := sealchain.ReadKey(root)
+	if err != nil || !ok {
+		t.Fatalf("roll-forward key = %v, %v", ok, err)
+	}
+	headPath := sealchain.HeadPath(root, exitsHeadName)
+	beforeHead := readRawExitsFile(t, headPath)
+	beforeLink, beforeLayout, err := sealchain.HeadLink(exitsHeadName, key, beforeHead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Scheduler{Store: store, Now: func() time.Time { return time.Unix(60, 0) }, Exits: &deferringExits{}, Config: Config{ExitsPath: filepath.Join(root, "extensions", "amq-squad", "scheduler", "exits.json"), SealRoot: root, IdleTimeout: time.Hour}}
 	decisions, tickErr := s.Tick()
 	t.Logf("roll-forward scheduler tick error: %v", tickErr)
+	if tickErr != nil {
+		t.Fatal(tickErr)
+	}
 	for _, decision := range decisions {
 		t.Logf("roll-forward decision: %s reason=%s", decision.Kind, decision.Reason)
 		if decision.Kind == "ledger_tampered" {
@@ -171,6 +332,28 @@ func TestRollbackRollForwardSchedulerCompatibility(t *testing.T) {
 	}
 	if errors.Is(s.exitsErr, sealchain.ErrTampered) {
 		t.Fatalf("roll-forward exits ledger_tampered: %v", s.exitsErr)
+	}
+	if s.exitsErr != nil {
+		t.Fatalf("roll-forward exits error: %v", s.exitsErr)
+	}
+	afterHead := readRawExitsFile(t, headPath)
+	afterLink, afterLayout, err := sealchain.HeadLink(exitsHeadName, key, afterHead)
+	if err != nil || afterLayout != sealchain.RawLayout || afterLink.Seq <= beforeLink.Seq || afterLink.Tag == "" {
+		t.Fatalf("roll-forward exits head = %+v layout %q err %v; before %+v %q", afterLink, afterLayout, err, beforeLink, beforeLayout)
+	}
+	decisionBytes := readRawExitsFile(t, filepath.Join(root, "extensions", "amq-squad", "scheduler", "decisions.jsonl"))
+	migrations := 0
+	for _, line := range bytes.Split(decisionBytes, []byte{'\n'}) {
+		var row struct {
+			Kind       string `json:"kind"`
+			LedgerKind string `json:"ledger_kind"`
+		}
+		if json.Unmarshal(line, &row) == nil && row.Kind == sealchain.LayoutMigrationDecisionKind && row.LedgerKind == "exits" {
+			migrations++
+		}
+	}
+	if migrations != 1 {
+		t.Fatalf("exits migration records = %d", migrations)
 	}
 }
 
@@ -330,5 +513,70 @@ func TestLegacyExitsMigrationRecordsLinkAndRejectsDowngrade(t *testing.T) {
 	legacyBody.Seal = nil
 	if err := sealchain.CheckLegacy(exitsHeadName, key, exitsLabel, legacyLink, legacyBody, head); !errors.Is(err, sealchain.ErrTampered) {
 		t.Fatalf("legacy downgrade after exits migration = %v", err)
+	}
+}
+
+// TestWriteRollbackCancelFixtures prepares P5's F5a/F5b roots through the
+// current product verbs. The old-version process probe consumes the roots;
+// normal package runs skip this disposable fixture writer.
+func TestWriteRollbackCancelFixtures(t *testing.T) {
+	base := os.Getenv("AMQSQ_WRITE_CANCEL_ROOT")
+	if base == "" {
+		t.Skip("set AMQSQ_WRITE_CANCEL_ROOT")
+	}
+	for _, cleaned := range []bool{false, true} {
+		name := "f5a"
+		if cleaned {
+			name = "f5b"
+		}
+		root := filepath.Join(base, name)
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		store, err := task.Open(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pool := task.Pool{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "high"}
+		now := time.Unix(40, 0).UTC()
+		cancelled, err := store.Add(task.AddInput{Title: "cancelled attempt", Class: "plan", Pool: &pool}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Grant(cancelled.ID, "qa", &pool, time.Hour, now.Add(time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Cancel(cancelled.ID, "lead", "rollback F5", now.Add(2*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Add(task.AddInput{Title: "queued after cancel", Class: "plan", Pool: &pool}, now.Add(3*time.Second)); err != nil {
+			t.Fatal(err)
+		}
+
+		path := filepath.Join(root, "extensions", "amq-squad", "scheduler", "exits.json")
+		s := &Scheduler{
+			Config:      Config{ExitsPath: path, SealRoot: root},
+			Exits:       &deferringExits{},
+			exitsLoaded: true,
+			exitQueue: []exitItem{{Handle: "qa", TaskID: cancelled.ID, Why: task.OutcomeCancelled,
+				At: now.Add(4 * time.Second), TaskAttempt: 1, Close: true}},
+		}
+		if err := s.writeExits(); err != nil {
+			t.Fatal(err)
+		}
+		if cleaned {
+			if _, err := store.MarkAttemptCleaned(cancelled.ID, 1, now.Add(5*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			s.exitQueue = nil
+			if err := s.writeExits(); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			later, nonce, _, err := store.ReserveCancel("qa", cancelled.ID, 1, now.Add(5*time.Second))
+			if err != nil || later != "" || nonce == "" {
+				t.Fatalf("reserve cancel = later %q nonce %q err %v", later, nonce, err)
+			}
+		}
 	}
 }

@@ -280,6 +280,26 @@ type exitsRead struct {
 	migration *sealchain.RawSeal
 }
 
+// InterruptedExitsMigrationWriter reports the writer version only when
+// document is the authenticated exact raw successor of the captured legacy
+// exits head. It is intentionally read-only and does not turn malformed or
+// missing preflight inputs into a scheduler tamper alarm.
+func InterruptedExitsMigrationWriter(root string, document, head []byte) (string, bool) {
+	if _, _, err := sealchain.SplitRaw(document); err != nil {
+		return "", false
+	}
+	key, ok, err := sealchain.ReadKey(root)
+	if err != nil || !ok {
+		return "", false
+	}
+	var ledger exitsLedger
+	seal, err := sealchain.CheckRawMigration(exitsHeadName, key, exitsLabel, "the exits ledger", document, head, 1, &ledger)
+	if err != nil || ledger.Schema != 1 {
+		return "", false
+	}
+	return seal.Version, true
+}
+
 // verifyExitsLedger is the read-only exits verifier. It accepts an authenticated
 // exact-successor raw document beside a legacy head but never completes that
 // head. Only writeExits, under the scheduler process lock, may do so.

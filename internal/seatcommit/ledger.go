@@ -420,6 +420,27 @@ func (l Ledger) taskStart(handle, taskID string) (branch, parent, base, why stri
 // the copy: the evidence of a tamper alarm survives the next writer.
 func ReadLedger(root, handle string) (Ledger, error) { return ReadLedgerAs(root, handle, "read") }
 
+// InterruptedMigrationWriter reports the writer version only when document is
+// the authenticated exact raw successor of the captured legacy head. It is a
+// downgrade-preflight query: malformed, missing, or otherwise incompatible
+// pairs are not reclassified as tampering here, and the query never completes
+// the head, records a decision, or quarantines either input.
+func InterruptedMigrationWriter(root, handle string, document, head []byte) (string, bool) {
+	if _, _, err := sealchain.SplitRaw(document); err != nil {
+		return "", false
+	}
+	key, ok, err := sealchain.ReadKey(root)
+	if err != nil || !ok {
+		return "", false
+	}
+	var l Ledger
+	seal, err := sealchain.CheckRawMigration(ledgerHeadName(handle), key, ledgerLabel, "the seat's commit record", document, head, LedgerSchema, &l)
+	if err != nil || l.Schema != LedgerSchema || l.Handle != handle {
+		return "", false
+	}
+	return seal.Version, true
+}
+
 // ReadLedgerAs is ReadLedger with the caller's verb on the quarantine's
 // sidecar (the scheduler's prepare, each writer).
 func ReadLedgerAs(root, handle, verb string) (Ledger, error) {

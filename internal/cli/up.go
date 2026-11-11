@@ -29,6 +29,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/status"
@@ -417,6 +418,7 @@ func sessionRawLayout(root string) (string, bool, error) {
 		return "", false, err
 	}
 	heads := make(map[string][]byte, len(entries))
+	var interruptedWriter string
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
@@ -429,13 +431,41 @@ func sessionRawLayout(root string) (string, bool, error) {
 		if !info.Mode().IsRegular() {
 			return "", false, fmt.Errorf("sealed head %s is not a regular file", path)
 		}
-		raw, err := os.ReadFile(path)
+		head, err := os.ReadFile(path)
 		if err != nil {
 			return "", false, err
 		}
-		heads[strings.TrimSuffix(entry.Name(), ".json")] = raw
+		name := strings.TrimSuffix(entry.Name(), ".json")
+		heads[name] = head
+
+		var documentPath string
+		switch {
+		case strings.HasPrefix(name, "commits."):
+			handle := strings.TrimPrefix(name, "commits.")
+			documentPath = filepath.Join(seatcommit.LedgerDir(root), handle+".json")
+			document, readErr := os.ReadFile(documentPath)
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				return "", false, readErr
+			}
+			if writer, ok := seatcommit.InterruptedMigrationWriter(root, handle, document, head); ok && interruptedWriter == "" {
+				interruptedWriter = writer
+			}
+		case name == "exits":
+			documentPath = filepath.Join(schedproc.Dir(root), "exits.json")
+			document, readErr := os.ReadFile(documentPath)
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				return "", false, readErr
+			}
+			if writer, ok := scheduler.InterruptedExitsMigrationWriter(root, document, head); ok && interruptedWriter == "" {
+				interruptedWriter = writer
+			}
+		}
 	}
-	return sealchain.SessionRawLayout(root, heads)
+	writer, raw, err := sealchain.SessionRawLayout(root, heads)
+	if err != nil || raw {
+		return writer, raw, err
+	}
+	return interruptedWriter, interruptedWriter != "", nil
 }
 
 type releaseVersion struct {
