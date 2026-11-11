@@ -18,6 +18,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 	"github.com/omriariav/amq-squad/v3/internal/team"
 )
@@ -409,7 +410,8 @@ func runTaskList(args []string) error {
 		if t.Pool != nil {
 			pool = t.Pool.Key()
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", t.ID, t.State, t.Class, t.Priority, holder, pool, orDash(t.WaitReason+t.BlockReason), t.Title)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", t.ID, t.State, t.Class, t.Priority,
+			status.PlainText(holder, false), pool, status.PlainText(orDash(t.WaitReason+t.BlockReason), false), status.PlainText(t.Title, false))
 	}
 	return w.Flush()
 }
@@ -628,6 +630,9 @@ func runTaskTransition(verb string, args []string) error {
 	case "fail":
 		t, err = s.Fail(id, me, *reason, now)
 	case "block":
+		if reservedTaskBlockReason(*reason) {
+			return fmt.Errorf("ledger_tampered is the scheduler's; a seat blocks with its own reason")
+		}
 		blockPaths := append(splitList(*paths), exactPaths...)
 		t, err = s.BlockWithPaths(id, me, *reason, *detail, *route, blockPaths, now)
 	case "release":
@@ -701,7 +706,9 @@ func printTaskResult(kind, root string, t task.Task, jsonOut bool, verbText stri
 }
 
 func printTaskDetails(t task.Task) {
-	fmt.Printf("%s  %s\n", t.ID, t.Title)
+	plain := func(s string) string { return status.PlainText(s, false) }
+	lines := func(s string) string { return status.PlainText(s, true) }
+	fmt.Printf("%s  %s\n", plain(t.ID), plain(t.Title))
 	fmt.Printf("  state:    %s\n  class:    %s\n  priority: %d\n", t.State, t.Class, t.Priority)
 	fmt.Printf("  budget:   %s\n", t.Budget)
 	if t.Pool != nil {
@@ -731,23 +738,32 @@ func printTaskDetails(t task.Task) {
 			renewals += fmt.Sprintf(", %d unlabelled", unlabelled)
 		}
 		renewals += ")"
-		fmt.Printf("  lease:    %s, %s, expires %s, budget ends %s, %s\n", t.Lease.Holder, claimed, t.Lease.ExpiresAt.Format(time.RFC3339), budgetEnd, renewals)
+		fmt.Printf("  lease:    %s, %s, expires %s, budget ends %s, %s\n", plain(t.Lease.Holder), claimed, t.Lease.ExpiresAt.Format(time.RFC3339), budgetEnd, renewals)
 	}
 	fmt.Printf("  attempt:  %d\n", t.Attempt)
 	for _, a := range t.Attempts {
-		fmt.Printf("    #%d %s %s %s\n", a.N, a.Holder, a.Outcome, a.Detail)
+		fmt.Printf("    #%d %s %s %s\n", a.N, plain(a.Holder), plain(a.Outcome), plain(a.Detail))
 	}
 	for _, kv := range [][2]string{{"wait", t.WaitReason}, {"block", strings.TrimSpace(t.BlockReason + " " + t.BlockRoute + " " + t.BlockDetail)}, {"evidence", t.Evidence}, {"cancel", t.CancelReason}} {
 		if kv[1] != "" {
-			fmt.Printf("  %-9s %s\n", kv[0]+":", kv[1])
+			fmt.Printf("  %-9s %s\n", kv[0]+":", plain(kv[1]))
 		}
 	}
 	if t.Report != nil {
-		fmt.Printf("  report:   by %s at %s, awaiting the commit step\n", t.Report.By, t.Report.At.Format(time.RFC3339))
+		fmt.Printf("  report:   by %s at %s, awaiting the commit step\n", plain(t.Report.By), t.Report.At.Format(time.RFC3339))
 	}
 	if t.Description != "" {
-		fmt.Printf("\n%s\n", t.Description)
+		fmt.Printf("\n%s\n", lines(t.Description))
 	}
+}
+
+var reservedTaskBlockReasons = map[string]struct{}{
+	"ledger_tampered": {},
+}
+
+func reservedTaskBlockReason(reason string) bool {
+	_, reserved := reservedTaskBlockReasons[strings.TrimSpace(reason)]
+	return reserved
 }
 
 // validateTaskIDLeaf refuses anything but a canonical t<N> task id.
