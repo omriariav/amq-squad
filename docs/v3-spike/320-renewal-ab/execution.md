@@ -309,9 +309,21 @@ Each legacy mutant used:
 env -i PATH="$PATH" HOME=/tmp/amq-t152/home TMPDIR="$TMPDIR" GOCACHE=/tmp/amq-t152/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestLegacyUnlabelledRenewalsDoNotHideFirstActivity$' ./internal/cli
 ```
 
-- Requiring all renewals to be labelled before the decision exited 1 first at `hook_ingest_lease_test.go:231: legacy decision = [], err <nil>`.
-- Keying the decision on `t.Lease.Renewals == 1` exited 1 first at `hook_ingest_lease_test.go:231: legacy decision = [], err <nil>`.
-- Dropping `omitempty` from `manual_renewals` exited 1 first at `hook_ingest_lease_test.go:227: rewritten legacy task = {`.
+- Requiring all renewals to be labelled before the decision exited 1 first at `hook_ingest_lease_test.go:241: legacy decision = [], err <nil>`.
+- Keying the decision on `t.Lease.Renewals == 1` exited 1 first at `hook_ingest_lease_test.go:241: legacy decision = [], err <nil>`.
+- Dropping `omitempty` from `manual_renewals` exited 1 first at `hook_ingest_lease_test.go:237: rewritten legacy task = {`.
+
+Line numbers as of `b7663f14`, re-measured by the lead on 2026-11-11 in a
+scratch worktree, one mutant at a time, with
+`go test ./internal/cli -run '^TestLegacyUnlabelledRenewalsDoNotHideFirstActivity$' -count=1 -timeout 400s`.
+The changed expressions: in `internal/cli/hook_ingest.go`,
+`if t.Lease != nil && t.Lease.ActivityRenewals == 1 {` became
+`if t.Lease != nil && t.Lease.ActivityRenewals == 1 && t.Lease.Renewals == t.Lease.ActivityRenewals+t.Lease.ManualRenewals {`
+for the first and `if t.Lease != nil && t.Lease.Renewals == 1 {` for the
+second; in `internal/task/task.go`, the tag
+`json:"manual_renewals,omitempty"` became `json:"manual_renewals"` for the
+third. This section first carried `:231`, `:231` and `:227`, where the two
+assertions sat on #952's merge (`347ccf4e`); #954 moved them down ten lines.
 
 The restored row also proves the rewritten bytes contain
 `"activity_renewals": 1` and `"last_renewal": "activity"`, omit the

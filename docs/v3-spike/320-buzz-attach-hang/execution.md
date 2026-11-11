@@ -10,7 +10,7 @@ The t142 carry was applied mechanically from `<lead-tmp>/t142-attempt1/`. Its `t
 
 This replacement carried `c5ed5d53` with patch SHA-256 `52bc0e1c69da77b48f9b86e01a75394f613818910f5fac43d215794eddb869a2`; its 100 files had zero blob mismatches and produced tree `b849293ee8930053b603a797f7dc187b3ec9b5f4` on the dispatch base.
 
-Every table now has a `log` column. Passing rows retain their log; no row in the tables below relies on a discarded log.
+Twelve of this folder's twenty tables have a `log` column. [`base-120-t141/B.tsv`](base-120-t141/B.tsv) has none and no log of its rows is kept; it is the first excluded observation below. The seven tables under [`lead-probe/`](lead-probe/) have no `log` column; each of their rows has its log beside the table, named `<table>-<run>.log`.
 
 Three observations are excluded from behavioral counts:
 
@@ -61,7 +61,7 @@ The controlled revert restored the two critical sections and ran:
 go test ./internal/buzz -run '^TestRelayReplayAndLiveSubscriptionHaveNoLossWindow$' -count=1
 ```
 
-It failed at `relay_test.go:337: the stored replay and live subscription are not one critical section`. Restoring the atomic section makes the focused test pass.
+It failed with `the stored replay and live subscription are not one critical section`, printed as `relay_test.go:337` in that round's numbering; as of `b7663f14` the assertion is at `relay_test.go:430` (re-measured under "Lines re-measured by the lead" below). Restoring the atomic section makes the focused test pass.
 
 Classification: fake-relay behavior, in scope and fixed; a class (b) change (test-only), accepted by the reviewer on #945's packet, 2026-11-10. This can explain the earlier S3 route-delivery stop, but it does not explain the three newly captured answer hangs because their answers were visibly delivered live.
 
@@ -170,9 +170,9 @@ The rc.2 release gate on the attach hang closes on three things (the plan review
 
 - Carry: the `c5ed5d53687f27d09d18d98842d4be2592a062f5` replacement patch had SHA-256 `52bc0e1c69da77b48f9b86e01a75394f613818910f5fac43d215794eddb869a2`; all 100 paths and blobs matched, and the staged tree on dispatch base `6eed06ce` was `b849293ee8930053b603a797f7dc187b3ec9b5f4`.
 - Shared helper (c0): done at once sent once; rejected once then done sent twice, logged once, and returned the second id; rejected twice sent exactly twice and called the failure function. The follow-up rows and their observed final-tree failures are below.
-- Fake rejection (c1): answer and route rejections used the same detector as real rows, both new events reached serve once, planted rows counted as zero real resends, and the end-of-flow tally recorded one approved outcome. `TestOwnerScriptDryRunRejectsThenSendsAgain` passed in 24.41 s; removing the `rejectionWasPlanted` branch failed at `enroll_test.go:507`.
+- Fake rejection (c1): answer and route rejections used the same detector as real rows, both new events reached serve once, planted rows counted as zero real resends, and the end-of-flow tally recorded one approved outcome. `TestOwnerScriptDryRunRejectsThenSendsAgain` passed in 24.41 s; removing the `rejectionWasPlanted` branch failed at `enroll_test.go:511` (re-measured below; `enroll_test.go:507` is the plant-count assertion, which that revert does not reach).
 - Presence: [`presence/refresh.log`](presence/refresh.log) passed after the intentional two-minute wait in 152.152 s. With refresh removed, [`presence/no-refresh.log`](presence/no-refresh.log) failed in 150.41 s with the exact words `attach stopped before the operator deliberately stopped presence`; that saved log cites `enroll_test.go:499` and predates this follow-up's final line numbers. Its captured output records `"action":"stopped"` with state `stale` at about 90 s.
-- Real 5 ms measurement: [`poll-5ms/poll-5ms.tsv`](poll-5ms/poll-5ms.tsv) records five separate commands and names every log. Four rows completed with exactly one end-of-flow approved outcome in both flows. Run 3 exited 1 at `rehearsal_test.go:241` after one answer was really rejected twice; the helper made three sends and no fourth, and the rehearsal outcome count was therefore not reached. Across the completed rows there were four answer rejections and two route rejections.
+- Real 5 ms measurement: [`poll-5ms/poll-5ms.tsv`](poll-5ms/poll-5ms.tsv) records five separate commands and names every log. Four rows completed with exactly one end-of-flow approved outcome in both flows. Run 3 exited 1 at `rehearsal_test.go:241` after one answer was really rejected twice; the helper made two answer sends and no third ([`run-3.log`](poll-5ms/run-3.log) has one `answer rejected (native_error), sent again` line and then the `twice; not sent again` failure), and the rehearsal outcome count was therefore not reached. Across the four completed rows there were three answer rejections (runs 1, 2 and 4) and two route rejections (runs 2 and 4); run 3's two answer rejections are not in that count.
 - Relay boundary: publishing synchronously immediately after replay-lock release was delivered live. The two install-after-unlock orders both failed the install-point lock row at `relay_test.go:493`. The fake relay may deliver an event both in replay and live, with clients deduplicating by id, and may deliver live before replay EOSE; it must not have a loss window.
 - Package validation: `go vet ./internal/buzz` passed, and [`package-test.log`](package-test.log) records `go test ./internal/buzz -count=1` passing in 67.080 s. The lead owns repository-wide gates.
 - Redaction: `go run ./scripts/redact-evidence -check docs/v3-spike/320-buzz-attach-hang` exited 0 after the last evidence file was added.
@@ -181,11 +181,46 @@ On 2026-11-10 at 23:27 IST the lead's baseline run of `TestOwnerScriptDryRunReje
 
 ## The follow-up's rows
 
-- Item a, `TestRelayPlantIsInvisibleToReplayQueryAndLiveClients` and `TestRelayPlantDecisionHoldsStoreLock`: `go test ./internal/buzz -run '^TestRelayPlantIsInvisibleToReplayQueryAndLiveClients$' -count=1` failed at `relay_test.go:366` when either the planted row or the owner event was exposed; `go test ./internal/buzz -run '^TestRelayPlantDecisionHoldsStoreLock$' -count=1` failed at `relay_test.go:403` when the decision moved after the unlock. Client replay, client `Query`, and a live subscription see neither hidden event; helper reads see both.
-- Item b, `TestOwnerScriptDryRunRejectsThenSendsAgain`: `go test ./internal/buzz -run '^TestOwnerScriptDryRunRejectsThenSendsAgain$' -count=1` failed at `enroll_test.go:507` when the planted-verdict branch was removed. Each planted answer and route produced one classifier verdict and one log line after real resends were subtracted; the plants contributed zero real resends.
-- Item c, `TestSendOwnerUntilDone`: the same-id-check revert failed at `signal_test.go:270`; counting the plant as real failed at `signal_test.go:293`; removing the one-real-resend limit failed at `signal_test.go:312`. The helper's common two-real-rejection wording is `rejected (native_error) twice; not sent again`, true whether the unsent event would have been the third or fourth.
-- Item d, the end-of-flow counts: the dry run reads its test-owned tally of every `Handler.Step` record and its after-answer-count revert failed at `enroll_test.go:528`; the rehearsal reads the whole test-owned `aout` buffer and its after-answer-count revert failed at `enroll_test.go:547`. The plant shows the count is taken at the end in test-owned state; it does not show that a real second approval would reach `h.Step` or `aout`; the protection there is the handler's one-answer rule and the attach inbox assertions of length 1.
+- Item a, `TestRelayPlantIsInvisibleToReplayQueryAndLiveClients` and `TestRelayPlantDecisionHoldsStoreLock`: `go test ./internal/buzz -run '^TestRelayPlantIsInvisibleToReplayQueryAndLiveClients$' -count=1` failed at `relay_test.go:367` when either the planted row or the owner event was exposed; `go test ./internal/buzz -run '^TestRelayPlantDecisionHoldsStoreLock$' -count=1` failed at the assertion at `relay_test.go:402` when the decision moved after the unlock (printed as `:403` by a run whose edit adds a line above it). Client replay, client `Query`, and a live subscription see neither hidden event; helper reads see both.
+- Item b, `TestOwnerScriptDryRunRejectsThenSendsAgain`: `go test ./internal/buzz -run '^TestOwnerScriptDryRunRejectsThenSendsAgain$' -count=1` failed at `enroll_test.go:511` when the planted-verdict branch was removed. Each planted answer and route produced one classifier verdict and one log line after real resends were subtracted; the plants contributed zero real resends.
+- Item c, `TestSendOwnerUntilDone`: with `go test ./internal/buzz -run '^TestSendOwnerUntilDone$' -count=1`, the same-id-check revert failed at `signal_test.go:270`; counting the plant as real failed at `signal_test.go:293`; removing the one-real-resend limit failed first at `signal_test.go:256` and then at `signal_test.go:312`; removing the resend (the carried (c0) revert) failed first at `signal_test.go:237`. The helper's common two-real-rejection wording is `rejected (native_error) twice; not sent again`, true whether the unsent event would have been the third or fourth.
+- Item d, the end-of-flow counts: the dry run reads its test-owned tally of every `Handler.Step` record at `enroll_test.go:504`; the rehearsal reads the whole test-owned `aout` buffer at `rehearsal_test.go:293`. A named limit: nothing pins where either count sits. This item first said that an after-answer-count revert failed at `enroll_test.go:528` and at `enroll_test.go:547`; neither claim had a command, and neither holds. The lead's four forms of the move (below, "Not caught") all pass, because the dry run's plant is arithmetic on the count (`checkApprovedOutcomes("dry run", approvedOutcomes+1, ...)` at `enroll_test.go:525`), not a second record in the tally, and the rehearsal's plant writes into `aout` and counts again itself at `rehearsal_test.go:302`. A row that pins the position is a 3.2.x item. The plant shows the count is taken at the end in test-owned state; it does not show that a real second approval would reach `h.Step` or `aout`; the protection there is the handler's one-answer rule and the attach inbox assertions of length 1.
 - Item e, `TestRelaySubscriptionInstallHoldsStoreLock`: `go test ./internal/buzz -run '^TestRelaySubscriptionInstallHoldsStoreLock$' -count=1` failed at `relay_test.go:493` for both unlock/seam/install and unlock/install/seam. The install hook observes the store lock held and writes nothing to the connection.
+
+### Lines re-measured by the lead
+
+Line numbers in this subsection are as of `b7663f14`; the four test files named here (`relay_test.go`, `signal_test.go`, `enroll_test.go`, `rehearsal_test.go`) are the same blobs there as on #948's head `6150ccc9`. The lead re-ran each revert on 2026-11-11 in a scratch worktree under the host's gate lock, one edit at a time, with `AMQ_SQUAD_EVIDENCE_RUN_BUDGET=120s` set and the live seat's `AM_*` and `AMQ_SQUAD_*` variables removed. Each quoted line is copied from the run; the first one named is the first failing line.
+
+Relay rows, `go test ./internal/buzz -run '^TestRelay' -count=1 -v -timeout 400s`:
+
+- `r.mem.hidden[rejected.ID] = true` removed (the planted row exposed): `relay_test.go:367: post-publish replay exposed 1 hidden events`.
+- `r.mem.hidden[e.ID] = true` removed (the owner event exposed): the same line, `relay_test.go:367: post-publish replay exposed 1 hidden events`.
+- The `r.onPublishLocked(e)` call moved below `r.mu.Unlock()` (the decision after the unlock): `plant decision called=true store lock held=false`, printed as `relay_test.go:403` because this edit adds one line above the assertion; the assertion is at `relay_test.go:402`.
+- In the subscription path, `r.mem.mu.Unlock()` moved above the install, with the `afterReplayUnlock` call before the install: `relay_test.go:476: event published immediately after replay lock release was lost`, then `relay_test.go:493: subscription install called=true store lock held=false`.
+- The same with the `afterReplayUnlock` call after the install: `relay_test.go:493: subscription install called=true store lock held=false`.
+- The old order (`r.mem.mu.Unlock()`, then the `afterReplay` call, then the install): `relay_test.go:430: the stored replay and live subscription are not one critical section`, then `relay_test.go:493: subscription install called=true store lock held=false`.
+- The `r.onSubscriptionInstall()` call removed: `relay_test.go:493: subscription install called=false store lock held=false`.
+
+Helper rows, `go test ./internal/buzz -run '^TestSendOwnerUntilDone$' -count=1 -v -timeout 400s`:
+
+- The `if next == id` block (`fail(kind + " sent again with the same event id")`) removed: `signal_test.go:270: sends=2 failures=[]`.
+- `if rejection == ownerRejectedForReal {` became `if rejection != ownerNotRejected {` (the plant counted as real): `signal_test.go:293: id="event-2" sends=2 real resends=1 failures=[answer rejected (native_error) twice; not sent again] logs=[answer rejected (native_error), sent again]`, then `signal_test.go:312`.
+- The `if realResends > 1` block (`fail(kind + " rejected (native_error) twice; not sent again")`) removed: `signal_test.go:256: sends=3 real resends=2 failures=[] logs=[answer rejected (native_error), sent again answer rejected (native_error), sent again]`, then `signal_test.go:312`.
+- The resend (the log line, `next := send()`, the same-id check, `id = next`, `continue`) replaced by `return id, realResends`: `signal_test.go:237: id="event-1" sends=1 real resends=1 logs=[]`, then `signal_test.go:256`, `:270`, `:293` and `:312`.
+
+Dry-run rows, `go test ./internal/buzz -run '^TestOwnerScriptDryRunRejectsThenSendsAgain$' -count=1 -v -timeout 400s`:
+
+- The `if relay.rejectionWasPlanted(id)` block (`plantedVerdicts[kind]++`, `return ownerRejectedByPlant`) removed: `enroll_test.go:511: answer lines minus real resends = 0, want one planted line`, after the log line `enroll_test.go:503: real resends: 2`.
+- `plantedVerdicts[kind]++` removed: `enroll_test.go:520: planted classifier verdicts = answer 0 route 0, want one each`.
+- `logLines[kind]++` removed: `enroll_test.go:511: answer lines minus real resends = 0, want one planted line`.
+- The helper's resend replaced by `return id, realResends`, as above: `enroll_test.go:443: the attach inbox after serve's delivery of the answer: [], <nil>`.
+
+Not caught: each of these four edits exited 0 with the test passing.
+
+- The dry run's `checkApprovedOutcomes("dry run", approvedOutcomes, ...)` line and its `t.Logf("approved outcomes: %d", approvedOutcomes)` moved to right after `stepTook := time.Since(tStep)`, the answer's step.
+- The dry run's second `for _, record := range handled` loop (the one before the routed-message inbox check) removed, so the route step's records are not counted.
+- `t.Logf("approved outcomes: %d", approvedOutcomes)` became `t.Logf("approved outcomes: %d", 1)`.
+- The rehearsal's count of `"outcome":"approved"` in `aout`, its `checkApprovedOutcomes("rehearsal", ...)` line and its log moved to right after the `raise to verified through remote attach` log line; this one ran `go test ./internal/buzz -run '^TestOwnerScriptDryRun$' -count=1 -v -timeout 400s`.
 
 ## Limits
 
