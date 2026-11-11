@@ -162,6 +162,13 @@ function below(lines: string[]): string[] {
 	return i < 0 ? [] : lines.slice(i + 1, -1);
 }
 
+const legacyGateWarning = (id: string): string =>
+	`gate store legacy: gate ${id} is a legacy quarantine_clear gate (a kind this build no longer carries); skipped`;
+
+function statusWithGateWarnings(warnings: string[]): ScreenStatus {
+	return { ...fixture, attention: [], gates: [], warnings };
+}
+
 // Row 16, in 3.1.1-3's words: the first line carries the lead handle and
 // the root; each seat line says what the seat is doing, each task line why
 // it waits or what stopped it and what to do; a block's last stop is a
@@ -197,6 +204,55 @@ test("the screen renders from a status fixture: the lead and the root, each bloc
 	// A document with nothing that stopped an item shows no last-stop line.
 	const quiet = renderScreen({ ...fixture, decisions: [], tasks: [], train: { runs: [], alerts: [] } }, now);
 	assert.deepEqual(quiet.filter((l) => l.includes("did not stop") || l.includes("train stopped")), []);
+});
+
+test("three legacy gate warnings print one count below the rule and no read failure or gate id", () => {
+	const lines = renderScreen(statusWithGateWarnings([
+		legacyGateWarning("clear-00000000000000000000000000000001"),
+		legacyGateWarning("clear-00000000000000000000000000000002"),
+		legacyGateWarning("clear-00000000000000000000000000000003"),
+	]), now);
+	assert.ok(!lines.some((line) => line.includes("could not be read")), lines.join("\n"));
+	assert.deepEqual(below(lines).filter((line) => line.includes("legacy gate record")).map((line) => line.trim()), ["3 legacy gate records skipped"]);
+	assert.ok(!lines.some((line) => line.includes("clear-")), lines.join("\n"));
+});
+
+test("one legacy gate warning prints the singular count", () => {
+	const lines = renderScreen(statusWithGateWarnings([
+		legacyGateWarning("clear-00000000000000000000000000000001"),
+	]), now);
+	assert.deepEqual(below(lines).filter((line) => line.includes("legacy gate record")).map((line) => line.trim()), ["1 legacy gate record skipped"]);
+});
+
+test("a gate-store read failure keeps its warning above and detail below the rule", () => {
+	const warning = "gate store: open /r/gates: not a directory";
+	const lines = renderScreen(statusWithGateWarnings([warning]), now);
+	const rule = lines.indexOf("----------");
+	assert.equal(lines.slice(0, rule).filter((line) => line === "  ! the gate store could not be read; its error is below the line").length, 1);
+	assert.ok(lines.slice(rule + 1).some((line) => line.trim() === warning), lines.join("\n"));
+	assert.ok(!lines.some((line) => line.includes("legacy gate record")), lines.join("\n"));
+});
+
+test("a read failure and legacy warnings print both records below the rule", () => {
+	const warning = "gate store: open /r/gates: not a directory";
+	const lines = renderScreen(statusWithGateWarnings([
+		warning,
+		legacyGateWarning("clear-00000000000000000000000000000001"),
+		legacyGateWarning("clear-00000000000000000000000000000002"),
+	]), now);
+	const rule = lines.indexOf("----------");
+	assert.equal(lines.slice(0, rule).filter((line) => line === "  ! the gate store could not be read; its error is below the line").length, 1);
+	const records = lines.slice(rule + 1).map((line) => line.trim());
+	assert.ok(records.includes(warning), lines.join("\n"));
+	assert.ok(records.includes("2 legacy gate records skipped"), lines.join("\n"));
+});
+
+test("an old status warning still takes the read-failure screen path", () => {
+	const warning = "gate store: gate clear-00000000000000000000000000000001 is a legacy quarantine_clear gate (a kind this build no longer carries); skipped";
+	const lines = renderScreen(statusWithGateWarnings([warning]), now);
+	const rule = lines.indexOf("----------");
+	assert.equal(lines.slice(0, rule).filter((line) => line === "  ! the gate store could not be read; its error is below the line").length, 1);
+	assert.ok(lines.slice(rule + 1).some((line) => line.includes("gate store: gate clear-")), lines.join("\n"));
 });
 
 // Brief 31-4 (the lead side): per phone request, whether the lead's answer

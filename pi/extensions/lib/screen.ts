@@ -333,13 +333,19 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 		rec(`${g.id}  ${g.action_class}  ${typedPrefix(g.target_digest)}  age ${age(since, now)}  waiting on Buzz`);
 	}
 	const gateAlert = [...st.attention].reverse().find((a) => a.gate_id && a.kind !== "gate");
+	// Status names these two facts with gateStoreReadWarningPrefix and
+	// gateStoreLegacyWarningPrefix; keep the matches as two separate forms.
 	const gateWarn = st.warnings.find((w) => w.startsWith("gate store:"));
+	const legacyGateWarnings = st.warnings.filter((w) => w.startsWith("gate store legacy:"));
 	if (gateAlert) {
 		out.push("  ! a gate needs a look; its alert is below the line");
 		rec(`${gateAlert.kind}: ${short(gateAlert.subject)}`);
 	} else if (gateWarn) {
 		out.push("  ! the gate store could not be read; its error is below the line");
 		rec(short(gateWarn, 200));
+	}
+	if (legacyGateWarnings.length) {
+		rec(`${legacyGateWarnings.length} legacy gate record${legacyGateWarnings.length === 1 ? "" : "s"} skipped`);
 	}
 	// brief 31-4: the phone requests, newest first, each marked relayed (the
 	// lead's answer reached the owner's DM) or refused by the relay

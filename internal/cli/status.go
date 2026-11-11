@@ -84,18 +84,25 @@ func runStatusWithVersion(args []string, version string) error {
 	return writeStatusContractTable(os.Stdout, st)
 }
 
+const (
+	// gateStoreReadWarningPrefix names a failure to read the gate store.
+	gateStoreReadWarningPrefix = "gate store: "
+	// gateStoreLegacyWarningPrefix names a stored legacy gate that was read and skipped.
+	gateStoreLegacyWarningPrefix = "gate store legacy: "
+)
+
 // buildStatusContract collects one session root into the contract.
 func buildStatusContract(root, project, version string, now time.Time) status.Status {
 	var gates []status.GateInput
 	records, err := readHookGates(root, now)
 	var warnings []string
 	if err != nil {
-		warnings = append(warnings, "gate store: "+err.Error())
+		warnings = append(warnings, gateStoreReadWarningPrefix+err.Error())
 	}
 	if ids, err := (gatestore.Store{Root: root}).IDs(); err == nil {
 		for _, id := range ids {
 			if kind, legacy := (gatestore.Store{Root: root}).Legacy(id); legacy {
-				warnings = append(warnings, "gate store: "+gatestore.LegacyLine(id, kind))
+				warnings = append(warnings, gateStoreLegacyWarningPrefix+gatestore.LegacyLine(id, kind))
 			}
 		}
 	}
