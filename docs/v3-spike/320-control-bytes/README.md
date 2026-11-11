@@ -396,10 +396,10 @@ merge of #959, whose tree equals this round's head.
    as dynamic refusal writes; and "none is written to the store as a block
    code" was said without the verb, which reserves only the reason
    `ledger_tampered`. Codex's pass on the second commit
-   (4743946de2d8f0b5cdf623a3c134f1b2d1f17766) found two more in its words, and
-   the third commit corrects them: the store's tests of a reason were given as
-   one where `widen_requested` has its own, and `CheckWiden` was called
-   `Widen`.
+   (4743946de2d8f0b5cdf623a3c134f1b2d1f17766) found three more in its words,
+   and the third commit corrects them: the store's tests of a reason were
+   given as one where `widen_requested` has its own, `CheckWiden` was called
+   `Widen`, and this item said the verb "refuses only" that reason.
 3. The decisions-log row names the two readers; the recovery path is a writer.
 4. The phone row: `Mailer.Send` at `route.go:158` and `:189` is an inbound
    delivery, not a phone-bound publish.
