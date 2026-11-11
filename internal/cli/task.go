@@ -122,6 +122,12 @@ type taskEnvelope struct {
 	Task task.Task `json:"task"`
 }
 
+type taskAddEnvelope struct {
+	Root     string    `json:"root"`
+	Task     task.Task `json:"task"`
+	WaitsFor []string  `json:"waits_for"`
+}
+
 type taskListEnvelope struct {
 	Root  string      `json:"root"`
 	Tasks []task.Task `json:"tasks"`
@@ -339,14 +345,27 @@ func runTaskAdd(args []string) error {
 		return err
 	}
 	defer release()
-	t, err := s.Add(task.AddInput{
+	t, waits, err := s.AddWithFileWaits(task.AddInput{
 		Title: *title, Description: description, Class: *class, DependsOn: splitList(*deps),
 		DeclaredFiles: splitList(*files), Pool: pool, Priority: *priority, ProjectPath: path, CreatedBy: me, Budget: budget,
 	}, taskNow())
 	if err != nil {
 		return usageErrorf("task add: %v", err)
 	}
-	return printTaskResult("task_add", root, t, *f.jsonOut, "Added")
+	lines := make([]string, 0, len(waits))
+	for _, wait := range waits {
+		lines = append(lines, fmt.Sprintf("%s will wait for %s: both declare %s", t.ID, wait.TaskID, wait.Path))
+	}
+	if *f.jsonOut {
+		return printJSONEnvelope("task_add", taskAddEnvelope{Root: root, Task: t, WaitsFor: lines})
+	}
+	if err := printTaskResult("task_add", root, t, false, "Added"); err != nil {
+		return err
+	}
+	for _, line := range lines {
+		fmt.Println(line)
+	}
+	return nil
 }
 
 func runTaskList(args []string) error {
@@ -703,7 +722,16 @@ func printTaskDetails(t task.Task) {
 		if !t.Lease.BudgetEndsAt.IsZero() {
 			budgetEnd = t.Lease.BudgetEndsAt.Format(time.RFC3339)
 		}
-		fmt.Printf("  lease:    %s, %s, expires %s, budget ends %s, %d renewals\n", t.Lease.Holder, claimed, t.Lease.ExpiresAt.Format(time.RFC3339), budgetEnd, t.Lease.Renewals)
+		unlabelled := t.Lease.Renewals - t.Lease.ActivityRenewals - t.Lease.ManualRenewals
+		if unlabelled < 0 {
+			unlabelled = 0
+		}
+		renewals := fmt.Sprintf("%d renewals (%d activity, %d manual", t.Lease.Renewals, t.Lease.ActivityRenewals, t.Lease.ManualRenewals)
+		if unlabelled > 0 {
+			renewals += fmt.Sprintf(", %d unlabelled", unlabelled)
+		}
+		renewals += ")"
+		fmt.Printf("  lease:    %s, %s, expires %s, budget ends %s, %s\n", t.Lease.Holder, claimed, t.Lease.ExpiresAt.Format(time.RFC3339), budgetEnd, renewals)
 	}
 	fmt.Printf("  attempt:  %d\n", t.Attempt)
 	for _, a := range t.Attempts {

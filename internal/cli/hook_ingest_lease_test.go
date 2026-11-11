@@ -24,6 +24,16 @@ func ingestToolResult(t *testing.T, handle string) bool {
 	return strings.Contains(out, `"lease_renewed":true`)
 }
 
+func ingestStop(t *testing.T, handle string) string {
+	t.Helper()
+	withHookStdin(t, []byte(`{"hook_event_name":"Stop"}`))
+	out, _, err := captureOutput(t, func() error { return Run([]string{"evidence", "ingest", "--me", handle, "--json"}, "test") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 // Review 1 ruling 3: evidence ingest renews the seat's claimed lease on a
 // tool result, at most once per renewal interval; never an unclaimed lease.
 func TestEvidenceIngestRenewsTheClaimedLease(t *testing.T) {
@@ -40,14 +50,20 @@ func TestEvidenceIngestRenewsTheClaimedLease(t *testing.T) {
 	if _, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-5*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
+	previousTaskNow := taskNow
+	taskNow = func() time.Time { return f.now.Add(-2 * time.Minute) }
+	t.Cleanup(func() { taskNow = previousTaskNow })
+	if _, err := taskCLI(t, "renew", "--me", "cto"); err != nil {
+		t.Fatalf("manual task renew: %v", err)
+	}
 	if !ingestToolResult(t, "cto") {
 		t.Fatal("a tool result did not renew the claimed lease")
 	}
-	if got, _ := store.Get("t1"); !got.Lease.ExpiresAt.Equal(f.now.Add(taskstore.DefaultLeaseDuration)) || got.Lease.Renewals != 1 {
+	if got, _ := store.Get("t1"); !got.Lease.ExpiresAt.Equal(f.now.Add(taskstore.DefaultLeaseDuration)) || got.Lease.Renewals != 2 || got.Lease.ActivityRenewals != 1 || got.Lease.ManualRenewals != 1 || got.Lease.LastRenewal != "activity" {
 		t.Fatalf("lease after renewal: %+v", got.Lease)
 	}
 	decisions, err := schedproc.ReadDecisionsTail(f.root)
-	if err != nil || len(decisions) != 1 || decisions[0].Kind != "lease_renewed" || decisions[0].TaskID != "t1" {
+	if err != nil || len(decisions) != 1 || decisions[0].Kind != "lease_renewed" || decisions[0].TaskID != "t1" || decisions[0].Reason != "first activity renewal of attempt 1" {
 		t.Fatalf("first-renewal decisions = %+v, err %v", decisions, err)
 	}
 	if ingestToolResult(t, "cto") {
@@ -114,6 +130,119 @@ func TestActivityUsesTheMailboxIdentityAndFiltersNonWorkEvents(t *testing.T) {
 		if !isLeaseActivity(line) {
 			t.Fatalf("runtime work event was not shared activity: %+v", line)
 		}
+	}
+}
+
+func TestEachAttemptLogsOnlyItsFirstActivityRenewal(t *testing.T) {
+	f := newHookFixture(t)
+	current := f.now
+	previous := hookNow
+	hookNow = func() time.Time { return current }
+	t.Cleanup(func() { hookNow = previous })
+	store, _ := taskstore.Open(f.root)
+	if _, err := store.Add(taskstore.AddInput{Title: "per attempt", Class: "script", Budget: time.Hour}, f.now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-5*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := hookLedgerLine{Event: "PostToolUse", Tool: "Bash", Outcome: "ok"}
+	if result, attempt := renewLeaseOnToolResult(f.id(), line, current); result != "renewed" || attempt != first.Attempt {
+		t.Fatalf("first activity = %q attempt %d", result, attempt)
+	}
+	current = current.Add(2 * time.Minute)
+	if result, attempt := renewLeaseOnToolResult(f.id(), line, current); result != "renewed" || attempt != first.Attempt {
+		t.Fatalf("second activity = %q attempt %d", result, attempt)
+	}
+	decisions, err := schedproc.ReadDecisionsTail(f.root)
+	if err != nil || len(decisions) != 1 {
+		t.Fatalf("attempt 1 decisions = %+v, err %v", decisions, err)
+	}
+	if _, err := store.Release("t1", "cto", "retry", current.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Claim("t1", "cto", nil, 10*time.Minute, current.Add(2*time.Second))
+	if err != nil || second.Attempt == first.Attempt {
+		t.Fatalf("second attempt = %+v, err %v", second, err)
+	}
+	if _, renewed, err := store.RenewAttempt("cto", second.Attempt, 10*time.Minute, 0, current.Add(time.Minute)); err != nil || !renewed {
+		t.Fatalf("attempt 2 manual renewal: renewed=%v err=%v", renewed, err)
+	}
+	current = current.Add(2 * time.Minute)
+	if result, attempt := renewLeaseOnToolResult(f.id(), line, current); result != "renewed" || attempt != second.Attempt {
+		t.Fatalf("attempt 2 activity = %q attempt %d", result, attempt)
+	}
+	decisions, err = schedproc.ReadDecisionsTail(f.root)
+	if err != nil || len(decisions) != 2 || decisions[1].Reason != "first activity renewal of attempt 2" {
+		t.Fatalf("per-attempt decisions = %+v, err %v", decisions, err)
+	}
+}
+
+func TestLegacyUnlabelledRenewalsDoNotHideFirstActivity(t *testing.T) {
+	f := newHookFixture(t)
+	store, _ := taskstore.Open(f.root)
+	if _, err := store.Add(taskstore.AddInput{Title: "legacy", Class: "script"}, f.now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(store.Dir, "t1.json")
+	// Frozen bytes written by 3.2.0-rc.1 at 3966afb72b85e1ab6c0fc8c879f1c5ef03f92a40.
+	// Source input rc1-lease-t1.json has sha256 e860cd1fde099d0f187647fb397ee430e8bf345b258124a9830c1cbc57d50016.
+	// Production types must not participate in writing this compatibility fixture.
+	const rc1LeaseT1 = `{
+  "schema": 1,
+  "id": "t1",
+  "title": "legacy",
+  "class": "script",
+  "state": "in_progress",
+  "priority": 0,
+  "depends_on": [],
+  "declared_files": [],
+  "pool": null,
+  "lease": {
+    "holder": "cto",
+    "granted_at": "2026-10-23T11:55:00Z",
+    "expires_at": "2026-10-23T12:06:30Z",
+    "claimed_at": "2026-10-23T11:55:00Z",
+    "renewed_at": "2026-10-23T11:56:30Z",
+    "renewals": 3,
+    "attempt": 1,
+    "budget_ends_at": "2026-10-23T13:25:00Z"
+  },
+  "attempt": 1,
+  "budget": 5400000000000,
+  "report": null,
+  "created_at": "2026-10-23T11:00:00Z",
+  "updated_at": "2026-10-23T11:56:30Z",
+  "closed_at": null
+}`
+	if err := os.WriteFile(path, []byte(rc1LeaseT1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !ingestToolResult(t, "cto") {
+		t.Fatal("legacy lease did not take its first labelled activity renewal")
+	}
+	got, _ := store.Get("t1")
+	if got.Lease.Renewals != 4 || got.Lease.ActivityRenewals != 1 || got.Lease.ManualRenewals != 0 || got.Lease.LastRenewal != "activity" {
+		t.Fatalf("legacy lease = %+v", got.Lease)
+	}
+	rewritten, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(rewritten), `"activity_renewals": 1`) || !strings.Contains(string(rewritten), `"last_renewal": "activity"`) || strings.Contains(string(rewritten), `"manual_renewals"`) {
+		t.Fatalf("rewritten legacy task = %s", rewritten)
+	}
+	decisions, err := schedproc.ReadDecisionsTail(f.root)
+	if err != nil || len(decisions) != 1 || decisions[0].Reason != "first activity renewal of attempt 1 after 3 unlabelled renewals" {
+		t.Fatalf("legacy decision = %+v, err %v", decisions, err)
+	}
+	shown, err := taskCLI(t, "show", "t1")
+	if err != nil || !strings.Contains(shown, "4 renewals (1 activity, 0 manual, 3 unlabelled)") {
+		t.Fatalf("task show = %q, err %v", shown, err)
 	}
 }
 
@@ -218,4 +347,56 @@ func TestEvidenceIngestRenewalTiming(t *testing.T) {
 	writing := measure(1)
 	reading := measure(20)
 	t.Logf("ingest with a renewal write: %v; inside the interval: p50 %v, p95 %v", writing[0], reading[9], reading[18])
+}
+
+func TestManualRenewalOmitsZeroActivityRenewals(t *testing.T) {
+	f := newHookFixture(t)
+	store, err := taskstore.Open(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Add(taskstore.AddInput{Title: "manual only", Class: "script"}, f.now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	previousTaskNow := taskNow
+	taskNow = func() time.Time { return f.now }
+	t.Cleanup(func() { taskNow = previousTaskNow })
+	if _, err := taskCLI(t, "renew", "--me", "cto"); err != nil {
+		t.Fatalf("manual task renew: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(store.Dir, "t1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"manual_renewals": 1`) || strings.Contains(string(raw), `"activity_renewals"`) {
+		t.Fatalf("manual-only task = %s", raw)
+	}
+}
+
+func TestEvidenceIngestStopRenewsTheClaimedLease(t *testing.T) {
+	f := newHookFixture(t)
+	store, err := taskstore.Open(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Add(taskstore.AddInput{Title: "stop", Class: "script"}, f.now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	out := ingestStop(t, "cto")
+	if !strings.Contains(out, `"lease_renewed":true`) {
+		t.Fatal("Stop ingest did not report renewal")
+	}
+	got, err := store.Get("t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Lease.ActivityRenewals != 1 || got.Lease.LastRenewal != "activity" {
+		t.Fatalf("lease after Stop ingest = %+v", got.Lease)
+	}
 }

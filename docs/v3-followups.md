@@ -84,11 +84,14 @@ planning sessions that made them; nothing here is a release blocker.
   (`internal/cli/status.go:80-82`), which escapes control characters, so the
   likely cause is another writer interleaving with stdout; that is a
   hypothesis. Capture the failing bytes next.
-- Three records under `gates/clear-*.json` in the v31 session have failed
-  gate-record validation (`gate record is malformed`) since 2026-11-05 17:20Z
-  (as reported by the squad's alerts). Find which writer produced them before
-  anyone clears them. Source: `Record.Validate` in
-  `internal/gatestore/record.go:207-211`.
+- **Answered (the 320-train-escape-legacy PR):** the three records under
+  `gates/clear-*.json` in the v31 session that have failed gate-record
+  validation (`gate record is malformed`) since 2026-11-05 17:20Z were written
+  by the 3.0.x seat clear's owner gate, kind `quarantine_clear`: the kind was
+  added by a724b3db and left the catalog in fdfa28ff. The drift reader now
+  skips such a record as legacy with one line, and the train clears the alert
+  it left behind. Evidence:
+  [note.md](v3-spike/320-train-escape-legacy/note.md).
 - **rc.2 (done in the t126 upgrade-normalisation PR):** upgrade
   normalisation can end a live legacy attempt on the first
   scheduler tick. Stamp its budget end as the later of grant plus the default

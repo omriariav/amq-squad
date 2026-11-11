@@ -106,7 +106,10 @@ bound to it; empty and 0 when none); `wait_holders`, for a pending task
 whose `wait_reason` is `file_lock`, the ids of the tasks holding the lock by
 the task store's rule (in progress or blocked, declared files overlapping),
 `[]` otherwise; empty under `file_lock` means no task holds it any more (a
-stale wait). Brief 3.1.1-2 adds `wait_pool`: for a pending task whose
+stale wait). `waits_for` is `[]` otherwise; for a pending task whose
+`wait_reason` is `file_lock`, it has one `{task_id, path}` per holder in
+`wait_holders`, sorted by `task_id`, where `path` is the declaration both
+tasks cover (`task.OverlapDeclaration`). Brief 3.1.1-2 adds `wait_pool`: for a pending task whose
 `wait_reason` is `no_roster_seat` (its route names a pool no roster seat
 serves; the scheduler waits it by name instead of logging a
 `seat_request_failed` every tick), that pool as `runtime:model:effort`, from

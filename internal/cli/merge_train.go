@@ -325,6 +325,11 @@ func printMergeTrain(w io.Writer, r mergetrain.Result) {
 	fmt.Fprintf(w, "merge train %s (%s) on %s %s at %s\n", r.Run, mode, r.Repository, r.Base, r.BaseSHA)
 	fmt.Fprintf(w, "branch protection met: %v (required checks %v, direct push refused %v) %s\n",
 		r.ProtectionMet, r.Protection.Checks, r.Protection.DirectPushRefused, strings.Join(r.Protection.Notes, "; "))
+	// a legacy gate record the drift reader skipped (brief
+	// 320-train-escape-legacy, L3): its one line, as gate status prints it
+	for _, n := range r.Notes {
+		fmt.Fprintln(w, n)
+	}
 	if r.DryRun && r.Protection.Strict && len(r.PRs) > 1 {
 		n := len(r.PRs) - 1
 		suffix := "s"

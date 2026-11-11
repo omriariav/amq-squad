@@ -1,47 +1,47 @@
 === RUN   TestOwnerScriptDryRun
     enroll_test.go:126: evidence poll wrapper: amq-remote /Users/omri/go/bin/amq-remote with --poll 5ms
-    enroll_test.go:126: AMQ binary amq: 0.116.2 (/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestOwnerScriptDryRun3187323049/001/amq)
-    enroll_test.go:126: AMQ binary amq-remote: 0.116.2 (/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestOwnerScriptDryRun3187323049/001/amq-remote)
-    enroll_test.go:126: AMQ binary amq-owner-sign: 0.116.2 (/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestOwnerScriptDryRun3187323049/001/amq-owner-sign)
-    enroll_test.go:186: run 1 (phase A): rc 10 in 417ms
-        owner: npub1rjzlqxerhac2pwlsdvhdggp5c0avhg67hfrsnthn6xvwhsxk0qpseumpnx (1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803)
-        relay: ws://127.0.0.1:56375
-        share: /private/tmp/4e-3775096343/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+    enroll_test.go:126: AMQ binary amq: 0.116.2 (/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestOwnerScriptDryRun1890583521/001/amq)
+    enroll_test.go:126: AMQ binary amq-remote: 0.116.2 (/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestOwnerScriptDryRun1890583521/001/amq-remote)
+    enroll_test.go:126: AMQ binary amq-owner-sign: 0.116.2 (/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/TestOwnerScriptDryRun1890583521/001/amq-owner-sign)
+    enroll_test.go:186: run 1 (phase A): rc 10 in 408ms
+        owner: npub17xxsle60wpvh6wdgsa6q8lz8uc26j8ufmv6p6ygq42sn7jrepq4sp6zs4t (f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b)
+        relay: ws://127.0.0.1:62022
+        share: /private/tmp/4e-3725177110/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
         == A: amq init (endpoint handle remote, mailbox handle attach)
         == A: amq-remote share --enable buzz-dm --enable buzz-profile --days 30
-        body:  8acd3bf573ee12e53467b2b5c08453e25e35ccb605c754efa8c9dbbe85cb2f68 (check this against what amq-owner-sign shows)
+        body:  8b6d7d31db3cb1906f0a2937e5da15f994bbe8373c32afa200a2b1984c35a7d6 (check this against what amq-owner-sign shows)
         grants requested: 8
         == B: the owner signs the grants (amq-owner-sign, key through the pipe)
            OWNER STEP: set BUZZ_OWNER_KEY_CMD to your password manager's read command and rerun, e.g.
-             BUZZ_OWNER_KEY_CMD='op read "op://<vault>/<item>/<field>"' /Users/omri/code/amq-squad/.worktrees/reviewer/docs/v3-buzz/enroll.sh npub1rjzlqxerhac2pwlsdvhdggp5c0avhg67hfrsnthn6xvwhsxk0qpseumpnx ws://127.0.0.1:56375
+             BUZZ_OWNER_KEY_CMD='op read "op://<vault>/<item>/<field>"' /Users/omri/code/amq-squad/.worktrees/reviewer/docs/v3-buzz/enroll.sh npub17xxsle60wpvh6wdgsa6q8lz8uc26j8ufmv6p6ygq42sn7jrepq4sp6zs4t ws://127.0.0.1:62022
            The key goes from that command straight into amq-owner-sign and nowhere else.
         save this output, sign it in one step, then enroll the bundle:
           amq-owner-sign --share <this-output> --out <bundle.json> --relay <wss-url>
-          amq-remote share --root /private/tmp/4e-3775096343/.amq-squad/buzz/root --session amq-squad --bundle <bundle.json> --target <target> --relay <wss-url> [--dm-channel <channel> --native-session <id>]
-    enroll_test.go:242: run 2 (owner signs through the pipe): rc 11 in 9.252s
-        owner: npub1rjzlqxerhac2pwlsdvhdggp5c0avhg67hfrsnthn6xvwhsxk0qpseumpnx (1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803)
-        relay: ws://127.0.0.1:56375
-        share: /private/tmp/4e-3775096343/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
-        body:  8acd3bf573ee12e53467b2b5c08453e25e35ccb605c754efa8c9dbbe85cb2f68 (check this against what amq-owner-sign shows)
+          amq-remote share --root /private/tmp/4e-3725177110/.amq-squad/buzz/root --session amq-squad --bundle <bundle.json> --target <target> --relay <wss-url> [--dm-channel <channel> --native-session <id>]
+    enroll_test.go:242: run 2 (owner signs through the pipe): rc 11 in 9.25s
+        owner: npub17xxsle60wpvh6wdgsa6q8lz8uc26j8ufmv6p6ygq42sn7jrepq4sp6zs4t (f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b)
+        relay: ws://127.0.0.1:62022
+        share: /private/tmp/4e-3725177110/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+        body:  8b6d7d31db3cb1906f0a2937e5da15f994bbe8373c32afa200a2b1984c35a7d6 (check this against what amq-owner-sign shows)
         grants requested: 8
         == B: the owner signs the grants (amq-owner-sign, key through the pipe)
-           OWNER: amq-owner-sign shows the body; check it is 8acd3bf573ee12e53467b2b5c08453e25e35ccb605c754efa8c9dbbe85cb2f68 and type its first 8 characters.
+           OWNER: amq-owner-sign shows the body; check it is 8b6d7d31db3cb1906f0a2937e5da15f994bbe8373c32afa200a2b1984c35a7d6 and type its first 8 characters.
         You are about to sign these grants and publish a policy for this body.
         session:     amq-squad
-        body pubkey: 8acd3bf573ee12e53467b2b5c08453e25e35ccb605c754efa8c9dbbe85cb2f68
-          kind 20003: kind=20003&created_at<1796936503 (until 2026-12-10T21:01:43Z)
-          kind 1059: kind=1059&created_at<1796936503 (until 2026-12-10T21:01:43Z)
-          kind 24200: kind=24200&created_at<1796936503 (until 2026-12-10T21:01:43Z)
-          kind 44200: kind=44200&created_at<1796936503 (until 2026-12-10T21:01:43Z)
-          kind 10100: kind=10100&created_at<1796936503 (until 2026-12-10T21:01:43Z)
-          kind 0: kind=0&created_at<1796936503 (until 2026-12-10T21:01:43Z)
-          kind 9: kind=9&created_at<1796936503 (until 2026-12-10T21:01:43Z)
-          kind 40003: kind=40003&created_at<1796936503 (until 2026-12-10T21:01:43Z)
-        check the body pubkey against the share output, then type its first 8 characters to sign: 8acd3bf5
-        owner nsec or hex (hidden): owner pubkey: 1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803
-        wrote 8 signed grants to /private/tmp/4e-3775096343/.amq-squad/buzz/bundle.json
-        published kind 30177 policy f785d44f75cbe450a2038e5363477e4c791858de37f327e4d56ecba6194be677
-        next: amq-remote share --session amq-squad --bundle /private/tmp/4e-3775096343/.amq-squad/buzz/bundle.json --target <target> --relay ws://127.0.0.1:56375
+        body pubkey: 8b6d7d31db3cb1906f0a2937e5da15f994bbe8373c32afa200a2b1984c35a7d6
+          kind 20003: kind=20003&created_at<1796940461 (until 2026-12-10T22:07:41Z)
+          kind 1059: kind=1059&created_at<1796940461 (until 2026-12-10T22:07:41Z)
+          kind 24200: kind=24200&created_at<1796940461 (until 2026-12-10T22:07:41Z)
+          kind 44200: kind=44200&created_at<1796940461 (until 2026-12-10T22:07:41Z)
+          kind 10100: kind=10100&created_at<1796940461 (until 2026-12-10T22:07:41Z)
+          kind 0: kind=0&created_at<1796940461 (until 2026-12-10T22:07:41Z)
+          kind 9: kind=9&created_at<1796940461 (until 2026-12-10T22:07:41Z)
+          kind 40003: kind=40003&created_at<1796940461 (until 2026-12-10T22:07:41Z)
+        check the body pubkey against the share output, then type its first 8 characters to sign: 8b6d7d31
+        owner nsec or hex (hidden): owner pubkey: f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b
+        wrote 8 signed grants to /private/tmp/4e-3725177110/.amq-squad/buzz/bundle.json
+        published kind 30177 policy ab404dc265b9ced3841f455c96e1ca0b00b72b541855bf17ba77071ca1b96ba1
+        next: amq-remote share --session amq-squad --bundle /private/tmp/4e-3725177110/.amq-squad/buzz/bundle.json --target <target> --relay ws://127.0.0.1:62022
         == C: amq-remote share --bundle (enroll)
         grants enrolled: 8
         == D: amq-remote share --target --relay --presence "amq-squad"
@@ -51,29 +51,29 @@
              doctor: "state": "authenticated"
         == D: OWNER STEP (phone or Buzz Desktop): open a DM with the agent named "amq-squad"
              and send the DM channel id back: rerun with BUZZ_DM_CHANNEL=<channel id>.
-             agent npub: npub13txnhatnacfw2dr8k26uppznuf0rtn9kqhr4fmage8dmapwt9a5qaqy0e2
+             agent npub: npub13dkh6vwm8jceqmc29ym7tks4lx2th6ph8se2lgsq52cesnp45ltq6d2l2l
         [40;37;1m█████████████████████████████████████████[0m
         [40;37;1m█████████████████████████████████████████[0m
-        [40;37;1m████ ▄▄▄▄▄ █▀█ █▄▄▄▀██▀▄ ██▄▀█ ▄▄▄▄▄ ████[0m
-        [40;37;1m████ █   █ █▀▀▀█ ▀   ▀█ █▄▄▀▄█ █   █ ████[0m
-        [40;37;1m████ █▄▄▄█ █▀ █▀▀██▀ ▄ ▄ ▄▄▄ █ █▄▄▄█ ████[0m
-        [40;37;1m████▄▄▄▄▄▄▄█▄▀ ▀▄█ █ █ █▄▀▄▀ █▄▄▄▄▄▄▄████[0m
-        [40;37;1m████ ▄▄  ▀▄  ▄▀▄▀▄▀▄ ▄█ ▄▀▀▀█▄▀▄█▄▀ ▀████[0m
-        [40;37;1m████ █ ▄▀ ▄▄▀█▄█▀█  █▄ ▀▀▀▄█▄█▄▄ █▀▄█████[0m
-        [40;37;1m█████ █  ▀▄█▄▄▄█▄▄ ▄ ▄▄ ▀▀ ▀▄▄▀▄▄▄█ ▀████[0m
-        [40;37;1m████▄▀▀▀▄▀▄▀█▀▄ ▄█▀ ▄█▀█▀  ▀ ▀█ ▀▀▀ ▀████[0m
-        [40;37;1m████▀▀█ ██▄██▀▀▄▀▄▄▄▀▄▀▀ ▀ ▀▀ ▀█▄▀█▀▀████[0m
-        [40;37;1m████▀▄ ▄█▄▄ ▄▄██▀█▀  ▄▀▀█ █▀█▄█▄█▀▀ ▀████[0m
-        [40;37;1m████ ▄▀▀▀ ▄█▄█▀█▄▄ █▀ ▀▀ ▀ ▀█▄▀█▄▄▀▄ ████[0m
-        [40;37;1m████ █ ▀▄█▄▀ ██ ▄█▀ ▀████ █▀▄▄ ▀▄▀ ▄▀████[0m
-        [40;37;1m████▄█▄▄█▄▄█▀ ▀▄   ▄▀▄▀▀▄█ █ ▄▄▄  ▀▄ ████[0m
-        [40;37;1m████ ▄▄▄▄▄ █▄█ ▀ █▀ ██▄▀▀▀█  █▄█    █████[0m
-        [40;37;1m████ █   █ █ █ ▀▀▄▀█▄▄▀▀▀█▄▀▄ ▄▄ █▀▄█████[0m
-        [40;37;1m████ █▄▄▄█ █ █▀████  ▄██ ▀▄█▄█▄▄██▀▄█████[0m
-        [40;37;1m████▄▄▄▄▄▄▄█▄███▄▄▄▄█▄██▄█▄▄▄▄█▄█▄█▄█████[0m
+        [40;37;1m████ ▄▄▄▄▄ █▀█ █▄█ ▀█▄▀▄█▀▄▄ █ ▄▄▄▄▄ ████[0m
+        [40;37;1m████ █   █ █▀▀▀█ ▀   ▀▄▀█▄ ▄▄█ █   █ ████[0m
+        [40;37;1m████ █▄▄▄█ █▀ █▀▀▄▀▀█▀▀▄▄▀▄▄▄█ █▄▄▄█ ████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄▀ ▀▄█▄▀▄█▄█▄▀ ▀ █▄▄▄▄▄▄▄████[0m
+        [40;37;1m████▄▄▄▄▄▀▄ ▄▄▀▄▀▄ ▄ ▄▀▀ █▄▀▄ ▀ █▄▀ ▀████[0m
+        [40;37;1m████▀▄█ ▀ ▄▄▀█▄█▀█▄▄▀██▀▀  ██▄▀ ▀█▀▄█████[0m
+        [40;37;1m████ ▀   ▀▄▄█ ▄█▄▄ █▀▄▄▀▄▀▀ ▄ ▀▄▄▄█ ▀████[0m
+        [40;37;1m████▀▀ ▀ ▄▄ ▄▄▀ ▄█▀▄▄▄ ██▀ █▀▄▀▀ ▀▀ ▀████[0m
+        [40;37;1m████▀▄▀█▀▄▄█ ▄█▄▀▄▀▄  ▀ ▀▀ ▀█ ▀▄▄▀█▀▀████[0m
+        [40;37;1m████▄▄ ▄ ▀▄▄████▀▄▄  █▀█▀ ▄██ ▀▄█▀▀ ▀████[0m
+        [40;37;1m████ ▀  █▀▄▀▄█▀█▄▄▄▄▀▄▀▀ █▄▀▄▄▀▄▄▄▀▄ ████[0m
+        [40;37;1m████ █▀█▄ ▄▄▄▄▄ ▄█▄▄▄▄█▀█▀▀▀▀ ▄▀▄▀ ▄▀████[0m
+        [40;37;1m████▄██▄██▄█ ▀ ▄ ▄▀▄▀▄█▀▄▀ █ ▄▄▄  ▀▄ ████[0m
+        [40;37;1m████ ▄▄▄▄▄ █▄ ▀█▄▄█▄█▄▄██▀▀  █▄█    █████[0m
+        [40;37;1m████ █   █ █ ██ ▄ ▄▄▄▄█  ▀▀█▄▄▄▄ █▀▄█████[0m
+        [40;37;1m████ █▄▄▄█ █ ▀ ▀ █▄  █▄█▀ ▄██▄ ▄██▀▄█████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄█▄██▄█▄▄▄▄▄██▄▄▄██▄█▄█▄█████[0m
         [40;37;1m█████████████████████████████████████████[0m
         [40;37;1m█████████████████████████████████████████[0m
-    enroll_test.go:258: MEASURED: grants at enrollment 8 (kinds [20003 1059 24200 44200 10100 0 9 40003]), window 720h0m0s, expires 2026-12-10T21:01:43Z
+    enroll_test.go:258: MEASURED: grants at enrollment 8 (kinds [20003 1059 24200 44200 10100 0 9 40003]), window 720h0m0s, expires 2026-12-10T22:07:41Z
     enroll_test.go:264: RECORDED (scratch-built amq-remote): manifest after phase D:
         {
           "adapters": [
@@ -88,12 +88,12 @@
           ],
           "layer": "remote",
           "relay": {
-            "url": "ws://127.0.0.1:56375",
+            "url": "ws://127.0.0.1:62022",
             "shares": [
               {
                 "target": "amq-squad",
                 "session": "amq-squad",
-                "owner_pubkey": "1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803",
+                "owner_pubkey": "f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b",
                 "presence": true,
                 "name": "amq-squad"
               }
@@ -101,126 +101,124 @@
           },
           "schema_version": 2
         }
-    enroll_test.go:186: run 3 (bind): rc 0 in 1.114s
-        owner: npub1rjzlqxerhac2pwlsdvhdggp5c0avhg67hfrsnthn6xvwhsxk0qpseumpnx (1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803)
-        relay: ws://127.0.0.1:56375
-        share: /private/tmp/4e-3775096343/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
-        body:  8acd3bf573ee12e53467b2b5c08453e25e35ccb605c754efa8c9dbbe85cb2f68 (check this against what amq-owner-sign shows)
+    enroll_test.go:186: run 3 (bind): rc 0 in 1.126s
+        owner: npub17xxsle60wpvh6wdgsa6q8lz8uc26j8ufmv6p6ygq42sn7jrepq4sp6zs4t (f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b)
+        relay: ws://127.0.0.1:62022
+        share: /private/tmp/4e-3725177110/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+        body:  8b6d7d31db3cb1906f0a2937e5da15f994bbe8373c32afa200a2b1984c35a7d6 (check this against what amq-owner-sign shows)
         grants requested: 8
         grants enrolled: 8
         == E: amq-remote share --target amq-squad --dm-channel <channel> --native-session attach --min-evidence submitted
         == E: amq-squad remote bind
-        gate binding written: /private/tmp/4e-3775096343/.amq-squad/gate-binding.json
-        body npub13txnhatnacfw2dr8k26uppznuf0rtn9kqhr4fmage8dmapwt9a5qaqy0e2 (8acd3bf573ee12e53467b2b5c08453e25e35ccb605c754efa8c9dbbe85cb2f68), owner 1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803
-        8 grants (kinds [20003 1059 24200 44200 10100 0 9 40003]), expire 2026-12-10T21:01:43Z
+        gate binding written: /private/tmp/4e-3725177110/.amq-squad/gate-binding.json
+        body npub13dkh6vwm8jceqmc29ym7tks4lx2th6ph8se2lgsq52cesnp45ltq6d2l2l (8b6d7d31db3cb1906f0a2937e5da15f994bbe8373c32afa200a2b1984c35a7d6), owner f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b
+        8 grants (kinds [20003 1059 24200 44200 10100 0 9 40003]), expire 2026-12-10T22:07:41Z
         share target amq-squad: kind mailbox, handle attach, reply_timeout 60s, DM commands on (channel dm-4-5-dryrun)
-        created /private/tmp/4e-3775096343/.amq-squad/issuer-key.pem
-        created /private/tmp/4e-3775096343/.amq-squad/authorization-trust.json
+        created /private/tmp/4e-3725177110/.amq-squad/issuer-key.pem
+        created /private/tmp/4e-3725177110/.amq-squad/authorization-trust.json
         == F: stopping the enrollment endpoint (amq-squad remote attach runs it from now on)
         enrolled. next: amq-squad remote attach --lead <lead handle> --project <dir> --session <session>
-    enroll_test.go:285: run 4 (renew): rc 0 in 5.126s
-        owner: npub1rjzlqxerhac2pwlsdvhdggp5c0avhg67hfrsnthn6xvwhsxk0qpseumpnx (1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803)
-        relay: ws://127.0.0.1:56375
-        share: /private/tmp/4e-3775096343/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+    enroll_test.go:285: run 4 (renew): rc 0 in 5.114s
+        owner: npub17xxsle60wpvh6wdgsa6q8lz8uc26j8ufmv6p6ygq42sn7jrepq4sp6zs4t (f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b)
+        relay: ws://127.0.0.1:62022
+        share: /private/tmp/4e-3725177110/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
         == A: amq-remote share --renew (a new 30-day window for the same agent)
         save this output, sign it in one step, then enroll the bundle:
           amq-owner-sign --share <this-output> --out <bundle.json> --relay <wss-url>
-          amq-remote share --root /private/tmp/4e-3775096343/.amq-squad/buzz/root --session amq-squad --bundle <bundle.json> --target <target> --relay <wss-url> [--dm-channel <channel> --native-session <id>]
-        body:  8acd3bf573ee12e53467b2b5c08453e25e35ccb605c754efa8c9dbbe85cb2f68 (check this against what amq-owner-sign shows)
+          amq-remote share --root /private/tmp/4e-3725177110/.amq-squad/buzz/root --session amq-squad --bundle <bundle.json> --target <target> --relay <wss-url> [--dm-channel <channel> --native-session <id>]
+        body:  8b6d7d31db3cb1906f0a2937e5da15f994bbe8373c32afa200a2b1984c35a7d6 (check this against what amq-owner-sign shows)
         grants requested: 8
         == B: the owner signs the grants (amq-owner-sign, key through the pipe)
-           OWNER: amq-owner-sign shows the body; check it is 8acd3bf573ee12e53467b2b5c08453e25e35ccb605c754efa8c9dbbe85cb2f68 and type its first 8 characters.
+           OWNER: amq-owner-sign shows the body; check it is 8b6d7d31db3cb1906f0a2937e5da15f994bbe8373c32afa200a2b1984c35a7d6 and type its first 8 characters.
         You are about to sign these grants and publish a policy for this body.
         session:     amq-squad
-        body pubkey: 8acd3bf573ee12e53467b2b5c08453e25e35ccb605c754efa8c9dbbe85cb2f68
-          kind 20003: kind=20003&created_at<1796936514 (until 2026-12-10T21:01:54Z)
-          kind 1059: kind=1059&created_at<1796936514 (until 2026-12-10T21:01:54Z)
-          kind 24200: kind=24200&created_at<1796936514 (until 2026-12-10T21:01:54Z)
-          kind 44200: kind=44200&created_at<1796936514 (until 2026-12-10T21:01:54Z)
-          kind 10100: kind=10100&created_at<1796936514 (until 2026-12-10T21:01:54Z)
-          kind 0: kind=0&created_at<1796936514 (until 2026-12-10T21:01:54Z)
-          kind 9: kind=9&created_at<1796936514 (until 2026-12-10T21:01:54Z)
-          kind 40003: kind=40003&created_at<1796936514 (until 2026-12-10T21:01:54Z)
-        check the body pubkey against the share output, then type its first 8 characters to sign: 8acd3bf5
-        owner nsec or hex (hidden): owner pubkey: 1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803
-        wrote 8 signed grants to /private/tmp/4e-3775096343/.amq-squad/buzz/bundle.json
-        published kind 30177 policy 83f738c7d461bca7dc8f0d02b925307e90ccf6832074f648f164583e03efe10d
-        next: amq-remote share --session amq-squad --bundle /private/tmp/4e-3775096343/.amq-squad/buzz/bundle.json --target <target> --relay ws://127.0.0.1:56375
+        body pubkey: 8b6d7d31db3cb1906f0a2937e5da15f994bbe8373c32afa200a2b1984c35a7d6
+          kind 20003: kind=20003&created_at<1796940473 (until 2026-12-10T22:07:53Z)
+          kind 1059: kind=1059&created_at<1796940473 (until 2026-12-10T22:07:53Z)
+          kind 24200: kind=24200&created_at<1796940473 (until 2026-12-10T22:07:53Z)
+          kind 44200: kind=44200&created_at<1796940473 (until 2026-12-10T22:07:53Z)
+          kind 10100: kind=10100&created_at<1796940473 (until 2026-12-10T22:07:53Z)
+          kind 0: kind=0&created_at<1796940473 (until 2026-12-10T22:07:53Z)
+          kind 9: kind=9&created_at<1796940473 (until 2026-12-10T22:07:53Z)
+          kind 40003: kind=40003&created_at<1796940473 (until 2026-12-10T22:07:53Z)
+        check the body pubkey against the share output, then type its first 8 characters to sign: 8b6d7d31
+        owner nsec or hex (hidden): owner pubkey: f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b
+        wrote 8 signed grants to /private/tmp/4e-3725177110/.amq-squad/buzz/bundle.json
+        published kind 30177 policy 4f487af10c85d95e6e6faedaec1628858bc129218254ce57fbbe88574065e942
+        next: amq-remote share --session amq-squad --bundle /private/tmp/4e-3725177110/.amq-squad/buzz/bundle.json --target <target> --relay ws://127.0.0.1:62022
         == C: amq-remote share --bundle (enroll)
         grants enrolled: 8
         == E: amq-squad remote bind
-        gate binding written: /private/tmp/4e-3775096343/.amq-squad/gate-binding.json
-        body npub13txnhatnacfw2dr8k26uppznuf0rtn9kqhr4fmage8dmapwt9a5qaqy0e2 (8acd3bf573ee12e53467b2b5c08453e25e35ccb605c754efa8c9dbbe85cb2f68), owner 1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803
-        8 grants (kinds [20003 1059 24200 44200 10100 0 9 40003]), expire 2026-12-10T21:01:54Z
+        gate binding written: /private/tmp/4e-3725177110/.amq-squad/gate-binding.json
+        body npub13dkh6vwm8jceqmc29ym7tks4lx2th6ph8se2lgsq52cesnp45ltq6d2l2l (8b6d7d31db3cb1906f0a2937e5da15f994bbe8373c32afa200a2b1984c35a7d6), owner f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b
+        8 grants (kinds [20003 1059 24200 44200 10100 0 9 40003]), expire 2026-12-10T22:07:53Z
         share target amq-squad: kind mailbox, handle attach, reply_timeout 60s, DM commands on (channel dm-4-5-dryrun)
         enrolled. next: amq-squad remote attach --lead <lead handle> --project <dir> --session <session>
-    enroll_test.go:353: MEASURED: presence online 70ms after the status row went live; offline 11ms after it went stale
+    enroll_test.go:353: MEASURED: presence online 70ms after the status row went live; offline 12ms after it went stale
     enroll_test.go:364: MEASURED: share binding {Target:amq-squad Kind:mailbox Handle:attach ReplyTimeout:60s Channel:dm-4-5-dryrun Commands:true MinEvidence:submitted Presence:true}
     enroll_test.go:386: gate question text:
         Create a tag named v3.0.0-dry?
         Asked by lead-a.
         Yes lets it run. No stops it.
-        
+
         ----------
         amq-squad gate rel-dry
-        squad: root-sha256:60bfa6591856ffaeab9aed0ec393e842ac0883f2c7a7878fe0f2c6405415e681
+        squad: root-sha256:dcf911ec72344588f0692c6e60a77259e94ce0ac35e06cf4a7be0d819b10b8e3
         class: release (tag)
         target: git tag v3.0.0-dry
         digest: sha256:2abd66fc97e373838ee34f0090af1538706e713c180020a3befa9f4ce856d076
-    enroll_test.go:407: real rejected row: kind=9 tags=[[h dm-4-5-dryrun] [p 1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803] [e d8b85538219d7acbc2b4087623e8915d87e8f0ce723f5fbb26fc6fe35c8b8401  root] [e 4590245e068be07b117c5fc0faa4b5f13126d95ad91b9e4fb648841bc1348789  reply] [auth 1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803 kind=9&created_at<1796936514 d6a34386a9912892b9044339e3b7aae227e23fb1dd48f25eff0a4d329948299c94f0ddc57f749f866b96c2d7697dce00aac295edb4610b60617f2e95e7b838ea]]
-    enroll_test.go:424: answer rejected (native_error), sent again
-    enroll_test.go:436: RECORDED (scratch-built amq-remote): serve's delivery header {ID:2026-11-10T21-02-03.060Z_pid1824_e0acba28 From:buzz Thread:cockpit/dm-4-5-dryrun Labels:[acp buzz nostr:a6288236af38076e2ac1c26acb915742dabf80fec13c692211920027b43f6fd2] Body:}
-    enroll_test.go:454: RECORDED (scratch-built amq-remote): serve's result row kind 40003 tags [[h dm-4-5-dryrun] [e 74ae99978ad5727ee02fc18e3734869cda5aa5e66fb0105a5f9936310a153156] [auth 1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803 kind=40003&created_at<1796936514 7b328e792085a1cd44db7b43d97e30ed0c512cc6d63e26ef7fe4a25dcaf690466987dc666e867ebbc1447fdac53fa29d7b3de93925ccc563802185a83528ed70]] content "amq-squad: completed\n\naccepted rel-dry tag"
-    enroll_test.go:458: MEASURED (scratch-built amq-remote, local relay): owner answer to serve's running row (delivery done) 2.044s; handler step (fetch connection, verify, commit, reply) 167ms; answer to the result row on the relay 3.027s; open connections at the fetch 2 (serve 1), after 1
-    enroll_test.go:481: real resends: 1
-    enroll_test.go:482: approved outcomes: 1
-    rehearsal_test.go:78: rehearsal: 0.3 team propose: rc 0
+    enroll_test.go:448: RECORDED (scratch-built amq-remote): serve's delivery header {ID:2026-11-10T22-08-00.620Z_pid61346_caf0cf17 From:buzz Thread:cockpit/dm-4-5-dryrun Labels:[acp buzz nostr:3e6e133a0158e3efaed6c68141de41bf3b993c5f82a71fa52d7c83f8c2979408] Body:}
+    enroll_test.go:471: RECORDED (scratch-built amq-remote): serve's result row kind 40003 tags [[h dm-4-5-dryrun] [e 1711873501751f10b68d7a516d59cd221bf536d6f61e8eb0d483c0564f29ab79] [auth f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b kind=40003&created_at<1796940473 ea41f16a8b851a31d4bab0e167f57473cf2a079d1492e34d1c07d8ca2b422d55f99d8dc7a5eb77ccb87972262b224ea3ac682ad19d4cf49eabfa517a8de6fdad]] content "amq-squad: completed\n\naccepted rel-dry tag"
+    enroll_test.go:475: MEASURED (scratch-built amq-remote, local relay): owner answer to serve's running row (delivery done) 1.021s; handler step (fetch connection, verify, commit, reply) 179ms; answer to the result row on the relay 2s; open connections at the fetch 2 (serve 1), after 1
+    enroll_test.go:503: real resends: 0
+    enroll_test.go:505: approved outcomes: 1
+    rehearsal_test.go:81: rehearsal: 0.3 team propose: rc 0
         {
           "schema_version": 1,
           "kind": "team_propose",
           "data": {
-            "project_dir": "/private/tmp/4e-3775096343/owner45/project",
-            "digest": "sha256:94f5c1401cf71e65156a9ba4e1e89444f6d81b4701ce00c864ec9533d1d31b22@absent",
-            "content_digest": "sha256:94f5c1401cf71e65156a9ba4e1e89444f6d81b4701ce00c864ec9533d1d31b22",
+            "project_dir": "/private/tmp/4e-3725177110/owner45/project",
+            "digest": "sha256:cda56fd517b1ba32feb8fbad7953dd3723e99642c59e7a097aaa1d86a07aafdc@absent",
+            "content_digest": "sha256:cda56fd517b1ba32feb8fbad7953dd3723e99642c59e7a097aaa1d86a07aafdc",
             "squad_yaml_disk": "absent",
             "seats": 1,
             "files": [
               {
-                "path": "/private/tmp/4e-3775096343/owner45/project/squad.yaml",
+                "path": "/private/tmp/4e-3725177110/owner45/project/squad.yaml",
                 "action": "create",
                 "sha256": "0d040c4341373104e405678cf3571e60dd816f0dcf531bee69e849193e7edb7e"
               },
               {
-                "path": "/private/tmp/4e-3775096343/owner45/project/.amq-squad/team-rules.md",
+                "path": "/private/tmp/4e-3725177110/owner45/project/.amq-squad/team-rules.md",
                 "action": "create",
-                "sha256": "dfc7ee2ef42ce89e47bc3bbb465916d2e2e06757dbd1131213718c69082a3482"
+                "sha256": "7abb3c4d58f52401acff35c7f323cde2586d5644494b88fabd36c5cda5d98af3"
               },
               {
-                "path": "/private/tmp/4e-3775096343/owner45/project/CLAUDE.md",
+                "path": "/private/tmp/4e-3725177110/owner45/project/CLAUDE.md",
                 "action": "create",
                 "sha256": "f606fada821ff1973acc0c87af7b620fad8b1da3636993a2b2ce5366d2224ba1"
               },
               {
-                "path": "/private/tmp/4e-3775096343/owner45/project/AGENTS.md",
+                "path": "/private/tmp/4e-3725177110/owner45/project/AGENTS.md",
                 "action": "create",
                 "sha256": "f606fada821ff1973acc0c87af7b620fad8b1da3636993a2b2ce5366d2224ba1"
               }
             ]
           }
         }
-    rehearsal_test.go:78: rehearsal: 0.3 team apply: rc 0
-        create  /private/tmp/4e-3775096343/owner45/project/squad.yaml                0d040c434137
-        create  /private/tmp/4e-3775096343/owner45/project/.amq-squad/team-rules.md  dfc7ee2ef42c
-        create  /private/tmp/4e-3775096343/owner45/project/CLAUDE.md                 f606fada821f
-        create  /private/tmp/4e-3775096343/owner45/project/AGENTS.md                 f606fada821f
-        applied digest sha256:94f5c1401cf71e65156a9ba4e1e89444f6d81b4701ce00c864ec9533d1d31b22@absent (1 seats)
-    rehearsal_test.go:78: rehearsal: 0.3 amq init (squad): rc 0
-        Initialized AMQ root at /private/tmp/4e-3775096343/owner45/project/.agent-mail/owner45
-    rehearsal_test.go:78: rehearsal: 0.3 amq init (operator): rc 0
-        Initialized AMQ root at /private/tmp/4e-3775096343/owner45/operator/.agent-mail/ops
-    rehearsal_test.go:78: rehearsal: 0.3 fleet operator: rc 0
-    rehearsal_test.go:78: rehearsal: 0.3 fleet add: rc 0
-    rehearsal_test.go:78: rehearsal: 5.1 gate raise: rc 0
+    rehearsal_test.go:81: rehearsal: 0.3 team apply: rc 0
+        create  /private/tmp/4e-3725177110/owner45/project/squad.yaml                0d040c434137
+        create  /private/tmp/4e-3725177110/owner45/project/.amq-squad/team-rules.md  7abb3c4d58f5
+        create  /private/tmp/4e-3725177110/owner45/project/CLAUDE.md                 f606fada821f
+        create  /private/tmp/4e-3725177110/owner45/project/AGENTS.md                 f606fada821f
+        applied digest sha256:cda56fd517b1ba32feb8fbad7953dd3723e99642c59e7a097aaa1d86a07aafdc@absent (1 seats)
+    rehearsal_test.go:81: rehearsal: 0.3 amq init (squad): rc 0
+        Initialized AMQ root at /private/tmp/4e-3725177110/owner45/project/.agent-mail/owner45
+    rehearsal_test.go:81: rehearsal: 0.3 amq init (operator): rc 0
+        Initialized AMQ root at /private/tmp/4e-3725177110/owner45/operator/.agent-mail/ops
+    rehearsal_test.go:81: rehearsal: 0.3 fleet operator: rc 0
+    rehearsal_test.go:81: rehearsal: 0.3 fleet add: rc 0
+    rehearsal_test.go:81: rehearsal: 5.1 gate raise: rc 0
         {
           "schema_version": 1,
           "kind": "gate_raise",
@@ -233,98 +231,686 @@
               "typed_class": "release",
               "target": "git tag v3.0.0-owner45",
               "digest": "sha256:29f6faf71e84faf91a2c4106fdc55eab1acc6d3e80da40512f79e049d8a2805a",
-              "text": "Create a tag named v3.0.0-owner45?\nAsked by cto.\nYes lets it run. No stops it.\n\n----------\namq-squad gate g45-owner-01\nsquad: root-sha256:c29c593da95b2a78b007b62786b6e6f836f9c376e28127d122b0da070f456f9e\nclass: release (tag)\ntarget: git tag v3.0.0-owner45\ndigest: sha256:29f6faf71e84faf91a2c4106fdc55eab1acc6d3e80da40512f79e049d8a2805a",
-              "text_sha256": "sha256:4f905e7bc60a807e9e2a508160cbe14e21a019f2d1c29ec291c925755360fcfa",
-              "issued_at": "2026-11-10T21:02:09Z",
-              "not_before": "2026-11-10T21:01:09Z",
-              "not_after": "2026-11-10T21:32:09Z",
+              "text": "Create a tag named v3.0.0-owner45?\nAsked by cto.\nYes lets it run. No stops it.\n\n----------\namq-squad gate g45-owner-01\nsquad: root-sha256:c9f12a50bd50326e9ef31f9d75fbaf5a4fde722ad2f5ba6854189fd4d9108ce2\nclass: release (tag)\ntarget: git tag v3.0.0-owner45\ndigest: sha256:29f6faf71e84faf91a2c4106fdc55eab1acc6d3e80da40512f79e049d8a2805a",
+              "text_sha256": "sha256:52867f962d69f86b1d43df1e0d886635143bebbb435cff0852a31b8d22aabedc",
+              "issued_at": "2026-11-10T22:08:06Z",
+              "not_before": "2026-11-10T22:07:06Z",
+              "not_after": "2026-11-10T22:38:06Z",
               "raised_by": "cto",
-              "owner_pubkey": "1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803",
-              "issuer_key_id": "ed25519-sha256:3a98878fa031535c24e773e72f755709794418482f230849951a6fb2c70dea1d",
-              "squad": "root-sha256:c29c593da95b2a78b007b62786b6e6f836f9c376e28127d122b0da070f456f9e"
+              "owner_pubkey": "f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b",
+              "issuer_key_id": "ed25519-sha256:b4c313640cffae3391775925fe368a511d247d695bf5359b2d4cfe14c080103f",
+              "squad": "root-sha256:c9f12a50bd50326e9ef31f9d75fbaf5a4fde722ad2f5ba6854189fd4d9108ce2"
             },
             "question_sent": true,
-            "question_event_id": "dff34962565abaa2928ec9f677b764bf873cb1e9a10ea4010e21484106fb5688"
+            "question_event_id": "d4ae64c17cbc2bee7293dd9c39b40bfef4ee4916ce562a46608b4268052c08f4"
           }
         }
-    enroll_test.go:503: MEASURED (rehearsal, local relay): raise to verified through remote attach 1.075s (tick 1 s)
-    rehearsal_test.go:78: rehearsal: 5.3 gate status: rc 0
+    rehearsal_test.go:246: real rejected row: kind=9 tags=[[h dm-4-5-dryrun] [p f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b] [e d4ae64c17cbc2bee7293dd9c39b40bfef4ee4916ce562a46608b4268052c08f4  root] [e c52c285ca5d47eb58859c11cad7775dddf602f9a5ee68a54882ae89e81be8b88  reply] [auth f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b kind=9&created_at<1796940473 751c5bc334ffbad11d36d7e1fd5981e654939ff82a73d2179b4612bf9f4d050618c7f80288d0aadfe0396c6543515490ca1210dbfeaaa34149f3586c10b144e5]]
+    rehearsal_test.go:257: answer rejected (native_error), sent again
+    rehearsal_test.go:246: real rejected row: kind=9 tags=[[h dm-4-5-dryrun] [p f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b] [e d4ae64c17cbc2bee7293dd9c39b40bfef4ee4916ce562a46608b4268052c08f4  root] [e 8c1e9d8134e2b8e199026e4466990992e30cf3c6fcb63618972f0ae525169082  reply] [auth f18d0fe74f70597d39a8877403fc47e615a91f89db341d1100aaa13f4879082b kind=9&created_at<1796940473 751c5bc334ffbad11d36d7e1fd5981e654939ff82a73d2179b4612bf9f4d050618c7f80288d0aadfe0396c6543515490ca1210dbfeaaa34149f3586c10b144e5]]
+    rehearsal_test.go:241: answer rejected (native_error) twice; not sent again
+    rehearsal_test.go:195: REAPED: rehearsal: 4.2 remote attach: process group 61420 and pids [61444 61447 61420] (the root and its descendants when recorded), none alive
+    rehearsal_test.go:197: rehearsal: 4.2 remote attach output:
+        {"at":"2026-11-10T22:08:05Z","data":{"leads":["app/cto","cto"],"mailbox":"user","operator":true,"root":"/private/tmp/4e-3725177110/owner45/operator/.agent-mail/ops","share_root":"/private/tmp/4e-3725177110/.amq-squad/buzz/root"},"kind":"attached"}
+        {"at":"2026-11-10T22:08:06Z","data":{"action":"started","error":"","present":true,"state":"online"},"kind":"presence"}
+        SIGQUIT: quit
+        PC=0x18a96b50c m=0 sigcode=0
+
+        goroutine 0 gp=0x101bbab20 m=0 mp=0x101bbb740 [idle]:
+        runtime.pthread_cond_wait(0x101bbbca8, 0x101bbbc68)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/sys_darwin.go:470 +0x20 fp=0x16f0d1ca0 sp=0x16f0d1c70 pc=0x100d91f70
+        runtime.semasleep(0xffffffffffffffff)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/os_darwin.go:72 +0x9c fp=0x16f0d1d00 sp=0x16f0d1ca0 pc=0x100d6ea1c
+        runtime.notesleep(0x101bbb898)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/lock_sema.go:62 +0xac fp=0x16f0d1d30 sp=0x16f0d1d00 pc=0x100d43b4c
+        runtime.mPark(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:1985
+        runtime.stopm()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:3023 +0x84 fp=0x16f0d1d60 sp=0x16f0d1d30 pc=0x100d78964
+        runtime.findRunnable()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:3811 +0xff0 fp=0x16f0d1f30 sp=0x16f0d1d60 pc=0x100d7a6d0
+        runtime.schedule()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:4179 +0x90 fp=0x16f0d1f70 sp=0x16f0d1f30 pc=0x100d7ba30
+        runtime.park_m(0x4c1a39a0c780)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:4319 +0x23c fp=0x16f0d1fd0 sp=0x16f0d1f70 pc=0x100d7beac
+        runtime.mcall()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:319 +0x54 fp=0x16f0d1fe0 sp=0x16f0d1fd0 pc=0x100daeac4
+
+        goroutine 1 gp=0x4c1a394421e0 m=nil [select]:
+        runtime.gopark(0x4c1a3995f830?, 0x2?, 0xc8?, 0xef?, 0x4c1a3995f1d4?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a3995ef80 sp=0x4c1a3995ef60 pc=0x100da9868
+        runtime.selectgo(0x4c1a3995f830, 0x4c1a3995f1d0, 0x4c1a39798600?, 0x0, 0x6?, 0x1)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/select.go:351 +0x838 fp=0x4c1a3995f0c0 sp=0x4c1a3995ef80 pc=0x100d86808
+        github.com/omriariav/amq-squad/v3/internal/cli.runRemoteAttach({0x4c1a395982e0, 0x9, 0x9}, {0x1014d192b, 0x2f}, {0x101b2d688, 0x4c1a3958a020})
+	/Users/omri/code/amq-squad/.worktrees/reviewer/internal/cli/remote.go:685 +0x21cc fp=0x4c1a3995fbb0 sp=0x4c1a3995f0c0 pc=0x1012f7fcc
+        github.com/omriariav/amq-squad/v3/internal/cli.runRemote({0x4c1a395982d0?, 0x1013f0c01?, 0x1013f2655?}, {0x1014d192b?, 0x1013e596d?})
+	/Users/omri/code/amq-squad/.worktrees/reviewer/internal/cli/remote.go:81 +0x1c8 fp=0x4c1a3995fc20 sp=0x4c1a3995fbb0 pc=0x1012f10f8
+        github.com/omriariav/amq-squad/v3/internal/cli.commandRegistry.func5({0x4c1a395982d0?, 0x2f?, 0x1013a3d14?})
+	/Users/omri/code/amq-squad/.worktrees/reviewer/internal/cli/command_registry.go:87 +0x24 fp=0x4c1a3995fc60 sp=0x4c1a3995fc20 pc=0x101341864
+        github.com/omriariav/amq-squad/v3/internal/cli.dispatch({0x4c1a395982c0, 0xb, 0xb}, {0x1014d192b?, 0x0?})
+	/Users/omri/code/amq-squad/.worktrees/reviewer/internal/cli/cli.go:163 +0x128 fp=0x4c1a3995fd20 sp=0x4c1a3995fc60 pc=0x10128b968
+        github.com/omriariav/amq-squad/v3/internal/cli.Run({0x4c1a395c6010?, 0x13?, 0x100e232e0?}, {0x1014d192b, 0x2f})
+	/Users/omri/code/amq-squad/.worktrees/reviewer/internal/cli/cli.go:114 +0x34c fp=0x4c1a3995fdd0 sp=0x4c1a3995fd20 pc=0x10128b54c
+        main.run({0x4c1a395c6010?, 0x0?, 0x0?}, {0x1014d192b?, 0x0?}, {0x101b2d688, 0x4c1a3958a028})
+	/Users/omri/code/amq-squad/.worktrees/reviewer/cmd/amq-squad/main.go:23 +0x2c fp=0x4c1a3995fe40 sp=0x4c1a3995fdd0 pc=0x10134eecc
+        main.main()
+	/Users/omri/code/amq-squad/.worktrees/reviewer/cmd/amq-squad/main.go:15 +0x8c fp=0x4c1a3995fea0 sp=0x4c1a3995fe40 pc=0x10134ee7c
+        runtime.main()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:302 +0x380 fp=0x4c1a3995ffd0 sp=0x4c1a3995fea0 pc=0x100d73f30
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a3995ffd0 sp=0x4c1a3995ffd0 pc=0x100db0a94
+
+        goroutine 2 gp=0x4c1a39442780 m=nil [force gc (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394d0f90 sp=0x4c1a394d0f70 pc=0x100da9868
+        runtime.goparkunlock(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:480
+        runtime.forcegchelper()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:387 +0xb4 fp=0x4c1a394d0fd0 sp=0x4c1a394d0f90 pc=0x100d74214
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394d0fd0 sp=0x4c1a394d0fd0 pc=0x100db0a94
+        created by runtime.init.7 in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:375 +0x24
+
+        goroutine 3 gp=0x4c1a39442d20 m=nil [GC sweep wait]:
+        runtime.gopark(0x1?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394d1770 sp=0x4c1a394d1750 pc=0x100da9868
+        runtime.goparkunlock(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:480
+        runtime.bgsweep(0x4c1a3946c080)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgcsweep.go:324 +0x178 fp=0x4c1a394d17b0 sp=0x4c1a394d1770 pc=0x100d5feb8
+        runtime.gcenable.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:214 +0x20 fp=0x4c1a394d17d0 sp=0x4c1a394d17b0 pc=0x100da08b0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394d17d0 sp=0x4c1a394d17d0 pc=0x100db0a94
+        created by runtime.gcenable in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:214 +0x6c
+
+        goroutine 4 gp=0x4c1a39442f00 m=nil [GC scavenge wait]:
+        runtime.gopark(0x101b339e8?, 0x101bba580?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394d1f60 sp=0x4c1a394d1f40 pc=0x100da9868
+        runtime.goparkunlock(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:480
+        runtime.(*scavengerState).park(0x101bba580)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgcscavenge.go:425 +0x5c fp=0x4c1a394d1f90 sp=0x4c1a394d1f60 pc=0x100d5da2c
+        runtime.bgscavenge(0x4c1a3946c080)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgcscavenge.go:658 +0xac fp=0x4c1a394d1fb0 sp=0x4c1a394d1f90 pc=0x100d5dfbc
+        runtime.gcenable.gowrap2()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:215 +0x20 fp=0x4c1a394d1fd0 sp=0x4c1a394d1fb0 pc=0x100da0870
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394d1fd0 sp=0x4c1a394d1fd0 pc=0x100db0a94
+        created by runtime.gcenable in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:215 +0xac
+
+        goroutine 17 gp=0x4c1a39582000 m=nil [GOMAXPROCS updater (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394cc770 sp=0x4c1a394cc750 pc=0x100da9868
+        runtime.goparkunlock(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:480
+        runtime.updateMaxProcsGoroutine()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:7146 +0xf4 fp=0x4c1a394cc7d0 sp=0x4c1a394cc770 pc=0x100d819c4
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394cc7d0 sp=0x4c1a394cc7d0 pc=0x100db0a94
+        created by runtime.defaultGOMAXPROCSUpdateEnable in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:7134 +0x48
+
+        goroutine 18 gp=0x4c1a395821e0 m=nil [finalizer wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394ccd80 sp=0x4c1a394ccd60 pc=0x100da9868
+        runtime.runFinalizers()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mfinal.go:210 +0x100 fp=0x4c1a394ccfd0 sp=0x4c1a394ccd80 pc=0x100d51240
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394ccfd0 sp=0x4c1a394ccfd0 pc=0x100db0a94
+        created by runtime.createfing in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mfinal.go:172 +0x78
+
+        goroutine 19 gp=0x4c1a395823c0 m=nil [cleanup wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394cd750 sp=0x4c1a394cd730 pc=0x100da9868
+        runtime.goparkunlock(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:480
+        runtime.(*cleanupQueue).dequeue(0x101bba960)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mcleanup.go:522 +0x160 fp=0x4c1a394cd790 sp=0x4c1a394cd750 pc=0x100d4e220
+        runtime.runCleanups()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mcleanup.go:718 +0x40 fp=0x4c1a394cd7d0 sp=0x4c1a394cd790 pc=0x100d4e970
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394cd7d0 sp=0x4c1a394cd7d0 pc=0x100db0a94
+        created by runtime.(*cleanupQueue).createGs in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mcleanup.go:672 +0x108
+
+        goroutine 20 gp=0x4c1a39582960 m=nil [GC worker (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394cdf20 sp=0x4c1a394cdf00 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a394cdfb0 sp=0x4c1a394cdf20 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a394cdfd0 sp=0x4c1a394cdfb0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394cdfd0 sp=0x4c1a394cdfd0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 33 gp=0x4c1a39916000 m=nil [GC worker (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a3991c720 sp=0x4c1a3991c700 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a3991c7b0 sp=0x4c1a3991c720 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a3991c7d0 sp=0x4c1a3991c7b0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a3991c7d0 sp=0x4c1a3991c7d0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 5 gp=0x4c1a394434a0 m=nil [GC worker (idle)]:
+        runtime.gopark(0x101b39f50?, 0x101bbb740?, 0x0?, 0x0?, 0x100da2020?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394d0720 sp=0x4c1a394d0700 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a394d07b0 sp=0x4c1a394d0720 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a394d07d0 sp=0x4c1a394d07b0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394d07d0 sp=0x4c1a394d07d0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 21 gp=0x4c1a39582b40 m=nil [GC worker (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394ce720 sp=0x4c1a394ce700 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a394ce7b0 sp=0x4c1a394ce720 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a394ce7d0 sp=0x4c1a394ce7b0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394ce7d0 sp=0x4c1a394ce7d0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 34 gp=0x4c1a399161e0 m=nil [GC worker (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a3991cf20 sp=0x4c1a3991cf00 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a3991cfb0 sp=0x4c1a3991cf20 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a3991cfd0 sp=0x4c1a3991cfb0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a3991cfd0 sp=0x4c1a3991cfd0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 6 gp=0x4c1a39443680 m=nil [GC worker (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394d2720 sp=0x4c1a394d2700 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a394d27b0 sp=0x4c1a394d2720 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a394d27d0 sp=0x4c1a394d27b0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394d27d0 sp=0x4c1a394d27d0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 7 gp=0x4c1a39443860 m=nil [GC worker (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394d2f20 sp=0x4c1a394d2f00 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a394d2fb0 sp=0x4c1a394d2f20 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a394d2fd0 sp=0x4c1a394d2fb0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394d2fd0 sp=0x4c1a394d2fd0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 22 gp=0x4c1a39582d20 m=nil [GC worker (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394cef20 sp=0x4c1a394cef00 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a394cefb0 sp=0x4c1a394cef20 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a394cefd0 sp=0x4c1a394cefb0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394cefd0 sp=0x4c1a394cefd0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 35 gp=0x4c1a399163c0 m=nil [GC worker (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a3991d720 sp=0x4c1a3991d700 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a3991d7b0 sp=0x4c1a3991d720 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a3991d7d0 sp=0x4c1a3991d7b0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a3991d7d0 sp=0x4c1a3991d7d0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 8 gp=0x4c1a39443a40 m=nil [GC worker (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394d3720 sp=0x4c1a394d3700 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a394d37b0 sp=0x4c1a394d3720 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a394d37d0 sp=0x4c1a394d37b0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394d37d0 sp=0x4c1a394d37d0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 23 gp=0x4c1a39582f00 m=nil [GC worker (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394cf720 sp=0x4c1a394cf700 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a394cf7b0 sp=0x4c1a394cf720 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a394cf7d0 sp=0x4c1a394cf7b0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394cf7d0 sp=0x4c1a394cf7d0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 36 gp=0x4c1a399165a0 m=nil [GC worker (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a3991df20 sp=0x4c1a3991df00 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a3991dfb0 sp=0x4c1a3991df20 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a3991dfd0 sp=0x4c1a3991dfb0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a3991dfd0 sp=0x4c1a3991dfd0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 9 gp=0x4c1a39443c20 m=nil [GC worker (idle)]:
+        runtime.gopark(0x7eab85a4ceac4?, 0x1?, 0x37?, 0x59?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394d3f20 sp=0x4c1a394d3f00 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a394d3fb0 sp=0x4c1a394d3f20 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a394d3fd0 sp=0x4c1a394d3fb0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394d3fd0 sp=0x4c1a394d3fd0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 10 gp=0x4c1a39980000 m=nil [GC worker (idle)]:
+        runtime.gopark(0x7eab85a4ca474?, 0x3?, 0x50?, 0x46?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a39918720 sp=0x4c1a39918700 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a399187b0 sp=0x4c1a39918720 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a399187d0 sp=0x4c1a399187b0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a399187d0 sp=0x4c1a399187d0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 24 gp=0x4c1a395830e0 m=nil [GC worker (idle)]:
+        runtime.gopark(0x101be3820?, 0x1?, 0xca?, 0x10?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a394cff20 sp=0x4c1a394cff00 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a394cffb0 sp=0x4c1a394cff20 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a394cffd0 sp=0x4c1a394cffb0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a394cffd0 sp=0x4c1a394cffd0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 37 gp=0x4c1a39916780 m=nil [GC worker (idle)]:
+        runtime.gopark(0x101be3820?, 0x1?, 0x30?, 0xeb?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a3991e720 sp=0x4c1a3991e700 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a3991e7b0 sp=0x4c1a3991e720 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a3991e7d0 sp=0x4c1a3991e7b0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a3991e7d0 sp=0x4c1a3991e7d0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 25 gp=0x4c1a395832c0 m=nil [GC worker (idle)]:
+        runtime.gopark(0x101be3820?, 0x1?, 0x5c?, 0x32?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a39a04720 sp=0x4c1a39a04700 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a39a047b0 sp=0x4c1a39a04720 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a39a047d0 sp=0x4c1a39a047b0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a39a047d0 sp=0x4c1a39a047d0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 11 gp=0x4c1a399801e0 m=nil [GC worker (idle)]:
+        runtime.gopark(0x7eab85a4ceb6b?, 0x3?, 0xec?, 0x25?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a39524f20 sp=0x4c1a39524f00 pc=0x100da9868
+        runtime.gcBgMarkWorker(0x4c1a395864d0)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1807 +0xe0 fp=0x4c1a39524fb0 sp=0x4c1a39524f20 pc=0x100d542a0
+        runtime.gcBgMarkStartWorkers.gowrap1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x20 fp=0x4c1a39524fd0 sp=0x4c1a39524fb0 pc=0x100da0de0
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a39524fd0 sp=0x4c1a39524fd0 pc=0x100db0a94
+        created by runtime.gcBgMarkStartWorkers in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/mgc.go:1711 +0x130
+
+        goroutine 26 gp=0x4c1a39504780 m=nil [select, locked to thread]:
+        runtime.gopark(0x4c1a3991ffa0?, 0x2?, 0xa8?, 0xfe?, 0x4c1a3991ff90?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a3991fe10 sp=0x4c1a3991fdf0 pc=0x100da9868
+        runtime.selectgo(0x4c1a3991ffa0, 0x4c1a3991ff8c, 0x0?, 0x0, 0x0?, 0x1)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/select.go:351 +0x838 fp=0x4c1a3991ff50 sp=0x4c1a3991fe10 pc=0x100d86808
+        runtime.ensureSigM.func1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/signal_unix.go:1093 +0x144 fp=0x4c1a3991ffd0 sp=0x4c1a3991ff50 pc=0x100da4484
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a3991ffd0 sp=0x4c1a3991ffd0 pc=0x100db0a94
+        created by runtime.ensureSigM in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/signal_unix.go:1076 +0xcc
+
+        goroutine 49 gp=0x4c1a39916960 m=3 mp=0x4c1a39500008 [syscall]:
+        runtime.sigNoteSleep(0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/os_darwin.go:133 +0x20 fp=0x4c1a39a05790 sp=0x4c1a39a05750 pc=0x100d6ec90
+        os/signal.signal_recv()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/sigqueue.go:149 +0x104 fp=0x4c1a39a057b0 sp=0x4c1a39a05790 pc=0x100dabce4
+        os/signal.loop()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/signal/signal_unix.go:23 +0x1c fp=0x4c1a39a057d0 sp=0x4c1a39a057b0 pc=0x101232bac
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a39a057d0 sp=0x4c1a39a057d0 pc=0x100db0a94
+        created by os/signal.Notify.func2.1 in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/signal/signal.go:164 +0x28
+
+        goroutine 27 gp=0x4c1a39504d20 m=nil [select]:
+        runtime.gopark(0x4c1a39919790?, 0x2?, 0x0?, 0x0?, 0x4c1a39919784?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/proc.go:474 +0xb8 fp=0x4c1a39523e00 sp=0x4c1a39523de0 pc=0x100da9868
+        runtime.selectgo(0x4c1a39523f90, 0x4c1a39919780, 0x0?, 0x0, 0x0?, 0x1)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/select.go:351 +0x838 fp=0x4c1a39523f40 sp=0x4c1a39523e00 pc=0x100d86808
+        os/signal.NotifyContext.func1()
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/signal/signal.go:304 +0x74 fp=0x4c1a39523fd0 sp=0x4c1a39523f40 pc=0x101232fa4
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a39523fd0 sp=0x4c1a39523fd0 pc=0x100db0a94
+        created by os/signal.NotifyContext in goroutine 1
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/signal/signal.go:303 +0x144
+
+        goroutine 65 gp=0x4c1a39a0c3c0 m=6 mp=0x4c1a3998a008 [syscall]:
+        syscall.syscalln(0x100de2ea0, {0x4c1a39919598, 0x6, 0x6})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/sys_darwin.go:27 +0x20 fp=0x4c1a39919570 sp=0x4c1a39919520 pc=0x100dad420
+        syscall.syscall6(0x90010101be3820?, 0x103d78920?, 0x103d87cb8?, 0x90?, 0x4c1a3998a008?, 0x4c1a39470120?, 0x4c1a39919638?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/syscall/syscall_darwin.go:407 +0x28 fp=0x4c1a399195d0 sp=0x4c1a39919570 pc=0x100de2338
+        syscall.wait4(0x4c1a39919668?, 0x100e0017c?, 0x90?, 0x101b1af28?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/syscall/zsyscall_darwin_arm64.go:44 +0x4c fp=0x4c1a39919630 sp=0x4c1a399195d0 pc=0x100ddfa0c
+        syscall.Wait4(0x101be229c?, 0x4c1a399196a4, 0x4c1a399196b8?, 0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/syscall/syscall_bsd.go:144 +0x28 fp=0x4c1a39919670 sp=0x4c1a39919630 pc=0x100dde728
+        os.(*Process).pidWait.func1(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec_unix.go:64
+        os.ignoringEINTR2[...](...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/file_posix.go:273
+        os.(*Process).pidWait(0x4c1a396b0040)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec_unix.go:63 +0x9c fp=0x4c1a399196d0 sp=0x4c1a39919670 pc=0x100e001cc
+        os.(*Process).wait(0x0?)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec_unix.go:28 +0x24 fp=0x4c1a399196f0 sp=0x4c1a399196d0 pc=0x100e000f4
+        os.(*Process).Wait(...)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec.go:347
+        os/exec.(*Cmd).Wait(0x4c1a396a6000)
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/os/exec/exec.go:944 +0x34 fp=0x4c1a39919770 sp=0x4c1a399196f0 pc=0x100e37294
+        github.com/omriariav/amq-squad/v3/internal/buzz.(*ExecEndpoint).Start.func1()
+	/Users/omri/code/amq-squad/.worktrees/reviewer/internal/buzz/endpoint.go:119 +0x30 fp=0x4c1a399197d0 sp=0x4c1a39919770 pc=0x10121d000
+        runtime.goexit({})
+	/opt/homebrew/Cellar/go/1.27.1/libexec/src/runtime/asm_arm64.s:1039 +0x4 fp=0x4c1a399197d0 sp=0x4c1a399197d0 pc=0x100db0a94
+        created by github.com/omriariav/amq-squad/v3/internal/buzz.(*ExecEndpoint).Start in goroutine 1
+	/Users/omri/code/amq-squad/.worktrees/reviewer/internal/buzz/endpoint.go:118 +0x45c
+
+        r0      0x104
+        r1      0x0
+        r2      0x2100
+        r3      0x0
+        r4      0x0
+        r5      0xa0
+        r6      0x0
+        r7      0x0
+        r8      0x16f0d1b88
+        r9      0x0
+        r10     0x0
+        r11     0x2
+        r12     0x2
+        r13     0x0
+        r14     0x0
+        r15     0x0
+        r16     0x131
+        r17     0x1f8a2b310
+        r18     0x0
+        r19     0x101bbbc68
+        r20     0x101bbbca8
+        r21     0x1f73ea260
+        r22     0x0
+        r23     0x0
+        r24     0x2100
+        r25     0x2201
+        r26     0x2300
+        r27     0x101b9c000
+        r28     0x101bbab20
+        r29     0x16f0d1c00
+        lr      0x18a9ac128
+        sp      0x16f0d1b70
+        pc      0x18a96b50c
+        fault   0x18a96b50c
+    enroll_test.go:195: failure-time attach inbox list: [], <nil>
+    enroll_test.go:210: failure-time directory /private/tmp/4e-3725177110/.amq-squad/buzz/root/agents/attach/inbox/new: [], <nil>
+    enroll_test.go:210: failure-time directory /private/tmp/4e-3725177110/.amq-squad/buzz/root/agents/attach/inbox/cur: [2026-11-10T22-08-00.620Z_pid61346_caf0cf17.md 2026-11-10T22-08-02.620Z_pid61346_aef30730.md], <nil>
+    enroll_test.go:210: failure-time directory /private/tmp/4e-3725177110/.amq-squad/buzz/root/agents/attach/dlq/new: [], <nil>
+    enroll_test.go:210: failure-time directory /private/tmp/4e-3725177110/.amq-squad/buzz/root/agents/attach/dlq/cur: [], <nil>
+    enroll_test.go:210: failure-time directory /private/tmp/4e-3725177110/.amq-squad/buzz/root/agents/buzz/inbox/new: [], <nil>
+    enroll_test.go:210: failure-time directory /private/tmp/4e-3725177110/.amq-squad/buzz/root/agents/buzz/inbox/cur: [2026-11-10T22-08-01.657Z_pid61373_953d55ec.md 2026-11-10T22-08-01.738Z_pid61374_18dacb51.md 2026-11-10T22-08-03.653Z_pid61388_f6341902.md 2026-11-10T22-08-03.793Z_pid61393_2a198392.md], <nil>
+    enroll_test.go:210: failure-time directory /private/tmp/4e-3725177110/.amq-squad/buzz/root/extensions/remote/mailbox/amq-squad: [amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqadqndbmztdqyrvfvsgiyjwfu2wem3bfvrdsyrzfvtdamrygiytemlegbtde.json amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqadqndbmztdqyrvfvsgiyjwfu2wem3bfvrdsyrzfvtdamrygiytemlegbtde.lock amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqadqndbmztdqyrvfvsgiyjwfu2wem3bfvrdsyrzfvtdamrygiytemlegbtde.outcome.json amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqagemrrgy3tcytgfu3wimtgfu2tmyjyfvrdgytefu3dknldgfqtezjzgbqtm.json amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqagemrrgy3tcytgfu3wimtgfu2tmyjyfvrdgytefu3dknldgfqtezjzgbqtm.lock amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqagimzumjqtayjwfu4wmmrxfu2tszlbfvqwkzrqfvqtanzrgq4tgyztgftdc.json amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqagimzumjqtayjwfu4wmmrxfu2tszlbfvqwkzrqfvqtanzrgq4tgyztgftdc.lock amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqagimzumjqtayjwfu4wmmrxfu2tszlbfvqwkzrqfvqtanzrgq4tgyztgftdc.outcome.json amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqagmzjugm2dszbufuydazrtfu2wgobufvrdamdffu2dimjygqygkoddhbrdq.json amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqagmzjugm2dszbufuydazrtfu2wgobufvrdamdffu2dimjygqygkoddhbrdq.lock], <nil>
+    enroll_test.go:212: failure-time mailbox journal amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqagemrrgy3tcytgfu3wimtgfu2tmyjyfvrdgytefu3dknldgfqtezjzgbqtm.json: undelivered="its delivery never started" cancelled=false created="" message_id="" acked=false prompt_present=false read_err=<nil> decode_err=<nil> lock=free (the probe acquired and released it for this instant) lock_err=<nil>
+    enroll_test.go:212: failure-time mailbox journal amqr1_mj2xu6rnmeytamjqmrrtkmrzge4ggzrtmiagc3lrfvzxc5lbmqagmzjugm2dszbufuydazrtfu2wgobufvrdamdffu2dimjygqygkoddhbrdq.json: undelivered="its delivery never started" cancelled=false created="" message_id="" acked=false prompt_present=false read_err=<nil> decode_err=<nil> lock=free (the probe acquired and released it for this instant) lock_err=<nil>
+    enroll_test.go:212: failure-time serve SIGQUIT: no held supervisor pid (read_err=open /private/tmp/4e-3725177110/.amq-squad/buzz/enroll-up.pid: no such file or directory parse_err=strconv.Atoi: parsing "": invalid syntax)
+    enroll_test.go:212: failure-time /private/tmp/4e-3725177110/.amq-squad/buzz/root/attach/up.log:
+        amq-remote up: supervising serve for root /private/tmp/4e-3725177110/.amq-squad/buzz/root (registry /private/tmp/4e-3725177110/.amq-squad/buzz/root/attach/keepalive-registry.json)
+
+        amq-remote 0.116.2 serving root=/private/tmp/4e-3725177110/.amq-squad/buzz/root handle=remote socket=/private/tmp/4e-3725177110/.amq-squad/buzz/root/extensions/remote/endpoint.sock targets=1
+        amq-squad                mailbox  live     idle     epoch=mailbox:attach caps=submit,cancel observed=2026-11-10T22:07:46.947129Z
+        relay ws://127.0.0.1:62022: 1 shared session(s)
+        relay share amq-squad: its manifest entry changed; restart serve, or remove and re-add the share, to adopt it
+        amq-remote up: shutting down
+
+        amq-remote up: supervising serve for root /private/tmp/4e-3725177110/.amq-squad/buzz/root (registry /private/tmp/4e-3725177110/.amq-squad/buzz/root/attach/keepalive-registry.json)
+
+        amq-remote 0.116.2 serving root=/private/tmp/4e-3725177110/.amq-squad/buzz/root handle=remote socket=/private/tmp/4e-3725177110/.amq-squad/buzz/root/extensions/remote/endpoint.sock targets=1
+        amq-squad                mailbox  live     idle     epoch=mailbox:attach caps=submit,cancel observed=2026-11-10T22:07:58.472633Z
+        relay ws://127.0.0.1:62022: 1 shared session(s)
+        amq-remote up: shutting down
+
+        amq-remote up: supervising serve for root /private/tmp/4e-3725177110/.amq-squad/buzz/root (registry /private/tmp/4e-3725177110/.amq-squad/buzz/root/attach/keepalive-registry.json)
+
+        amq-remote 0.116.2 serving root=/private/tmp/4e-3725177110/.amq-squad/buzz/root handle=remote socket=/private/tmp/4e-3725177110/.amq-squad/buzz/root/extensions/remote/endpoint.sock targets=1
+        amq-squad                mailbox  live     idle     epoch=mailbox:attach caps=submit,cancel observed=2026-11-10T22:08:00.564834Z
+        relay ws://127.0.0.1:62022: 1 shared session(s)
+        relay share amq-squad: ingest 3e6e133a0158e3efaed6c68141de41bf3b993c5f82a71fa52d7c83f8c2979408: edit waits for the clock to pass the previous edit's second
+        relay share amq-squad: ingest 1b5d984300c9663578bd3eda6f8a4264def2df70ccabc7f647174bf2bf397728: edit waits for the clock to pass the previous edit's second
+        amq-remote up: shutting down
+
+        amq-remote up: supervising serve for root /private/tmp/4e-3725177110/.amq-squad/buzz/root (registry /private/tmp/4e-3725177110/.amq-squad/buzz/root/attach/keepalive-registry.json)
+
+        amq-remote 0.116.2 serving root=/private/tmp/4e-3725177110/.amq-squad/buzz/root handle=remote socket=/private/tmp/4e-3725177110/.amq-squad/buzz/root/extensions/remote/endpoint.sock targets=1
+        amq-squad                mailbox  live     idle     epoch=mailbox:attach caps=submit,cancel observed=2026-11-10T22:08:06.76188Z
+        relay ws://127.0.0.1:62022: 1 shared session(s)
+        amq-remote up: shutting down
+
+
+        read_err=<nil>
+    enroll_test.go:212: failure-time /private/tmp/4e-3725177110/.amq-squad/buzz/doctor.json:
         {
-          "schema_version": 1,
-          "kind": "gate_status",
-          "data": [
-            {
-              "schema": "amq-squad-gate/1",
-              "gate_id": "g45-owner-01",
-              "class": "tag",
-              "gate_kind": "tag",
-              "typed_class": "release",
-              "target": "git tag v3.0.0-owner45",
-              "digest": "sha256:29f6faf71e84faf91a2c4106fdc55eab1acc6d3e80da40512f79e049d8a2805a",
-              "text": "Create a tag named v3.0.0-owner45?\nAsked by cto.\nYes lets it run. No stops it.\n\n----------\namq-squad gate g45-owner-01\nsquad: root-sha256:c29c593da95b2a78b007b62786b6e6f836f9c376e28127d122b0da070f456f9e\nclass: release (tag)\ntarget: git tag v3.0.0-owner45\ndigest: sha256:29f6faf71e84faf91a2c4106fdc55eab1acc6d3e80da40512f79e049d8a2805a",
-              "text_sha256": "sha256:4f905e7bc60a807e9e2a508160cbe14e21a019f2d1c29ec291c925755360fcfa",
-              "issued_at": "2026-11-10T21:02:09Z",
-              "not_before": "2026-11-10T21:01:09Z",
-              "not_after": "2026-11-10T21:32:09Z",
-              "raised_by": "cto",
-              "owner_pubkey": "1c85f01b23bf70a0bbf06b2ed42034c3facba35eba4709aef3d198ebc0d67803",
-              "issuer_key_id": "ed25519-sha256:3a98878fa031535c24e773e72f755709794418482f230849951a6fb2c70dea1d",
-              "squad": "root-sha256:c29c593da95b2a78b007b62786b6e6f836f9c376e28127d122b0da070f456f9e",
-              "state": "accepted",
-              "question_sent": true,
-              "reasked": false
+          "body_keys": {
+            "amq-squad": {
+              "attestation": "enrolled",
+              "body_pubkey": "8b6d7d31db3cb1906f0a2937e5da15f994bbe8373c32afa200a2b1984c35a7d6",
+              "kinds": {
+                "0": {
+                  "expires": "2026-12-10T22:07:41Z"
+                },
+                "10100": {
+                  "expires": "2026-12-10T22:07:41Z"
+                },
+                "1059": {
+                  "expires": "2026-12-10T22:07:41Z"
+                },
+                "20003": {
+                  "expires": "2026-12-10T22:07:41Z"
+                },
+                "24200": {
+                  "expires": "2026-12-10T22:07:41Z"
+                },
+                "40003": {
+                  "expires": "2026-12-10T22:07:41Z"
+                },
+                "44200": {
+                  "expires": "2026-12-10T22:07:41Z"
+                },
+                "9": {
+                  "expires": "2026-12-10T22:07:41Z"
+                }
+              }
             }
-          ]
+          },
+          "endpoint": "reachable",
+          "failing": [],
+          "notes": [
+            {
+              "boundary": "stale_harness",
+              "subject": "installed amq-acp",
+              "detail": "could not stat the installed amq-acp: lstat /Users/omri/go/bin/amq-acp: no such file or directory",
+              "remedy": "Reinstall amq so the amq-acp companion sits beside amq-remote, then re-run doctor"
+            }
+          ],
+          "records": {},
+          "relay": {
+            "url": "ws://127.0.0.1:62022",
+            "shares": [
+              {
+                "session": "amq-squad",
+                "target": "amq-squad",
+                "state": "authenticated",
+                "since": "2026-11-10T22:07:46Z",
+                "presence": "online",
+                "discovery": "policy_present"
+              }
+            ]
+          },
+          "root": "/private/tmp/4e-3725177110/.amq-squad/buzz/root",
+          "socket": "/private/tmp/4e-3725177110/.amq-squad/buzz/root/extensions/remote/endpoint.sock",
+          "state_dir": "/private/tmp/4e-3725177110/.amq-squad/buzz/root/extensions/remote",
+          "targets": 1
         }
-    rehearsal_test.go:78: rehearsal: 5.3 verify action: rc 0
-        action authorization approved for tag: git tag v3.0.0-owner45
-        gate: gate/g45-owner-01
-        answered_by: owner
-        message_id: nostr:c9fa43817077eba32b1108674e9b345a60860d04a6628ef4e68c75851a92325c
-    rehearsal_test.go:78: rehearsal: 6.2 amq list (operator mailbox): rc 0
-        [
-          {
-            "id": "2026-11-10T21-02-12.427Z_pid1878_01d3614c",
-            "from": "buzz",
-            "subject": "Buzz: message from the owner for cto",
-            "thread": "cockpit/q-55a06c633434",
-            "created": "2026-11-10T21:02:12.427003Z",
-            "box": "new",
-            "path": "/private/tmp/4e-3775096343/owner45/operator/.agent-mail/ops/agents/user/inbox/new/2026-11-10T21-02-12.427Z_pid1878_01d3614c.md",
-            "labels": [
-              "buzz",
-              "nostr:55a06c6334345b24f8583cbf7ce6d28887b43a5df2285c684ad5f05213bdb23b"
-            ]
-          }
-        ]
-    rehearsal_test.go:78: rehearsal: 6.2 amq list (the squad lead): rc 0
-        [
-          {
-            "id": "2026-11-10T21-02-12.465Z_pid1879_76e7248d",
-            "from": "buzz",
-            "subject": "Buzz: from the owner, routed by user",
-            "thread": "cockpit/q-55a06c633434",
-            "created": "2026-11-10T21:02:12.465841Z",
-            "box": "new",
-            "path": "/private/tmp/4e-3775096343/owner45/project/.agent-mail/owner45/agents/cto/inbox/new/2026-11-10T21-02-12.465Z_pid1879_76e7248d.md",
-            "labels": [
-              "buzz",
-              "nostr:55a06c6334345b24f8583cbf7ce6d28887b43a5df2285c684ad5f05213bdb23b",
-              "routed"
-            ]
-          }
-        ]
-    enroll_test.go:503: real resends: 0
-    enroll_test.go:503: approved outcomes: 1
-    rehearsal_test.go:192: REAPED: rehearsal: 4.2 remote attach: process group 1847 and pids [1885 1847] (the root and its descendants when recorded), none alive
-    rehearsal_test.go:194: rehearsal: 4.2 remote attach output:
-        {"at":"2026-11-10T21:02:07Z","data":{"leads":["app/cto","cto"],"mailbox":"user","operator":true,"root":"/private/tmp/4e-3775096343/owner45/operator/.agent-mail/ops","share_root":"/private/tmp/4e-3775096343/.amq-squad/buzz/root"},"kind":"attached"}
-        {"at":"2026-11-10T21:02:09Z","data":{"action":"started","error":"","present":true,"state":"online"},"kind":"presence"}
-        {"at":"2026-11-10T21:02:10Z","data":{"message_id":"2026-11-10T21-02-09.282Z_pid1852_6fd7b1b4","event_id":"c9fa43817077eba32b1108674e9b345a60860d04a6628ef4e68c75851a92325c","kind":"gate","gate":{"gate_id":"g45-owner-01","event_id":"c9fa43817077eba32b1108674e9b345a60860d04a6628ef4e68c75851a92325c","outcome":"approved","authorization_id":"authz-v1-79ef569ad38187805f92c9d84852557f84fb1842962d1a0e71871e37a148be40"},"status":["verifying event c9fa43817077"],"reply":"accepted g45-owner-01 tag"},"kind":"handled"}
-        {"at":"2026-11-10T21:02:12Z","data":{"message_id":"2026-11-10T21-02-12.234Z_pid1852_cfcbb6b9","event_id":"55a06c6334345b24f8583cbf7ce6d28887b43a5df2285c684ad5f05213bdb23b","request_id":"q-55a06c633434","kind":"route","delivery":{"mailbox":"user","mailbox_message_id":"2026-11-10T21-02-12.427Z_pid1878_01d3614c","lead":"app/cto","lead_message_id":"2026-11-10T21-02-12.465Z_pid1879_76e7248d","lead_handle":"cto","thread":"cockpit/q-55a06c633434"},"status":["verifying event 55a06c633434"],"reply":"accepted q-55a06c633434 routed app/cto"},"kind":"handled"}
-        {"at":"2026-11-10T21:02:13Z","data":{"action":"stopped","error":"","present":false,"state":"stale"},"kind":"presence"}
-        {"at":"2026-11-10T21:02:13Z","data":{"mailbox":"user"},"kind":"detached"}
-    enroll_test.go:548: CANARY GREP: 194 channels and files, 111282 bytes, canary forms 3 (nsec1, hex, HEX): not found
---- PASS: TestOwnerScriptDryRun (31.45s)
-PASS
-ok  	github.com/omriariav/amq-squad/v3/internal/buzz	31.731s
+
+        read_err=<nil>
+    enroll_test.go:212: failure-time relay event trace:
+        4.43s conn=1 open
+        5.433s conn=1 auth ok=true author=f18d0fe74f70
+        5.433s store kind=30177 id=ab404dc265b9 author=f18d0fe74f70
+        5.434s conn=1 publish ok id=ab404dc265b9 kind=30177
+        5.434s conn=1 close
+        5.584s conn=2 open
+        5.584s conn=2 auth ok=true author=8b6d7d31db3c
+        5.587s store kind=0 id=7176e792a289 author=8b6d7d31db3c
+        5.587s conn=2 publish ok id=7176e792a289 kind=0
+        5.589s store kind=10100 id=ab70e492dfaf author=8b6d7d31db3c
+        5.589s conn=2 publish ok id=ab70e492dfaf kind=10100
+        5.589s conn=2 req sub=policy-amq-squad-1794348466954978000 replay=1 live=installed
+        9.66s store kind=39000 id=4503c80b4f60 author=3edca0588008
+        9.66s store kind=39002 id=d03ac1f2bbee author=3edca0588008
+        9.755s store kind=10100 id=70787d087d63 author=8b6d7d31db3c
+        9.755s conn=2 publish ok id=70787d087d63 kind=10100
+        9.755s conn=2 close
+        15.91s conn=3 open
+        16.913s conn=3 auth ok=true author=f18d0fe74f70
+        16.914s store kind=30177 id=4f487af10c85 author=f18d0fe74f70
+        16.914s conn=3 publish ok id=4f487af10c85 kind=30177
+        16.914s conn=3 close
+        17.111s conn=4 open
+        17.111s conn=4 auth ok=true author=8b6d7d31db3c
+        17.111s conn=4 req sub=dm-members-1794348478477269000 replay=2 live=installed
+        17.114s conn=4 req sub=dm-amq-squad replay=0 live=installed
+        17.114s conn=4 req sub=dm-react-amq-squad replay=0 live=installed
+        17.114s store kind=0 id=996eb71ec2dd author=8b6d7d31db3c
+        17.114s conn=4 publish ok id=996eb71ec2dd kind=0
+        17.116s store kind=10100 id=65f77d416852 author=8b6d7d31db3c
+        17.116s conn=4 publish ok id=65f77d416852 kind=10100
+        17.117s conn=4 req sub=policy-amq-squad-1794348478482527000 replay=1 live=installed
+        17.119s store kind=10100 id=84ee284cba18 author=8b6d7d31db3c
+        17.119s conn=4 publish ok id=84ee284cba18 kind=10100
+        17.119s conn=4 close
+        17.13s conn=5 open
+        17.13s conn=5 auth ok=true author=8b6d7d31db3c
+        17.168s store kind=9 id=47a592ac4ac5 author=8b6d7d31db3c
+        17.168s conn=5 publish ok id=47a592ac4ac5 kind=9
+        17.175s conn=5 close
+        19.202s conn=6 open
+        19.202s conn=6 auth ok=true author=8b6d7d31db3c
+        19.203s conn=6 req sub=dm-members-1794348480568647000 replay=2 live=installed
+        19.203s conn=6 req sub=dm-amq-squad replay=0 live=installed
+        19.203s conn=6 req sub=dm-react-amq-squad replay=0 live=installed
+        19.205s store kind=0 id=ee6a638f1d6d author=8b6d7d31db3c
+        19.205s conn=6 publish ok id=ee6a638f1d6d kind=0
+        19.206s store kind=10100 id=6fa7f56083d8 author=8b6d7d31db3c
+        19.206s conn=6 publish ok id=6fa7f56083d8 kind=10100
+        19.206s conn=6 req sub=policy-amq-squad-1794348480572208000 replay=1 live=installed
+        19.207s store kind=9 id=3e6e133a0158 author=f18d0fe74f70
+        19.207s conn=6 live sub=dm-amq-squad event=3e6e133a0158
+        20.209s store kind=9 id=171187350175 author=8b6d7d31db3c
+        20.209s conn=6 publish ok id=171187350175 kind=9
+        20.226s store kind=40003 id=06a60720be1c author=8b6d7d31db3c
+        20.226s conn=6 publish ok id=06a60720be1c kind=40003
+        20.323s conn=7 open
+        20.323s conn=7 auth ok=true author=8b6d7d31db3c
+        20.324s conn=7 req sub=gv-1794348481689363000 replay=1 live=installed
+        20.325s conn=7 req sub=gv-1794348481691170000 replay=0 live=installed
+        20.326s conn=7 req sub=gv-1794348481691433000 replay=0 live=installed
+        20.326s conn=7 req sub=gv-1794348481691658000 replay=0 live=installed
+        20.326s conn=7 req sub=gv-1794348481691948000 replay=0 live=installed
+        20.424s conn=7 close
+        21.206s store kind=40003 id=8278741c1530 author=8b6d7d31db3c
+        21.206s conn=6 publish ok id=8278741c1530 kind=40003
+        21.208s store kind=9 id=1b5d984300c9 author=f18d0fe74f70
+        21.208s conn=6 live sub=dm-amq-squad event=1b5d984300c9
+        22.206s store kind=9 id=c637e56fcfaa author=8b6d7d31db3c
+        22.206s conn=6 publish ok id=c637e56fcfaa kind=9
+        22.228s store kind=40003 id=5b2d85ef14c2 author=8b6d7d31db3c
+        22.228s conn=6 publish ok id=5b2d85ef14c2 kind=40003
+        22.319s conn=8 open
+        22.319s conn=8 auth ok=true author=8b6d7d31db3c
+        22.32s conn=8 req sub=gv-1794348483685504000 replay=1 live=installed
+        22.32s conn=8 close
+        23.206s store kind=40003 id=f707ac0f6ea8 author=8b6d7d31db3c
+        23.206s conn=6 publish ok id=f707ac0f6ea8 kind=40003
+        23.219s store kind=10100 id=53a43dfcb8f9 author=8b6d7d31db3c
+        23.219s conn=6 publish ok id=53a43dfcb8f9 kind=10100
+        23.219s conn=6 close
+        25.404s conn=9 open
+        25.404s conn=9 auth ok=true author=8b6d7d31db3c
+        25.408s conn=9 req sub=dm-members-1794348486773481000 replay=2 live=installed
+        25.409s conn=9 req sub=dm-amq-squad replay=2 live=installed
+        25.409s conn=9 req sub=dm-react-amq-squad replay=0 live=installed
+        25.409s store kind=0 id=f1d45ef11cff author=8b6d7d31db3c
+        25.409s conn=9 publish ok id=f1d45ef11cff kind=0
+        25.411s store kind=10100 id=e2463980b0bb author=8b6d7d31db3c
+        25.411s conn=9 publish ok id=e2463980b0bb kind=10100
+        25.411s conn=9 req sub=policy-amq-squad-1794348486776768000 replay=1 live=installed
+        25.438s conn=10 open
+        25.438s conn=10 auth ok=true author=8b6d7d31db3c
+        25.5s store kind=9 id=d4ae64c17cbc author=8b6d7d31db3c
+        25.5s conn=10 publish ok id=d4ae64c17cbc kind=9
+        25.512s conn=10 close
+        25.513s store kind=9 id=c52c285ca5d4 author=f18d0fe74f70
+        25.513s conn=9 live sub=dm-amq-squad event=c52c285ca5d4
+        26.412s store kind=9 id=d3c6bb0fbdd7 author=8b6d7d31db3c
+        26.412s conn=9 publish ok id=d3c6bb0fbdd7 kind=9
+        26.413s store kind=9 id=8c1e9d8134e2 author=f18d0fe74f70
+        26.413s conn=9 live sub=dm-amq-squad event=8c1e9d8134e2
+        27.413s store kind=9 id=3cd208770a3d author=8b6d7d31db3c
+        27.413s conn=9 publish ok id=3cd208770a3d kind=9
+        27.481s store kind=10100 id=1d9cd0c5f4c2 author=8b6d7d31db3c
+        27.481s conn=9 publish ok id=1d9cd0c5f4c2 kind=10100
+        27.482s conn=9 close
+--- FAIL: TestOwnerScriptDryRun (28.76s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	29.154s
+FAIL

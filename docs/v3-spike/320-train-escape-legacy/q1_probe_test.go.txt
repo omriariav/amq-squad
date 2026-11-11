@@ -1,0 +1,88 @@
+package mergetrain
+
+// The Q1 probe of brief 320-train-escape-legacy (Part 3), saved as it ran on
+// the unmodified base c65a709c: copy it to internal/mergetrain/q1_probe_test.go
+// and run
+//
+//	go test ./internal/mergetrain -run 'TestQ1Probe' -count=1 -v
+//
+// It asserts nothing: each form logs what a drift run returned and what is
+// in the alerts directory after it. It uses the package's own test helpers
+// (listed, gateIn, writeFile, gateIdentity, decisionAccepted).
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
+)
+
+func TestQ1ProbeAStoreAlertAfterItsRecordIsNoLongerFlagged(t *testing.T) {
+	const repo = "owner/app"
+	now := time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC)
+	ids := func(as []Alert) []string {
+		out := []string{}
+		for _, a := range as {
+			out = append(out, a.Kind+" "+a.ID)
+		}
+		slices.Sort(out)
+		return out
+	}
+	for _, form := range []string{"a torn record, then removed", "a torn record, then replaced by one that loads", "a quarantine_clear record, then removed"} {
+		base := t.TempDir()
+		squad, release := filepath.Join(base, "v31"), filepath.Join(base, "v310")
+		if err := os.MkdirAll(squad, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		id := "rel-x"
+		record := filepath.Join(release, "extensions", "amq-squad", "gates", id+".json")
+		if strings.HasPrefix(form, "a torn") {
+			writeFile(t, record, `{"gate_id": "rel-x", "class": `)
+		} else {
+			// the v31 session's records' shape with fixture values: a
+			// rendered record with the kind, the typed class and the target
+			// of a 3.0.x seat clear
+			id = "clear-0a227ca8d88dc97c65c540a4d0fa18a7"
+			record = filepath.Join(release, "extensions", "amq-squad", "gates", id+".json")
+			rec, err := gatestore.Render(gatestore.Spec{GateID: id, Action: "tag", Target: gatetarget.Command("git tag", "v0"), RaisedBy: "owner", Squad: gatestore.SquadID(release)}, now, gateIdentity())
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := json.Marshal(rec)
+			var m map[string]any
+			_ = json.Unmarshal(raw, &m)
+			m["class"], m["gate_kind"], m["typed_class"] = "quarantine_clear", "quarantine_clear", "clear"
+			m["target"] = "clear scribe nonce=0a227ca8d88dc97c65c540a4d0fa18a7 incarnation=t2@1 config=sha256:" + strings.Repeat("0", 64)
+			raw, _ = json.MarshalIndent(m, "", "  ")
+			writeFile(t, record, string(raw))
+		}
+		l := &listed{}
+		if a, err := Drift(context.Background(), l, decisionAccepted, squad, repo, now); err != nil || len(a) != 0 {
+			t.Fatalf("%s: baseline: %v %+v", form, err, a)
+		}
+		for run := 1; run <= 2; run++ {
+			a, resolved, err := DriftResolved(context.Background(), l, decisionAccepted, squad, repo, now)
+			t.Logf("%s: run %d, the record in place: err=%v returned=%v resolved=%v on disk=%v", form, run, err, ids(a), ids(resolved), ids(ReadAlerts(squad)))
+			if len(a) == 1 {
+				t.Logf("%s: run %d, the alert's last line: %s", form, run, a[0].Detail[strings.LastIndex(a[0].Detail, "\n")+1:][len(base):])
+			}
+		}
+		if err := os.Remove(record); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(form, "replaced") {
+			gateIn(t, release, id, "tag", gatetarget.ReleaseTag(repo, "v1", strings.Repeat("4", 40)), true)
+		}
+		for run := 3; run <= 4; run++ {
+			a, resolved, err := DriftResolved(context.Background(), l, decisionAccepted, squad, repo, now)
+			t.Logf("%s: run %d, the record no longer flagged: err=%v returned=%v resolved=%v on disk=%v", form, run, err, ids(a), ids(resolved), ids(ReadAlerts(squad)))
+		}
+	}
+}

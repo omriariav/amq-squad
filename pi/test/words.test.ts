@@ -14,7 +14,7 @@ import { renderScreen, Screen, type ScreenStatus } from "../extensions/lib/scree
 import { Keys, type KeyOutcome } from "../extensions/lib/keys.ts";
 import { refusedPaths } from "../extensions/lib/tools.ts";
 import { SoloTeam } from "../extensions/lib/team.ts";
-import { decisionKind, RESOLVED_BY, ROUTINE_DECISIONS, LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
+import { decisionKind, RESOLVED_BY, ROUTINE_DECISIONS, LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockNeedsRecord, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, pinUnresolved, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunResult } from "../extensions/lib/verbs.ts";
 import { fakeCtx, tmpdir } from "./fakepi.ts";
@@ -183,6 +183,8 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	assert.equal(trainRunWords("made_up_kind"), "its last step is below the line");
 	// Codex on #873: reconcile is written for any binding change, not only a head mismatch
 	assert.equal(trainRunWords("reconcile"), "skipped recording a merge because its task binding no longer matches");
+	// 320-train-escape-legacy: the train's entry for a skipped legacy gate record
+	assert.equal(trainRunWords("note"), "noted a skipped legacy gate record");
 	const relay = goRelayNames();
 	assert.ok(relay.length >= 4, `the relay names were not found: ${relay}`);
 	for (const r of relay) assert.ok(has(RELAY_WORDS, r), `relay refusal ${r} has no words`);
@@ -229,6 +231,17 @@ test("row 7: a launch failure's code as a wait or block reason reads in words", 
 	assert.ok(lines.slice(lines.indexOf(RULE)).includes("  t9 waits: version_probe_failed"));
 	const blocked = renderScreen({ ...fixture, tasks: [{ ...fixture.tasks[0], id: "t9", block_reason: "proof_expired" }] }, now).find((l) => l.startsWith("  t9 "));
 	assert.equal(blocked, "  t9 blocked: its seat's launch failed twice, its proof came after its token expired; fix the cause, then /reset it (or relaunch the roster)");
+});
+
+test("pin_unresolved uses the class-chain detail from task show", () => {
+	const detail = "the pin codex:gpt-5.6-terra:medium is on the task tier (class implement); class plan runs on claude:opus:high, codex:gpt-5.6-sol:high";
+	assert.equal(blockWords({ id: "t75", task_state: "blocked", block_reason: "pin_unresolved" }, { block_detail: detail }).line, `t75 blocked: ${detail}; /reset it onto another pool`);
+	assert.equal(blockNeedsRecord("pin_unresolved"), true);
+	const long = `${detail}, ${Array.from({ length: 20 }, (_, i) => `vendor:model-${i}:medium`).join(", ")}`;
+	const short = pinUnresolved(long);
+	assert.ok(short.startsWith("the pin codex:gpt-5.6-terra:medium"), short);
+	assert.match(short, /, \+\d+ more$/);
+	assert.ok(short.length <= 240, short);
 });
 
 // The decision kinds Go writes to the decision log: every Decision{Kind:
@@ -559,6 +572,7 @@ test("row 3: a seat says what it is doing, a task why it waits or what stopped i
 			{ ...fixture.tasks[2], id: "t29", wait_reason: "no_roster_seat", wait_pool: "claude:opus:high", wait_holders: [] },
 			{ ...fixture.tasks[2], id: "t30", wait_reason: "seat_cap", wait_holders: [] },
 			{ ...fixture.tasks[0], id: "t31", block_reason: "verdict_failed" },
+			{ ...fixture.tasks[2], id: "t32", wait_reason: "file_lock", wait_holders: ["t71"], waits_for: [{ task_id: "t71", path: "docs/v3-spike/320-evidence/" }] },
 		],
 	};
 	const lines = renderScreen(doc, now);
@@ -571,6 +585,7 @@ test("row 3: a seat says what it is doing, a task why it waits or what stopped i
 		/^ {2}t29 waiting: no seat serves claude:opus:high$/,
 		/^ {2}t30 waiting: every seat is busy and the cap of 3 seats is reached$/,
 		/^ {2}t31 blocked: its verifier failed; send it back with \/reset to try again$/,
+		/^ {2}t32 waits for t71: both declare docs\/v3-spike\/320-evidence\/$/,
 	]) {
 		assert.ok(lines.some((l) => want.test(l)), `no line ${want} in\n${lines.join("\n")}`);
 	}

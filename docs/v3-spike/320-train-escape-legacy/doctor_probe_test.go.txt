@@ -1,0 +1,61 @@
+package cli
+
+// The doctor probe of brief 320-train-escape-legacy (the reviewer's strike
+// on "and doctor check"), saved as it ran: copy it to
+// internal/cli/doctor_probe_test.go and run
+//
+//	go test ./internal/cli -run 'TestProbeDoctor' -count=1 -v
+//
+// It asserts nothing: it logs what doctor's release drift check answers and
+// what is in the alerts directory, for a session whose own gate store holds
+// one quarantine_clear record. It uses the package's fakeReleaseLister.
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
+	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
+	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/mergetrain"
+)
+
+func TestProbeDoctorOnALegacyGateRecord(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "v31")
+	now := time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC)
+	const id = "clear-0a227ca8d88dc97c65c540a4d0fa18a7"
+	rec, err := gatestore.Render(gatestore.Spec{GateID: id, Action: "tag", Target: gatetarget.Command("git tag", "v0"), RaisedBy: "owner", Squad: gatestore.SquadID(root)}, now,
+		gatestore.Identity{OwnerPubKey: strings.Repeat("a", 64), IssuerKeyID: "ed25519-sha256:" + strings.Repeat("b", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(rec)
+	var m map[string]any
+	_ = json.Unmarshal(raw, &m)
+	m["class"], m["gate_kind"], m["typed_class"] = "quarantine_clear", "quarantine_clear", "clear"
+	m["target"] = "clear scribe nonce=0a227ca8d88dc97c65c540a4d0fa18a7 incarnation=t2@1 config=sha256:" + strings.Repeat("0", 64)
+	raw, _ = json.MarshalIndent(m, "", "  ")
+	gates := filepath.Join(root, "extensions", "amq-squad", "gates")
+	if err := os.MkdirAll(gates, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gates, id+".json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g := grants.Defaults()
+	g.Merge = []grants.Merge{{Repository: "o/r", BaseBranch: "main"}}
+	l := &fakeReleaseLister{}
+	for run := 1; run <= 3; run++ {
+		c := doctorReleaseDrift(root, g, l, nil, now)
+		var onDisk []string
+		for _, a := range mergetrain.ReadAlerts(root) {
+			onDisk = append(onDisk, a.Kind+" "+a.ID)
+		}
+		t.Logf("run %d: status=%v detail=%q on disk=%v", run, c[0].Status, strings.ReplaceAll(c[0].Detail, base, "<base>"), onDisk)
+	}
+}

@@ -75,6 +75,59 @@ func TestActivityRenewalIsAttemptBound(t *testing.T) {
 	}
 }
 
+func TestRenewalSourcesAndAttemptsAreRecordedSeparately(t *testing.T) {
+	s := newStore(t)
+	tk := mustAdd(t, s, AddInput{Title: "sources", Budget: time.Hour})
+	claimed, err := s.Claim(tk.ID, "dev", nil, DefaultLeaseDuration, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.Lease.Renewals != 0 || claimed.Lease.LastRenewal != "" {
+		t.Fatalf("initial claim counted as a renewal: %+v", claimed.Lease)
+	}
+	manual, err := s.Claim(tk.ID, "dev", nil, DefaultLeaseDuration, t0.Add(time.Minute))
+	if err != nil || manual.Lease.Renewals != 1 || manual.Lease.ManualRenewals != 1 || manual.Lease.ActivityRenewals != 0 || manual.Lease.LastRenewal != "manual" {
+		t.Fatalf("holder reclaim: %+v, err %v", manual.Lease, err)
+	}
+	manual, renewed, err := s.RenewAttempt("dev", claimed.Attempt, DefaultLeaseDuration, 0, t0.Add(2*time.Minute))
+	if err != nil || !renewed || manual.Lease.Renewals != 2 || manual.Lease.ManualRenewals != 2 || manual.Lease.LastRenewal != "manual" {
+		t.Fatalf("manual renewal: renewed=%v lease=%+v err=%v", renewed, manual.Lease, err)
+	}
+	activity, renewed, err := s.RenewNoWaitAttempt("dev", claimed.Attempt, DefaultLeaseDuration, 0, t0.Add(3*time.Minute))
+	if err != nil || !renewed || activity.Lease.Renewals != 3 || activity.Lease.ActivityRenewals != 1 || activity.Lease.ManualRenewals != 2 || activity.Lease.LastRenewal != "activity" {
+		t.Fatalf("activity renewal: renewed=%v lease=%+v err=%v", renewed, activity.Lease, err)
+	}
+	if _, err := s.Release(tk.ID, "dev", "next attempt", t0.Add(4*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	next, err := s.Claim(tk.ID, "dev", nil, DefaultLeaseDuration, t0.Add(5*time.Minute))
+	if err != nil || next.Attempt == claimed.Attempt || next.Lease.Renewals != 0 || next.Lease.ActivityRenewals != 0 || next.Lease.ManualRenewals != 0 {
+		t.Fatalf("next attempt inherited renewal provenance: %+v, err %v", next, err)
+	}
+}
+
+func TestHolderReclaimsAreManualOnBothClaimPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		claim func(Store, string, string, *Pool, time.Duration, time.Time) (Task, error)
+	}{
+		{"claim", Store.Claim},
+		{"claim serving", Store.ClaimServing},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore(t)
+			tk := mustAdd(t, s, AddInput{Title: tc.name, Budget: time.Hour})
+			if _, err := tc.claim(s, tk.ID, "dev", nil, DefaultLeaseDuration, t0); err != nil {
+				t.Fatal(err)
+			}
+			got, err := tc.claim(s, tk.ID, "dev", nil, DefaultLeaseDuration, t0.Add(time.Minute))
+			if err != nil || got.Lease.Renewals != 1 || got.Lease.ManualRenewals != 1 || got.Lease.ActivityRenewals != 0 || got.Lease.LastRenewal != "manual" {
+				t.Fatalf("holder reclaim: %+v, err %v", got.Lease, err)
+			}
+		})
+	}
+}
+
 func TestAnUnstampedAttemptZeroEventCannotRenewAReplacementLease(t *testing.T) {
 	for _, tc := range []struct {
 		name  string

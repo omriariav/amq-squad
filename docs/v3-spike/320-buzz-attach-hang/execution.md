@@ -2,7 +2,7 @@
 
 Date: 2026-11-10
 
-Verdict: **the rc.2 release gate closes with this PR**, by the reviewer's ruling of 2026-11-10 on #945: (a) this note, (b) the Known limits sentence under "Release note", (c) the dry run and the rehearsal sending once more on a rejected row. The cause is a race inside amq-remote (finding 3). It is not fixed here and not worked around in the product.
+Verdict: **the rc.2 release gate closes with this follow-up to #946**, by the reviewer's ruling of 2026-11-10: (a) this note, (b) the Known limits sentence under "Release note", (c) the dry run and the rehearsal sending once more on a rejected row. The cause is a race inside amq-remote (finding 3). It is not fixed here and not worked around in the product.
 
 ## Evidence provenance and exclusions
 
@@ -155,28 +155,37 @@ Not measured: a rate on a real phone and relay. A second answer can in principle
 
 ## Validation
 
-Focused positive and controlled-revert runs are recorded below. Final A and B from the carried packet are both 5/5. `go vet ./internal/buzz` and `go test ./internal/buzz -count=1` passed; the full package run took 66.953 s and is saved as [`package-test.log`](package-test.log). `go run ./scripts/redact-evidence -check docs/v3-spike/320-buzz-attach-hang` exited 0. This replacement ran only its declared package checks; repository-wide and host gates remain lead-owned.
+Focused positive and controlled-revert runs are recorded below. Final A and B from the carried packet are both 5/5. `go vet ./internal/buzz` and `go test ./internal/buzz -count=1` passed; the full package took 66.953 s before this follow-up and 67.080 s after it, with the latter saved as [`package-test.log`](package-test.log). `go run ./scripts/redact-evidence -check docs/v3-spike/320-buzz-attach-hang` exited 0. This replacement ran only its declared package checks; repository-wide and host gates remain lead-owned.
 
 ## Release note
 
 For the rc.2 notes, under Known limits. The sentence is built from the measured rows above and cites no rate:
 
-> On a busy host an answer or a routed message sent through Buzz can come back `rejected (native_error)`. Nothing was delivered; send it again. Cause: a race in amq-remote 0.116.2, the report is drafted for upstream.
+> On a busy host an answer or a routed message sent through Buzz can come back `rejected (native_error)`. Nothing was delivered; send it again. In the eight measured runs that could send again (four on each version, at a 5 ms poll), one message needed a third send. Cause: a race in amq-remote, measured on 0.116.2 and on v0.138.0, so upgrading amq-remote does not close it; the report is drafted for upstream.
 
 The rc.2 test harness no longer inherits a live AMQ seat identity, no longer loses relay events between replay and live subscription, and keeps the operator's presence fresh during its waits. The owner dry run and the rehearsal do what the sentence tells the owner: on a rejected row for their own message they send once more, log it, and require exactly one approved outcome.
 
 The rc.2 release gate on the attach hang closes on three things (the plan reviewer's ruling of 2026-11-10, a recorded use of the owner's standing approval, which the owner can overturn): this note merged, the sentence above in the rc.2 notes, and the two tests sending again on a rejected row. The alternative was to hold rc.2 until AMQ fixes the race.
-
 ## This PR's rows
 
 - Carry: the `c5ed5d53687f27d09d18d98842d4be2592a062f5` replacement patch had SHA-256 `52bc0e1c69da77b48f9b86e01a75394f613818910f5fac43d215794eddb869a2`; all 100 paths and blobs matched, and the staged tree on dispatch base `6eed06ce` was `b849293ee8930053b603a797f7dc187b3ec9b5f4`.
-- Shared helper (c0): done at once sent once; rejected once then done sent twice, logged once, and returned the second id; rejected twice sent exactly twice and called the failure function. Removing the resend failed at `signal_test.go:210`; removing the one-real-resend limit failed at `signal_test.go:224`.
-- Fake rejection (c1): answer and route rejections used the same detector as real rows, both new events reached serve once, planted rows counted as zero real resends, and one approved outcome was recorded. The row passed in 23.74 s. Removing the resend failed at `enroll_test.go:428: the attach inbox after serve's delivery of the answer: [], <nil>`.
-- Presence: [`presence/refresh.log`](presence/refresh.log) passed after the intentional two-minute wait in 152.152 s. With refresh removed, [`presence/no-refresh.log`](presence/no-refresh.log) failed in 150.41 s at `enroll_test.go:499: attach stopped before the deliberate stopped presence`; its captured output records `"action":"stopped"` with state `stale` at about 90 s.
-- Real 5 ms measurement: [`poll-5ms/poll-5ms.tsv`](poll-5ms/poll-5ms.tsv) records five separate commands, all exit 0. There were two answer rejections, one route rejection, no second real rejection, and exactly one approved outcome in both flows in all five rows. Run 2's real terminal row, tied to the rejected owner event, records these tags in [`poll-5ms/run-2.log`](poll-5ms/run-2.log): `[h dm-4-5-dryrun]`, `[p ca7508ffd84a0c1040e1118a2fba7d4079b94857a4a960a7e3a77dace369c725]`, `[e 1c086c107798b8504c7df02b5f0cd62dd403591a06e6b2dfe39e7f9e86a154cc root]`, `[e d906b6891202dcc2619324e60d55960bb7cf426d50398b0ade3aa763a262f150 reply]`, and `[auth ca7508ffd84a0c1040e1118a2fba7d4079b94857a4a960a7e3a77dace369c725 kind=9&created_at<1796936468 2af2663c6668558cb0cd5da5252a6d4cbccc5e0493e98ba0e0b4743987752a909c7f6f8aca257990f483897e599851fca5d8ddf64462a8d193719b97ac037dee]`.
-- Relay boundary: publishing synchronously immediately after replay-lock release was delivered live. Installing the subscription after that release failed at `relay_test.go:317: event published immediately after replay lock release was lost`. Restoring the old two-critical-section order failed at `relay_test.go:337: the stored replay and live subscription are not one critical section`. The fake relay may deliver an event both in replay and live, with clients deduplicating by id, and may deliver live before replay EOSE; it must not have a loss window.
-- Package validation: `go vet ./internal/buzz` passed, and [`package-test.log`](package-test.log) records `go test ./internal/buzz -count=1` passing in 66.953 s. The lead owns repository-wide gates.
+- Shared helper (c0): done at once sent once; rejected once then done sent twice, logged once, and returned the second id; rejected twice sent exactly twice and called the failure function. The follow-up rows and their observed final-tree failures are below.
+- Fake rejection (c1): answer and route rejections used the same detector as real rows, both new events reached serve once, planted rows counted as zero real resends, and the end-of-flow tally recorded one approved outcome. `TestOwnerScriptDryRunRejectsThenSendsAgain` passed in 24.41 s; removing the `rejectionWasPlanted` branch failed at `enroll_test.go:507`.
+- Presence: [`presence/refresh.log`](presence/refresh.log) passed after the intentional two-minute wait in 152.152 s. With refresh removed, [`presence/no-refresh.log`](presence/no-refresh.log) failed in 150.41 s with the exact words `attach stopped before the operator deliberately stopped presence`; that saved log cites `enroll_test.go:499` and predates this follow-up's final line numbers. Its captured output records `"action":"stopped"` with state `stale` at about 90 s.
+- Real 5 ms measurement: [`poll-5ms/poll-5ms.tsv`](poll-5ms/poll-5ms.tsv) records five separate commands and names every log. Four rows completed with exactly one end-of-flow approved outcome in both flows. Run 3 exited 1 at `rehearsal_test.go:241` after one answer was really rejected twice; the helper made three sends and no fourth, and the rehearsal outcome count was therefore not reached. Across the completed rows there were four answer rejections and two route rejections.
+- Relay boundary: publishing synchronously immediately after replay-lock release was delivered live. The two install-after-unlock orders both failed the install-point lock row at `relay_test.go:493`. The fake relay may deliver an event both in replay and live, with clients deduplicating by id, and may deliver live before replay EOSE; it must not have a loss window.
+- Package validation: `go vet ./internal/buzz` passed, and [`package-test.log`](package-test.log) records `go test ./internal/buzz -count=1` passing in 67.080 s. The lead owns repository-wide gates.
 - Redaction: `go run ./scripts/redact-evidence -check docs/v3-spike/320-buzz-attach-hang` exited 0 after the last evidence file was added.
+
+On 2026-11-10 at 23:27 IST the lead's baseline run of `TestOwnerScriptDryRunRejectsThenSendsAgain` on #946's head, at the default 500 ms poll with one seat working and a gate run on the host, logged the answer rejection twice and `real resends: 1`: after the plant, the real race rejected the second answer once, the helper sent a third, and the row passed in 27 s. The full log was not kept.
+
+## The follow-up's rows
+
+- Item a, `TestRelayPlantIsInvisibleToReplayQueryAndLiveClients` and `TestRelayPlantDecisionHoldsStoreLock`: `go test ./internal/buzz -run '^TestRelayPlantIsInvisibleToReplayQueryAndLiveClients$' -count=1` failed at `relay_test.go:366` when either the planted row or the owner event was exposed; `go test ./internal/buzz -run '^TestRelayPlantDecisionHoldsStoreLock$' -count=1` failed at `relay_test.go:403` when the decision moved after the unlock. Client replay, client `Query`, and a live subscription see neither hidden event; helper reads see both.
+- Item b, `TestOwnerScriptDryRunRejectsThenSendsAgain`: `go test ./internal/buzz -run '^TestOwnerScriptDryRunRejectsThenSendsAgain$' -count=1` failed at `enroll_test.go:507` when the planted-verdict branch was removed. Each planted answer and route produced one classifier verdict and one log line after real resends were subtracted; the plants contributed zero real resends.
+- Item c, `TestSendOwnerUntilDone`: the same-id-check revert failed at `signal_test.go:270`; counting the plant as real failed at `signal_test.go:293`; removing the one-real-resend limit failed at `signal_test.go:312`. The helper's common two-real-rejection wording is `rejected (native_error) twice; not sent again`, true whether the unsent event would have been the third or fourth.
+- Item d, the end-of-flow counts: the dry run reads its test-owned tally of every `Handler.Step` record and its after-answer-count revert failed at `enroll_test.go:528`; the rehearsal reads the whole test-owned `aout` buffer and its after-answer-count revert failed at `enroll_test.go:547`. The plant shows the count is taken at the end in test-owned state; it does not show that a real second approval would reach `h.Step` or `aout`; the protection there is the handler's one-answer rule and the attach inbox assertions of length 1.
+- Item e, `TestRelaySubscriptionInstallHoldsStoreLock`: `go test ./internal/buzz -run '^TestRelaySubscriptionInstallHoldsStoreLock$' -count=1` failed at `relay_test.go:493` for both unlock/seam/install and unlock/install/seam. The install hook observes the store lock held and writes nothing to the connection.
 
 ## Limits
 
@@ -184,4 +193,5 @@ The rc.2 release gate on the attach hang closes on three things (the plan review
 - No change is made to AMQ, vendored code, owner-visible prompts, or gate-answer acceptance semantics.
 - The captured test-owned supervisor PID had no reachable serve child at snapshot time, so there is no safe serve stack for these three rows.
 - Condition C and the locked host rerun remain lead-owned.
+- The presence refresher has no row in `make ci`; its only row is behind the evidence variable. With the refresh removed, the ordinary run stays green in about 31 s, as measured by the lead.
 - Evidence logs contain test fixtures and temporary paths. The redaction pass removes credentials and replaces live-seat identity values; it does not rewrite test-owned fixture identities.

@@ -1,0 +1,9 @@
+gate-lock: trainfix holds the lock after 0s
+=== RUN   TestProbeDoctorOnALegacyGateRecord
+    doctor_probe_test.go:59: run 1: status=ok detail="every tag and release since the baseline has an accepted owner gate" on disk=[]
+    doctor_probe_test.go:59: run 2: status=ok detail="every tag and release since the baseline has an accepted owner gate" on disk=[]
+    doctor_probe_test.go:59: run 3: status=ok detail="every tag and release since the baseline has an accepted owner gate" on disk=[]
+--- PASS: TestProbeDoctorOnALegacyGateRecord (0.01s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/cli	0.598s
+exit 0
