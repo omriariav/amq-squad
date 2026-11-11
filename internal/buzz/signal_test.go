@@ -183,7 +183,7 @@ func sendOwnerUntilDone(
 			if rejection == ownerRejectedForReal {
 				realResends++
 				if realResends > 1 {
-					fail(kind + " rejected (native_error) twice; not sent a third time")
+					fail(kind + " rejected (native_error) twice; not sent again")
 					return id, realResends - 1
 				}
 			}
@@ -252,10 +252,72 @@ func TestSendOwnerUntilDone(t *testing.T) {
 			},
 			func(msg string) { failures = append(failures, msg) },
 			func(line string) { logs = append(logs, line) })
-		if sends != 2 || resends != 1 || !slices.Equal(failures, []string{"answer rejected (native_error) twice; not sent a third time"}) || len(logs) != 1 {
+		if sends != 2 || resends != 1 || !slices.Equal(failures, []string{"answer rejected (native_error) twice; not sent again"}) || len(logs) != 1 {
 			t.Fatalf("sends=%d real resends=%d failures=%v logs=%v", sends, resends, failures, logs)
 		}
 	})
+
+	t.Run("same id after rejection", func(t *testing.T) {
+		sends := 0
+		var failures []string
+		_, _ = sendOwnerUntilDone(t.Context(), &bell{}, "answer", "done",
+			func() string { sends++; return "same-event" },
+			func(string) bool { return sends >= 2 },
+			func(string) ownerReject { return ownerRejectedForReal },
+			func(msg string) { failures = append(failures, msg) },
+			func(string) {})
+		if sends != 2 || !slices.Equal(failures, []string{"answer sent again with the same event id"}) {
+			t.Fatalf("sends=%d failures=%v", sends, failures)
+		}
+	})
+
+	t.Run("plant then one real rejection then done", func(t *testing.T) {
+		sends := 0
+		var failures, logs []string
+		id, resends := sendOwnerUntilDone(t.Context(), &bell{}, "answer", "done",
+			func() string { sends++; return fmt.Sprintf("event-%d", sends) },
+			func(id string) bool { return id == "event-3" },
+			func(id string) ownerReject {
+				switch id {
+				case "event-1":
+					return ownerRejectedByPlant
+				case "event-2":
+					return ownerRejectedForReal
+				default:
+					return ownerNotRejected
+				}
+			},
+			func(msg string) { failures = append(failures, msg) },
+			func(line string) { logs = append(logs, line) })
+		if id != "event-3" || sends != 3 || resends != 1 || len(failures) != 0 || len(logs) != 2 {
+			t.Fatalf("id=%q sends=%d real resends=%d failures=%v logs=%v", id, sends, resends, failures, logs)
+		}
+	})
+
+	t.Run("plant then two real rejections", func(t *testing.T) {
+		sends := 0
+		var failures, logs []string
+		_, resends := sendOwnerUntilDone(t.Context(), &bell{}, "answer", "done",
+			func() string { sends++; return fmt.Sprintf("event-%d", sends) },
+			func(id string) bool { return id == "event-4" },
+			func(id string) ownerReject {
+				if id == "event-1" {
+					return ownerRejectedByPlant
+				}
+				return ownerRejectedForReal
+			},
+			func(msg string) { failures = append(failures, msg) },
+			func(line string) { logs = append(logs, line) })
+		if sends != 3 || resends != 1 || !slices.Equal(failures, []string{"answer rejected (native_error) twice; not sent again"}) || len(logs) != 2 {
+			t.Fatalf("sends=%d real resends=%d failures=%v logs=%v", sends, resends, failures, logs)
+		}
+	})
+}
+
+func checkApprovedOutcomes(flow string, outcomes int, fail func(string)) {
+	if outcomes != 1 {
+		fail(fmt.Sprintf("%s recorded %d approved outcomes, want exactly one", flow, outcomes))
+	}
 }
 
 // serveAdmitted reports whether serve posted the running row for the owner

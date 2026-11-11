@@ -398,19 +398,31 @@ func testOwnerScriptDryRun(t *testing.T, opts ownerDryRunOptions) {
 		}
 		t.Fatal(message)
 	}
-	rejected := func(id string) ownerReject {
-		if event, ok := serveRejectedEvent(relay, body, id); ok {
-			if relay.rejectionWasPlanted(id) {
-				return ownerRejectedByPlant
+	plantedVerdicts := map[string]int{}
+	logLines := map[string]int{}
+	rejectedFor := func(kind string) func(string) ownerReject {
+		return func(id string) ownerReject {
+			if event, ok := serveRejectedEvent(relay, body, id); ok {
+				if relay.rejectionWasPlanted(id) {
+					plantedVerdicts[kind]++
+					return ownerRejectedByPlant
+				}
+				if os.Getenv(evidencePollIntervalEnv) != "" {
+					t.Logf("real rejected row: kind=%d tags=%v", event.Kind, event.Tags)
+				}
+				return ownerRejectedForReal
 			}
-			if os.Getenv(evidencePollIntervalEnv) != "" {
-				t.Logf("real rejected row: kind=%d tags=%v", event.Kind, event.Tags)
-			}
-			return ownerRejectedForReal
+			return ownerNotRejected
 		}
-		return ownerNotRejected
+	}
+	logOwnerLine := func(kind string) func(string) {
+		return func(line string) {
+			logLines[kind]++
+			t.Log(line)
+		}
 	}
 	realResends := 0
+	approvedOutcomes := 0
 	inbox := AMQInbox{Root: shareRoot, Handle: MailboxHandle}
 	h := &Handler{Core: core, Dial: VerifyDialer(b, pin), Inbox: inbox, Mail: AMQMailer{}, Target: target}
 	prefix := strings.TrimPrefix(rec.Digest, "sha256:")[:16]
@@ -421,7 +433,7 @@ func testOwnerScriptDryRun(t *testing.T, opts ownerDryRunOptions) {
 	}
 	answerID, answerResends := sendOwnerUntilDone(ctx, &relay.bell, "answer", "serve delivers the answer into the attach inbox",
 		func() string { return ownerDM("Approve rel-dry release "+prefix, q.EventID) },
-		func(id string) bool { return serveAdmitted(relay, body, id) }, rejected, failOwnerSend, func(line string) { t.Log(line) })
+		func(id string) bool { return serveAdmitted(relay, body, id) }, rejectedFor("answer"), failOwnerSend, logOwnerLine("answer"))
 	realResends += answerResends
 	// serve's running row for the answer: the delivery into the attach
 	// inbox is done (serveAdmitted)
@@ -439,6 +451,11 @@ func testOwnerScriptDryRun(t *testing.T, opts ownerDryRunOptions) {
 	handled, err := h.Step(ctx)
 	if err != nil || len(handled) != 1 || handled[0].Gate == nil || handled[0].Gate.Outcome != "approved" || handled[0].Reply != "accepted rel-dry tag" {
 		t.Fatalf("answer: %+v, %v", handled, err)
+	}
+	for _, record := range handled {
+		if record.Gate != nil && record.Gate.Outcome == "approved" {
+			approvedOutcomes++
+		}
 	}
 	stepTook := time.Since(tStep)
 	idsSeen := relay.idsREQs()
@@ -465,7 +482,7 @@ func testOwnerScriptDryRun(t *testing.T, opts ownerDryRunOptions) {
 	}
 	routeID, routeResends := sendOwnerUntilDone(ctx, &relay.bell, "route", "serve delivers the route",
 		func() string { return ownerDM("@lead-b please rebase #12", "") },
-		func(id string) bool { return serveAdmitted(relay, body, id) }, rejected, failOwnerSend, func(line string) { t.Log(line) })
+		func(id string) bool { return serveAdmitted(relay, body, id) }, rejectedFor("route"), failOwnerSend, logOwnerLine("route"))
 	realResends += routeResends
 	if delivered, err = inbox.New(ctx); err != nil || len(delivered) != 1 {
 		t.Fatalf("the attach inbox after serve's delivery of the route: %+v, %v", delivered, err)
@@ -474,14 +491,41 @@ func testOwnerScriptDryRun(t *testing.T, opts ownerDryRunOptions) {
 	if err != nil || len(handled) != 1 || handled[0].Delivery == nil || handled[0].Delivery.Lead != "lead-b" || !routedTo(handled[0].Reply, "lead-b") {
 		t.Fatalf("route: %+v, %v", handled, err)
 	}
+	for _, record := range handled {
+		if record.Gate != nil && record.Gate.Outcome == "approved" {
+			approvedOutcomes++
+		}
+	}
 	if !inboxHas(t, squad, "lead-a", "nostr:"+routeID) || !inboxHas(t, squad, "lead-b", "nostr:"+routeID) {
 		t.Fatal("the routed message is not in lead-a's and lead-b's inboxes")
 	}
 	await(ctx, t, &relay.bell, "serve posts the routed result row", func() bool { return bodyPosted(relay, body, "routed lead-b") })
 	t.Logf("real resends: %d", realResends)
-	t.Log("approved outcomes: 1")
+	checkApprovedOutcomes("dry run", approvedOutcomes, func(message string) { t.Fatal(message) })
+	t.Logf("approved outcomes: %d", approvedOutcomes)
 	if opts.plantRejections && relay.plantedRejectionCount() != 2 {
 		t.Fatalf("planted rejections = %d, want answer and route", relay.plantedRejectionCount())
+	}
+	if opts.plantRejections {
+		if answerReal := logLines["answer"] - answerResends; answerReal != 1 {
+			t.Fatalf("answer lines minus real resends = %d, want one planted line", answerReal)
+		}
+		if routeReal := logLines["route"] - routeResends; routeReal != 1 {
+			t.Fatalf("route lines minus real resends = %d, want one planted line", routeReal)
+		}
+		if total := logLines["answer"] + logLines["route"] - realResends; total != 2 {
+			t.Fatalf("owner lines minus real resends = %d, want two planted lines", total)
+		}
+		if plantedVerdicts["answer"] != 1 || plantedVerdicts["route"] != 1 {
+			t.Fatalf("planted classifier verdicts = answer %d route %d, want one each", plantedVerdicts["answer"], plantedVerdicts["route"])
+		}
+		// The ruling's plant writes where the dry-run end count reads: its
+		// test-owned tally of every Handler.Step record in the flow.
+		var countFailures []string
+		checkApprovedOutcomes("dry run", approvedOutcomes+1, func(message string) { countFailures = append(countFailures, message) })
+		if !slices.Equal(countFailures, []string{"dry run recorded 2 approved outcomes, want exactly one"}) {
+			t.Fatalf("planted end-of-flow count = %d, failures=%v", approvedOutcomes+1, countFailures)
+		}
 	}
 	for _, e := range append(relay.mem.events(9, body), relay.mem.events(40003, body)...) {
 		if strings.Contains(e.Content, "please rebase") || strings.Contains(e.Content, "Approve rel-dry") {
