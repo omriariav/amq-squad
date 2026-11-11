@@ -79,7 +79,7 @@ func TestRollbackLegacyGateLineInGateStatusAndStatus(t *testing.T) {
 		t.Fatalf("gate status: err=%v stderr=%q", err, stderr)
 	}
 	status := buildStatusContract(f.root, f.project, "v3.2.0-rc.2", time.Unix(1, 0))
-	if len(status.Warnings) == 0 || status.Warnings[0] != "gate store: "+want {
+	if len(status.Warnings) == 0 || status.Warnings[0] != gateStoreLegacyWarningPrefix+want {
 		t.Fatalf("status warnings = %q", status.Warnings)
 	}
 }
