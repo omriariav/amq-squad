@@ -387,6 +387,69 @@ func TestTaskCLIClaimRefusalWordsAreAboveTheRule(t *testing.T) {
 	}
 }
 
+func TestTaskAddReportsFileWaitsInTextAndJSON(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+
+	if _, err := taskCLI(t, "add", "--title", "holder", "--class", "implement", "--files", "docs/**"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := taskCLI(t, "add", "--title", "overlap", "--class", "implement", "--files", "docs/x.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "t2 will wait for t1: both declare docs/x.md"; !strings.Contains(out, want) {
+		t.Fatalf("task add output = %q, want %q", out, want)
+	}
+	if strings.HasPrefix("docs/x.md", "docs/**") || strings.HasPrefix("docs/**", "docs/x.md") {
+		t.Fatal("the fixture must disagree with a prefix-only overlap test")
+	}
+	out, err = taskCLI(t, "add", "--title", "second overlap", "--class", "implement", "--files", "docs/x.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"t3 will wait for t1: both declare docs/x.md",
+		"t3 will wait for t2: both declare docs/x.md",
+	} {
+		if !strings.Contains(out, want+"\n") {
+			t.Fatalf("task add output = %q, want line %q", out, want)
+		}
+	}
+
+	out, err = taskCLI(t, "add", "--title", "separate", "--class", "implement", "--files", "src/x.go")
+	if err != nil || strings.Contains(out, "will wait") {
+		t.Fatalf("non-overlapping add = %q, %v", out, err)
+	}
+	out, err = taskCLI(t, "add", "--title", "json overlap", "--class", "implement", "--files", "docs/x.md", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		Data struct {
+			WaitsFor []string `json:"waits_for"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatal(err)
+	}
+	got := env.Data.WaitsFor
+	want := []string{
+		"t5 will wait for t1: both declare docs/x.md",
+		"t5 will wait for t2: both declare docs/x.md",
+		"t5 will wait for t3: both declare docs/x.md",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("waits_for = %#v, want %#v", got, want)
+	}
+}
+
 func TestTaskCLIRefusals(t *testing.T) {
 	root := t.TempDir()
 	chdir(t, root)

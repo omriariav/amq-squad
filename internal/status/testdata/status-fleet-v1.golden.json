@@ -226,6 +226,7 @@
           "pr_number": 0,
           "pr_head": "",
           "wait_holders": [],
+          "waits_for": [],
           "wait_pool": ""
         },
         {
@@ -255,6 +256,7 @@
           "pr_number": 42,
           "pr_head": "4f1c2a9",
           "wait_holders": [],
+          "waits_for": [],
           "wait_pool": ""
         }
       ],
