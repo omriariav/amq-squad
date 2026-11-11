@@ -121,7 +121,7 @@
           "scheduler",
           "harness_shell"
         ],
-        "needs": "Done has no prior report and no declared files; Complete and CompleteBound have a report, and CompleteBound has a valid free binding; a verdict is required but absent, or a sealed verdict is present and does not pass",
+        "needs": "Done has no prior report and no declared files; Complete and CompleteBound have a report; CompleteBound also has a nonnegative PR number and, when positive, a valid free binding; a verdict is required but absent, or a sealed verdict is present and does not pass",
         "clears_block_group": false
       },
       {
@@ -251,7 +251,7 @@
         "who": [
           "proven_lead"
         ],
-        "needs": "added paths and their union are valid and non-empty, reason and actor are non-empty, actor is not holder or reporter, no active file conflicts, and the task has no report, refused paths, and a widen-request reason",
+        "needs": "added paths and their union are valid and non-empty, reason and actor are non-empty, actor is not holder or reporter, no active file conflicts, the task has no report and has refused paths, and the block reason is widen_requested or growth_gate_required",
         "clears_block_group": true
       },
       {
@@ -358,7 +358,7 @@
         ]
       },
       {
-        "name": "verifier_fail",
+        "name": "verifier_fail_without_verdict",
         "reader_package": "internal/routing",
         "reader_func": "verifierResult",
         "outcomes": [

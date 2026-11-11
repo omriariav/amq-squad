@@ -2,8 +2,10 @@ package task
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"reflect"
 	"sort"
@@ -44,6 +46,16 @@ func parseNonTestPackage(t *testing.T) (*token.FileSet, []parsedSource) {
 	return fset, files
 }
 
+func unparen(expr ast.Expr) ast.Expr {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.X
+	}
+}
+
 func TestEveryStateWriteIsDeclared(t *testing.T) {
 	fset, files := parseNonTestPackage(t)
 	var writes []stateWrite
@@ -56,14 +68,14 @@ func TestEveryStateWriteIsDeclared(t *testing.T) {
 			ast.Inspect(fn.Body, func(node ast.Node) bool {
 				switch node := node.(type) {
 				case *ast.UnaryExpr:
-					selector, ok := node.X.(*ast.SelectorExpr)
+					selector, ok := unparen(node.X).(*ast.SelectorExpr)
 					if node.Op == token.AND && ok && selector.Sel.Name == "State" {
 						pos := fset.Position(node.Pos())
 						t.Errorf("%s:%d: the address of a state field is taken; the write that follows is not declared", pos.Filename, pos.Line)
 					}
 				case *ast.AssignStmt:
 					for i, lhs := range node.Lhs {
-						sel, ok := lhs.(*ast.SelectorExpr)
+						sel, ok := unparen(lhs).(*ast.SelectorExpr)
 						if !ok || sel.Sel.Name != "State" {
 							continue
 						}
@@ -73,6 +85,21 @@ func TestEveryStateWriteIsDeclared(t *testing.T) {
 							continue
 						}
 						writes = appendStateWrite(t, fset, writes, fn.Name.Name, node.Rhs[i])
+					}
+				case *ast.RangeStmt:
+					if node.Tok != token.ASSIGN {
+						break
+					}
+					for _, target := range []ast.Expr{node.Key, node.Value} {
+						if target == nil {
+							continue
+						}
+						sel, ok := unparen(target).(*ast.SelectorExpr)
+						if !ok || sel.Sel.Name != "State" {
+							continue
+						}
+						pos := fset.Position(target.Pos())
+						t.Errorf("%s:%d: a state written from an expression is not declared", pos.Filename, pos.Line)
 					}
 				case *ast.KeyValueExpr:
 					key, ok := node.Key.(*ast.Ident)
@@ -111,18 +138,33 @@ func TestEveryStateWriteIsDeclared(t *testing.T) {
 }
 
 type parsedFunction struct {
-	key       string
-	name      string
-	receiver  string
-	recvIdent string
-	pointer   bool
-	body      *ast.BlockStmt
-	edges     map[string]bool
+	key        string
+	name       string
+	receiver   string
+	recvObject types.Object
+	pointer    bool
+	body       *ast.BlockStmt
+	edges      map[string]bool
 }
 
 func TestEveryStoreMethodIsTiedToItsMoves(t *testing.T) {
-	_, files := parseNonTestPackage(t)
+	fset, files := parseNonTestPackage(t)
+	astFiles := make([]*ast.File, len(files))
+	for i := range files {
+		astFiles[i] = files[i].file
+	}
+	info := &types.Info{
+		Defs:       map[*ast.Ident]types.Object{},
+		Uses:       map[*ast.Ident]types.Object{},
+		Selections: map[*ast.SelectorExpr]*types.Selection{},
+	}
+	config := &types.Config{Importer: importer.ForCompiler(fset, "source", nil)}
+	pkg, err := config.Check("github.com/omriariav/amq-squad/v3/internal/task", fset, astFiles, info)
+	if err != nil {
+		t.Fatal(err)
+	}
 	nodes := map[string]*parsedFunction{}
+	functionKeys := map[*types.Func]string{}
 	packageFuncs := map[string]string{}
 	storeMethods := map[string]string{}
 	for _, source := range files {
@@ -131,12 +173,21 @@ func TestEveryStoreMethodIsTiedToItsMoves(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
-			receiver, recvIdent, pointer := receiver(fn)
+			receiver, _, pointer := receiver(fn)
 			key := "func:" + fn.Name.Name
 			if receiver != "" {
 				key = "method:" + receiver + ":" + fn.Name.Name
 			}
-			nodes[key] = &parsedFunction{key: key, name: fn.Name.Name, receiver: receiver, recvIdent: recvIdent, pointer: pointer, body: fn.Body, edges: map[string]bool{}}
+			fnObject, ok := info.Defs[fn.Name].(*types.Func)
+			if !ok {
+				t.Fatalf("%s does not resolve to a function", fn.Name.Name)
+			}
+			var recvObject types.Object
+			if fn.Recv != nil && len(fn.Recv.List) > 0 && len(fn.Recv.List[0].Names) > 0 {
+				recvObject = info.Defs[fn.Recv.List[0].Names[0]]
+			}
+			nodes[key] = &parsedFunction{key: key, name: fn.Name.Name, receiver: receiver, recvObject: recvObject, pointer: pointer, body: fn.Body, edges: map[string]bool{}}
+			functionKeys[fnObject] = key
 			if receiver == "" {
 				packageFuncs[fn.Name.Name] = key
 			} else if receiver == "Store" {
@@ -144,27 +195,57 @@ func TestEveryStoreMethodIsTiedToItsMoves(t *testing.T) {
 			}
 		}
 	}
-	for _, node := range nodes {
-		ast.Inspect(node.body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			switch fun := call.Fun.(type) {
-			case *ast.Ident:
-				if key := packageFuncs[fun.Name]; key != "" {
-					node.edges[key] = true
-				}
-			case *ast.SelectorExpr:
-				recv, ok := fun.X.(*ast.Ident)
-				if node.receiver == "Store" && ok && recv.Name == node.recvIdent {
-					if key := storeMethods[fun.Sel.Name]; key != "" {
-						node.edges[key] = true
-					}
-				}
+	selectors := map[*ast.Ident]*ast.SelectorExpr{}
+	for _, source := range files {
+		ast.Inspect(source.file, func(n ast.Node) bool {
+			if selector, ok := n.(*ast.SelectorExpr); ok {
+				selectors[selector.Sel] = selector
 			}
 			return true
 		})
+	}
+	insideFunction := map[*ast.Ident]bool{}
+	for _, node := range nodes {
+		ast.Inspect(node.body, func(n ast.Node) bool {
+			ident, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			insideFunction[ident] = true
+			used, ok := info.Uses[ident].(*types.Func)
+			if !ok || used.Pkg() != pkg {
+				return true
+			}
+			key := functionKeys[used]
+			if key == "" {
+				return true
+			}
+			signature, _ := used.Type().(*types.Signature)
+			if !storeReceiver(signature) {
+				node.edges[key] = true
+				return true
+			}
+			selector := selectors[ident]
+			var operand *ast.Ident
+			if selector != nil {
+				operand, _ = unparen(selector.X).(*ast.Ident)
+			}
+			if node.receiver == "Store" && operand != nil && node.recvObject != nil && info.Uses[operand] == node.recvObject {
+				node.edges[key] = true
+				return true
+			}
+			pos := fset.Position(ident.Pos())
+			t.Errorf("%s:%d: %s uses Store.%s on a value that is not the enclosing method's receiver", pos.Filename, pos.Line, node.name, used.Name())
+			return true
+		})
+	}
+	for ident, object := range info.Uses {
+		used, ok := object.(*types.Func)
+		if !ok || used.Pkg() != pkg || functionKeys[used] == "" || insideFunction[ident] {
+			continue
+		}
+		pos := fset.Position(ident.Pos())
+		t.Errorf("%s:%d: %s is used outside a function body", pos.Filename, pos.Line, used.Name())
 	}
 	writerNames := map[string]bool{}
 	for _, move := range Moves() {
@@ -192,8 +273,8 @@ func TestEveryStoreMethodIsTiedToItsMoves(t *testing.T) {
 	}
 	for name, key := range storeMethods {
 		node := nodes[key]
-		if node.pointer && ast.IsExported(name) {
-			t.Errorf("exported Store method %s has a pointer receiver", name)
+		if node.pointer {
+			t.Errorf("Store method %s has a pointer receiver", name)
 		}
 		if ast.IsExported(name) && !reflected[name] {
 			t.Errorf("exported parsed Store method %s is absent from Store's value method set", name)
@@ -238,6 +319,18 @@ func TestEveryStoreMethodIsTiedToItsMoves(t *testing.T) {
 	if reaching == 0 {
 		t.Fatal("no Store method reaches a writer")
 	}
+}
+
+func storeReceiver(signature *types.Signature) bool {
+	if signature == nil || signature.Recv() == nil {
+		return false
+	}
+	typ := signature.Recv().Type()
+	if pointer, ok := typ.(*types.Pointer); ok {
+		typ = pointer.Elem()
+	}
+	named, ok := typ.(*types.Named)
+	return ok && named.Obj().Name() == "Store"
 }
 
 func receiver(fn *ast.FuncDecl) (typ, ident string, pointer bool) {
