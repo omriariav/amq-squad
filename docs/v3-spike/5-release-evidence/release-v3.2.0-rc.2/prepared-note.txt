@@ -1,0 +1,4 @@
+# read 2026-11-11T13:50:04Z: python3 json .spec.note of .amq-squad/evidence/default/v320rc2/compound-release/release-series-v1-0a1e3c10cf6f11ec93faee871dace3adfcd23fd4d6526ff674bda692788ead41/prepared-g00000000000000000001.json (7760 bytes; state, release_id, then every key of spec.note)
+state: planned
+release_id: release-v1-e72218c1db92b6da89d46653b7b0ce1d1e23f69c28528533d21eb483c1a90735
+spec.note.summary: release body set from docs/v3.2.0-release-notes.md at da109b49; notes sha256 c6bfa2d2e508ab13edeb6dc71dbae9f3f456f5ca4344bd588e9ab2bb6e45525d release body sha256:c6bfa2d2e508ab13edeb6dc71dbae9f3f456f5ca4344bd588e9ab2bb6e45525d

@@ -1,0 +1,8 @@
+rel-gh-455253546caa2cd48ec4 class github_release target: gh release create v3.2.0-rc.2 on omriariav/amq-squad
+  issued_at 2026-11-11T13:12:29Z not_after 2026-11-11T13:42:29Z raised_by lead
+  question event 6f62aaf6b180f677d59f5fe7e76ae902d146a007cf6d47d1cde1aa5eee1490ed posted_at 2026-11-11T13:12:30Z
+  answer files: 0
+rel-tag-254e753c28e695988a6e class tag target: git tag v3.2.0-rc.2 da109b496787ffb7b8a716b8d2d75af19e98a045 on omriariav/amq-squad
+  issued_at 2026-11-11T13:12:29Z not_after 2026-11-11T13:42:29Z raised_by lead
+  question event ba49ac9b4b885d59d505ab7e10ba3ccc76fdf66e08a9bffe2fc4653b59305c3b posted_at 2026-11-11T13:12:29Z
+  answer files: 0

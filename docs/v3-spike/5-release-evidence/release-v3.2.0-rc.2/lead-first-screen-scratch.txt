@@ -1,0 +1,30 @@
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────────────────────────
+amq-squad: lead - · root /private/tmp/rc2lead.fmoVPO/home/.amq-squad/solo/proj-3006abf4cc53/root
+seats (1)
+  lead  -  stopped
+tasks (0)
+  No tasks yet; add one with /add.
+train
+  No merge train has run yet.
+waiting on you (0)
+  Nothing is waiting on you.
+/add  /reset  /dismiss  /answer  /widen  /team hide
+/private/tmp/rc2lead.fmoVPO/proj (main)
+0.0%/131k (auto)                                                                qwen3.6:27b • medium
