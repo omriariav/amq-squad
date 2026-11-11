@@ -31,6 +31,38 @@ func Path(root, handle string) string {
 	return filepath.Join(root, "extensions", "amq-squad", "ledger", handle+".jsonl")
 }
 
+// HasActivitySince reports whether this handle's hook ledger contains a
+// well-formed tool result at or after since. It is deliberately narrower than
+// cli.isLeaseActivity: Stop renews a lease at turn end, but does not prove the
+// post-tool hook that renews during a long turn. A missing or incomplete
+// ledger proves no activity, and a row naming another handle never counts.
+func HasActivitySince(root, handle string, since time.Time) (bool, error) {
+	found := false
+	_, err := streamLines(Path(root, handle), func(ln []byte) {
+		if found {
+			return
+		}
+		var row struct {
+			At        string `json:"at"`
+			Handle    string `json:"handle"`
+			Event     string `json:"event"`
+			Tool      string `json:"tool"`
+			Outcome   string `json:"outcome"`
+			Malformed bool   `json:"malformed"`
+			Truncated bool   `json:"truncated"`
+		}
+		if json.Unmarshal(ln, &row) != nil || row.Handle != handle || row.Malformed || row.Truncated {
+			return
+		}
+		at, err := time.Parse(time.RFC3339Nano, row.At)
+		if err != nil || at.Before(since) {
+			return
+		}
+		found = (row.Event == "PostToolUse" || row.Event == "tool_result") && row.Tool != "" && row.Outcome != ""
+	})
+	return found, err
+}
+
 // OutcomePath is the session's outcome log (2b-4: under the AMQ root per
 // session, beside the hook ledger; the file name is 2b-4's to confirm).
 func OutcomePath(root string) string {

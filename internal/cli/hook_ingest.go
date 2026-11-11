@@ -143,8 +143,12 @@ func renewLeaseOnToolResult(id hookIdentity, line hookLedgerLine, started time.T
 	case errors.Is(err, task.ErrBusy):
 		return "skipped", 0
 	case err == nil && renewed:
-		if t.Lease != nil && t.Lease.Renewals == 1 {
-			_ = schedproc.AppendDecision(id.Root, started, scheduler.Decision{Kind: "lease_renewed", TaskID: t.ID, Seat: id.Handle, Reason: fmt.Sprintf("first activity renewal of attempt %d", t.Attempt)})
+		if t.Lease != nil && t.Lease.ActivityRenewals == 1 {
+			reason := fmt.Sprintf("first activity renewal of attempt %d", t.Attempt)
+			if unlabelled := t.Lease.Renewals - t.Lease.ActivityRenewals - t.Lease.ManualRenewals; unlabelled > 0 {
+				reason += fmt.Sprintf(" after %d unlabelled renewals", unlabelled)
+			}
+			_ = schedproc.AppendDecision(id.Root, started, scheduler.Decision{Kind: "lease_renewed", TaskID: t.ID, Seat: id.Handle, Reason: reason})
 		}
 		return "renewed", t.Attempt
 	case err == nil:
@@ -153,10 +157,12 @@ func renewLeaseOnToolResult(id hookIdentity, line hookLedgerLine, started time.T
 	return "", 0
 }
 
-// isLeaseActivity is the shared runtime producer contract. Claude and pi
-// feed PostToolUse/tool_result through their existing adapters; Codex feeds
-// PostToolUse and Stop. Prompt submission and permission waits are
-// deliberately absent because neither proves that the seat worked.
+// isLeaseActivity is the shared renewal contract. Claude and pi feed
+// PostToolUse/tool_result through their existing adapters; Codex feeds
+// PostToolUse and Stop. Stop renews once at turn end, but ledger.HasActivitySince
+// deliberately requires a tool result before suppressing the manual fallback.
+// Prompt submission and permission waits are absent because neither proves
+// that the seat worked.
 func isLeaseActivity(line hookLedgerLine) bool {
 	switch line.Event {
 	case "Stop":
