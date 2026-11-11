@@ -298,8 +298,8 @@ saved scheduler probe kept the exits document
 (`compat_probe_scheduler_test.go.txt:28` at that commit); since round 2 both
 keep it at `extensions/amq-squad/scheduler/exits.json`, so the saved probe as
 it now stands does not reproduce those rows' paths. Paths are relative to each
-fixture root. `-` means the file did not exist before the old-build run. (the
-#961 follow-up)
+fixture root. `-` means the file did not exist before the old-build run.
+(the #961 follow-up)
 
 ### v3.1.2
 
@@ -519,8 +519,8 @@ migrated raw layout:
 `up_raw_layout_test.go:71` in this block is a line of the negative control's
 edited tree, which was not kept; it matches no committed line. As of
 8a79e6a1537069e025d637ea5898b04d1e10fc2b the same `t.Fatalf("%s: %v", version,
-err)` is at `internal/cli/up_raw_layout_test.go:89`, `:97` and `:156`. (the
-#961 follow-up)
+err)` is at `internal/cli/up_raw_layout_test.go:89`, `:97` and `:156`.
+(the #961 follow-up)
 
 ```text
 === RUN   TestUpRefusesEveryBinaryBeforeTheRawLayout
@@ -653,9 +653,10 @@ second script compared the two; the inventories are not printed here, and
 "added", "changed" and "byte-equal" below are that comparison's answers. Paths
 in those answers are relative to `<root>/extensions/amq-squad/`.
 
-The runs, all on 2026-11-11 (IST): P13 12:37:21 to 12:37:30; the fixtures, P9,
-P5, P6, the first P15 attempt and P1 12:37:33 to 12:38:47; P15 12:39:14; P7
-13:12:50 to 13:12:59.
+The runs, all on 2026-11-11 (IST), by the times the run scripts printed: P13
+ended at 12:37:30; the fixtures, P9, P5, P6, the first P15 attempt and P1 ran
+12:37:33 to 12:38:47; P7 ran 13:12:50 to 13:12:59. P15's rerun followed P1 and
+its script printed no time.
 
 ### P1 to P4: interrupted migration preflight
 
@@ -669,7 +670,7 @@ beside a document:
 | legacy document | admitted for v3.1.2 |
 | authenticated exact raw successor | v3.1.2 refused as `ledger_layout_downgrade` with "predates that layout" (`:227-228`); v3.2.0-rc.1 refused, asserted only as a non-nil error (`:230-231`); `v3.2.0-rc.2`, `v3.2.0` and `v4.0.0` admitted (`:233-236`) |
 | raw shape with a bad seal | admitted for v3.1.2 |
-| raw shape with a wrong sequence: the seal names the predecessor's sequence plus one and keeps its tag (`:85-86`) | admitted for v3.1.2 |
+| raw shape with a wrong sequence: the seal is made over a predecessor link that carries the legacy link's sequence plus one and the legacy link's tag (`:85-87`) | admitted for v3.1.2 |
 | no document | admitted for v3.1.2 |
 | "neither layout": an empty session, with no head and no document (`:40-42`) | admitted for v3.1.2 |
 
@@ -1140,7 +1141,7 @@ migrates on its first ordinary write, and records one migration after a second
 write.
 
 P12 is five key guards. A JSON key added to a listed type fails its guard
-until a frozen rc.1 row names it:
+until the guard's own list names the key:
 
 - seatcommit, `TestRC1CommitSealedTypeKeyGuard` (`raw_compat_test.go:159`):
   `Ledger`, `Target`, `LedgerDiscard`, `EvidenceRef`, `LedgerQuarantine`,
@@ -1157,9 +1158,11 @@ until a frozen rc.1 row names it:
 
 `sealedBody` (`internal/sealchain/sealchain.go:228`), `RawSeal`
 (`internal/sealchain/raw.go:57`) and `rawSealFields` (`raw.go:65`) are not
-guarded. The guards do not enforce a schema bump, and the sealchain guard
-checks that the named row functions exist in the seatcommit and scheduler test
-files, not what they exercise. P12 guards the listed shapes while P10 and P11
+guarded. The task and routing guards check the key lists only. The seatcommit,
+scheduler and sealchain guards also require each listed key to name a row
+function that exists in the test source; none checks what that function
+asserts, so no guard shows that a frozen row covers a new key. The guards do
+not enforce a schema bump. P12 guards the listed shapes while P10 and P11
 guard the bytes. `Attempt.cleaned_at` and marker keys `pid`, `start`, and
 `cancel` are not listed because no tag is computed over those unsealed
 records.
@@ -1243,10 +1246,12 @@ and 34 deletions in `outcome.go` and 12 insertions in `class.go`; `git diff
 
 P14's frozen `quarantine_clear` record raises no train alert
 (`TestRollbackLegacyGateDoesNotRaiseTrainAlert`,
-`internal/mergetrain/rollback_rows_test.go:35`) and both status commands print
+`internal/mergetrain/rollback_rows_test.go:35`) and `gate status` prints
 `gatestore.LegacyLine` (`TestRollbackLegacyGateLineInGateStatusAndStatus`,
-`internal/cli/rollback_rows_test.go:65`). Both are standing rows; the cli row
-ran in the second command of the P15 block.
+`internal/cli/rollback_rows_test.go:65`, `:75-80`). For `status` the row does
+not run the command: it builds the status document with `buildStatusContract`
+and requires its first warning to be that line (`:81-84`). Both are standing
+rows; the cli row ran in the second command of the P15 block.
 
 ### P15: the real rc.1 binary's renewal
 
@@ -1404,14 +1409,17 @@ that head was green.
   and document are read once more before the pair is called legacy; (iii) the
   two calls below are folded into one read.
 - **An unreadable document refuses every target.** A commit or exits document
-  that cannot be read for a reason other than not existing (`:446-449`,
-  `:455-458`) makes `sessionRawLayout` fail, and `up` then refuses every `up
-  --binary` and `--skip-install` target, the current build and later ones
-  included, with `ledger_layout_unreadable` (`:381`, `:393`). This is a change
-  in #961: before it the check read only the heads. No row plants an
-  unreadable document. 3.2.x: a row for "a planted unreadable commit or exits
-  document refuses every `up --binary` and `--skip-install` target, current
-  and later included, with ledger_layout_unreadable".
+  whose head is present and that cannot be read for a reason other than not
+  existing (`:446-449`, `:455-458`) makes `sessionRawLayout` fail, and `up`
+  then refuses every `up --binary` and `--skip-install` target, the current
+  build and later ones included, with `ledger_layout_unreadable` (`:381`,
+  `:393`). This is a change in #961: before it the check read only the heads.
+  A document is read only for a head that is listed (`:422`, `:443`, `:453`),
+  so one with no head is not read, and a session with no heads directory
+  answers before any read (`:414-416`). No row plants an unreadable document.
+  3.2.x: a row for "a planted unreadable commit or exits document refuses
+  every `up --binary` and `--skip-install` target, current and later included,
+  with ledger_layout_unreadable".
 - **`doctor` names the wrong file for that error.** `doctor` reports the same
   failure (`internal/cli/doctor.go:390-392`) with the detail "the session's
   sealed heads do not verify", although the file that failed may be a document
@@ -1423,9 +1431,9 @@ that head was green.
   interrupted migration calls it twice (`:379`, `:391`). The fold is 3.2.x
   item (iii) above.
 - **A wrong-tag predecessor has no row.** The matrix's "wrong sequence" form
-  adds one to the predecessor's sequence and keeps its tag
-  (`internal/cli/up_raw_layout_test.go:85-86`). 3.2.x: a row for a wrong-tag
-  predecessor beside a legacy head.
+  seals over a predecessor link with the legacy link's sequence plus one and
+  the legacy link's own tag (`internal/cli/up_raw_layout_test.go:85-87`).
+  3.2.x: a row for a wrong-tag predecessor beside a legacy head.
 - **The key guards have a gap.** `sealedBody`, `RawSeal` and `rawSealFields`
   are not in any guard's list (P12). 3.2.x: guard them.
 - **P5 and P6 log more than they assert.** The per-tick decision counts, the
@@ -1446,12 +1454,12 @@ Rolling forward, the current readers and process consume the old process rows wi
 
 The next ordinary current write completes each legacy or interrupted ledger migration with exactly one migration record; both commit heads and the exits head become raw with a larger sequence, and existing rc.1 quarantine files stay byte-equal. (P7-P8)
 
-`amq-squad up --binary` refuses v3.1.2 and rc.1 both for a completed raw layout and for an authenticated interrupted migration, and leaves a bad seal, a wrong sequence, a missing document and an empty session to the owning reader's tamper check. Since #961 it also refuses every target, the current build and later ones included, with `ledger_layout_unreadable` when a commit or exits document cannot be read. (P1-P4)
+`amq-squad up --binary` refuses v3.1.2 and rc.1 both for a completed raw layout and for an authenticated interrupted migration, and leaves a bad seal, a wrong sequence, a missing document and an empty session to the owning reader's tamper check. Since #961 it also refuses every target, the current build and later ones included, with `ledger_layout_unreadable` when a commit or exits document whose head is present cannot be read. (P1-P4)
 
-Frozen rc.1 commit and exits bytes remain readable and migrate once; a new JSON key on a listed sealed type fails a key guard until a frozen rc.1 row names it. (P10-P12)
+Frozen rc.1 commit and exits bytes remain readable and migrate once; a new JSON key on a listed sealed type fails a key guard until the guard's list names it. (P10-P12)
 
 Verdict, snapshot, and routing outcome rows cross current, v3.1.2, and rc.1 in both directions with no alarm and no refusal either way, by the lead's run on 487e8560 (16 of 16 runs). (P13)
 
 Legacy `quarantine_clear` gates are reported as legacy records and skipped by merge-train drift instead of raising an unreadable-store alert. (P14)
 
-After the actual rc.1 executable renews a current task's lease and drops the renewal labels, `task show` reports the renewals as unlabelled and the next activity renewal logs once with their count. (P15)
+By the lead's rerun on 487e8560 with a real rc.1 executable: after rc.1 renews a current task's lease, the current `task show` reports its two renewals as unlabelled and the next activity renewal logs once with their count. (P15)
