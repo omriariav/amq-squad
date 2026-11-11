@@ -138,9 +138,9 @@ grep -RInE --include='*.go' --exclude='*_test.go' '((Store|\.store)\.(Block|Refu
 The direct dynamic commit result reaches `RefuseCommitPaths` at
 `internal/cli/seat_commit.go:172` and `internal/scheduler/scheduler.go:816`;
 `internal/routing/refusal.go:18-71` classifies the block codes it can emit.
-That map is wider than the set of block codes: seven names in it never reach
-the store as a block code, and they are listed under the table with what each
-is. "No" below means no product test or documented step
+That map is wider than the set of block codes: it holds 37 names, and eleven of
+them have no product writer that writes them to the store as a block code. The
+eleven are listed under the table with what each is. "No" below means no product test or documented step
 was found using that code through the `task block` verb.
 
 | Code | Declaration or spelling and product write | `task block` today | Disposition |
@@ -162,8 +162,6 @@ was found using that code through the `task block` verb.
 | `ledger_tampered` | `internal/seatcommit/ledger.go:120`; direct write `internal/scheduler/tamper.go:197` | refused by the verb in `internal/cli/control_bytes_test.go:186-223` | the verb's by design: scheduler-only and reserved here |
 | `newer_writer` | `internal/seatcommit/ledger.go:125`; dynamic refusal write above | no | 3.2.x item: reserve it at the verb |
 | `schema_mismatch` | `internal/seatcommit/ledger.go:128`; dynamic refusal write above | no | 3.2.x item: reserve it at the verb |
-| `widen_snapshot_missing` | `internal/seatcommit/commit.go:176`; dynamic refusal write above | no | 3.2.x item: reserve it at the verb |
-| `widen_snapshot_attempt_mismatch` | `internal/seatcommit/commit.go:177`; dynamic refusal write above | no | 3.2.x item: reserve it at the verb |
 | `tool_unpinned` | `internal/registry/pins.go:30`; classified dynamic refusal | no | 3.2.x item: reserve it at the verb |
 | `tool_pin_mismatch` | `internal/registry/pins.go:31`; dynamic refusal at `internal/seatcommit/commit.go:1311` | no | 3.2.x item: reserve it at the verb |
 | `verifier_interrupted` | `internal/seatcommit/verifier.go:70`; dynamic refusal write above | no | 3.2.x item: reserve it at the verb |
@@ -181,9 +179,13 @@ was found using that code through the `task block` verb.
 | `widen_requested` | `internal/task/task.go:27`; the CLI block path calls `BlockWithPaths` | yes, by design: `internal/cli/task_test.go:578-579` runs `task block --reason widen_requested` with paths; the path is `internal/cli/task.go:638` to `internal/task/lease.go:844-880` | the verb's by design: typed widen requests |
 | dynamic launch failure code | `LaunchFailure.Code` at `internal/scheduler/launchfail.go:60`; direct write at line 259 | no fixed code to reserve | the verb's by design: AMQ stage/reason is the scheduler's repeated-launch block |
 
-Seven names that `internal/routing/refusal.go:18-71` also classifies are not
-rows of the table above, because none is written to the store as a block code.
-What each is:
+Eleven names that `internal/routing/refusal.go:18-71` also classifies are not
+rows of the table above, because no product code writes any of them to the
+store as a block code. That is a statement about the product's own writers,
+not about the verb: `task block` refuses only the reason `ledger_tampered`
+(`internal/cli/task.go:634-636`, the set at `:768-770`) and the store refuses a
+reason only when it is empty (`internal/task/lease.go:815-816`), so a caller can
+still type any of the eleven as `task block --reason`. What each is:
 
 | Name | What it is | Where |
 | --- | --- | --- |
@@ -194,9 +196,13 @@ What each is:
 | `verifier_start_failed` | a verdict's reason; the block code is `verdict_failed` | declared `internal/seatcommit/verifier.go:65`; the verdict takes the run's reason at :236 and the step refuses with `verdict_failed` at :256-257 |
 | `verifier_timeout` | a verdict's reason; the block code is `verdict_failed` | declared `internal/seatcommit/verifier.go:63`; the same lines |
 | `verifier_output_exceeded` | a verdict's reason; the block code is `verdict_failed` | declared `internal/seatcommit/verifier.go:64`; the same lines |
+| `widen_snapshot_missing` | a widening dry run's refusal, returned in `task widen`'s answer | declared `internal/seatcommit/commit.go:176`; refused at :316, inside the branch at :299 that runs only when the step is given a snapshot attempt. Only `task widen` gives one (`internal/cli/task_widen.go:329`), and `Widen` runs the step as a dry run (`internal/seatcommit/widen.go:148`); a run with a snapshot attempt that is not a dry run is refused `worktree_mismatch` first (`commit.go:149-150`). `widen.go:160-162` copies the dry run's code into the widening's decision, and `task_widen.go:346-377` returns it as the verb's refusal; the only code it writes to the store there is `growth_gate_required` (:361) |
+| `widen_snapshot_attempt_mismatch` | the same | declared `internal/seatcommit/commit.go:177`; refused at :314; the same path |
+| `widen_invalid` | a widening's own refusal, returned in `task widen`'s answer | a literal with no constant (`internal/routing/refusal.go:58`); set on the widening's decision at `internal/seatcommit/widen.go:97`, `:111`, `:123` and `:140`, and on the verb's refusal at `internal/cli/task_widen.go:282`, `:297` and `:303` |
+| `widen_check_failed` | the same | a literal with no constant (`internal/routing/refusal.go:59`); set on the widening's decision at `internal/seatcommit/widen.go:153` and `:161` |
 
 This search prints the only four places a result's code is set to one of the
-seven (`internal/seatcommit/commit.go:410`, `:1483`, `:1519` and
+first seven (`internal/seatcommit/commit.go:410`, `:1483`, `:1519` and
 `internal/seatcommit/verifier.go:233`), and each is on a deferred result:
 
 ```sh
@@ -208,6 +214,16 @@ The CLI step does not write a deferred result to the store
 its limit into `commit_failed` and keeps only `verifier_interrupted` as its own
 code (`internal/scheduler/scheduler.go:761-774`); both are rows of the table
 above.
+
+This search prints every product line that spells one of the four widening
+names: 18 lines, which are the two declarations, the map's four entries, the
+two refusals in `commit.go`, the six lines in `widen.go`, the three in
+`task_widen.go`, and one `case` that words the verb's answer
+(`internal/cli/task_widen.go:202`). None is an argument of a store write:
+
+```sh
+git grep -nE '"widen_(invalid|check_failed)"|ReasonWidenSnapshot(Missing|Mismatch)' -- '*.go' ':!*_test.go'
+```
 
 ## Gates
 
@@ -364,9 +380,18 @@ merge of #959, whose tree equals this round's head.
 
 1. The first failing lines of the first eight round 2 records are replaced by
    the lead's gate-run lines and said to be the lead's.
-2. Seven names leave the block-code table and stand under it with what each is
-   (an error string, a deferral, a verdict's reason); the sentence above the
-   table is narrowed to the block codes `refusal.go` classifies.
+2. Eleven names stand under the block-code table with what each is (an error
+   string, a deferral, a verdict's reason, a widening's refusal); the sentence
+   above the table is narrowed to the block codes `refusal.go` classifies.
+   Seven left the table in this section's first commit
+   (98e47d8cf708c4267c0cbb9826db83655b42a26c). Codex's read-only pass on that
+   commit found three errors of the lead's in it, and the second commit
+   corrects them: the count was seven where the map also holds the two
+   `widen_snapshot_*` names and the literals `widen_invalid` and
+   `widen_check_failed`; the two `widen_snapshot_*` rows were left in the table
+   as dynamic refusal writes; and "none is written to the store as a block
+   code" was said without the verb, which refuses only the reason
+   `ledger_tampered`.
 3. The decisions-log row names the two readers; the recovery path is a writer.
 4. The phone row: `Mailer.Send` at `route.go:158` and `:189` is an inbound
    delivery, not a phone-bound publish.
