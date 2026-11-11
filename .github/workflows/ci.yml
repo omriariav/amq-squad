@@ -96,7 +96,7 @@ jobs:
         run: make ci
 
   # Real AMQ lanes (brief 5-amq-A fix round). One floor for one binary: the
-  # pinned lane runs the release go.mod pins and doctor requires (v0.116.2)
+  # pinned lane runs the release go.mod pins and doctor requires (v0.140.0)
   # and is required; the canary runs AMQ's newest release and is
   # non-blocking (continue-on-error), because its failure reads as upstream
   # drift to look at, not as a break of this repository. macOS, the 3.0 host,
@@ -110,7 +110,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { lane: pinned, amq-version: v0.116.2, canary: false }
+          - { lane: pinned, amq-version: v0.140.0, canary: false }
           - { lane: canary, amq-version: latest, canary: true }
     steps:
       - name: Check out repository
@@ -139,7 +139,7 @@ jobs:
           AMQ_SQUAD_REAL_AMQ: ${{ runner.temp }}/amq-bin/amq
           AMQ_SQUAD_REAL_AMQ_VERSION: ${{ matrix.amq-version }}
           AMQ_NO_UPDATE_CHECK: "1"
-          CLI_TESTS: "^(TestRealAMQ.*|TestRealLaunchapiInspectSessionTargetShape|TestNestedWorktreeRootDiscoveryOnAMQ074)$"
+          CLI_TESTS: "^(TestRealAMQ.*|TestNestedWorktreeRootDiscoveryOnAMQ074)$"
           LIBRARY_TESTS: "^(TestCompiledIntentAcceptedByReleasedAMQ|TestApplyForwardsSubjectSchemaFromPrepareResult)$"
         run: |
           set -euo pipefail

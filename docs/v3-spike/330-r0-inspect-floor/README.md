@@ -16,6 +16,10 @@ entry point. The disk classifier, launch-record selectors, verdict vocabulary,
 
 Before the deletion:
 
+The following are abbreviated excerpts with verified line numbers; the base
+excerpt omits seven test-helper calls and two additional comment matches.
+(corrected, see Corrections)
+
 ```text
 $ rg -n 'classifyAgentLivenessForRollup|classifyMemberStatusFromEntries|classifyMemberStatusForTest' --glob '*.go' .
 internal/cli/liveness.go:349:// classifyAgentLivenessForRollup is the disk classifier plus the session
@@ -80,10 +84,10 @@ classifyAgentLivenessFromDisk(rec.AgentDir, root, profile, rec.Handle, m.Binary,
 | `TestInspectLivenessParityWithPaneProbeForLiveSeats` | 128-155 | reduced and renamed `TestStatusRollupLiveSeatFromDisk` | Disk-backed status is live; Inspect outcome is present. | Disk-backed status is live. |
 | `TestStatusRollupUnchangedForLegacyLaunches` | 161-188 | reduced | Exact live status/detail; Inspect outcome is not applicable. | Exact live status/detail `agent pid 5555 alive (codex)`. |
 | `TestInspectAbsentConflictsWithLivePaneProbeFailsClosed` | 196-226 | removed | Inspect absent caps a disk-live seat and records the Inspect outcome. | None; floor removed. |
-| `TestInspectErrorFallsBackToExistingSignalsWithWarning` | 233-263 | removed | Inspect call error preserves disk status and records Inspect evidence. | None; floor removed. |
-| `TestLaunchapiInspectMemoCollapsesRosterToOneCall` | 273-320 | removed | Three rollups share one Inspect call. | None; call and memo removed. |
-| `TestStatusSurfacesNotableLaunchapiObservation` | 329-390 | removed | Observation changes detail and JSON observation shape. | None; observation removed. |
-| `TestStatusOmitsUnremarkableLaunchapiObservation` | 396-428 | removed | Unremarkable observation stays out of detail but remains in JSON. | None; observation removed. |
+| `TestInspectErrorFallsBackToExistingSignalsWithWarning` | 233-263 | removed | Inspect error preserves live status and exact detail `agent pid 5555 alive (codex)`, and records the error outcome and evidence. (corrected, see Corrections) | None; floor removed. |
+| `TestLaunchapiInspectMemoCollapsesRosterToOneCall` | 273-320 | removed | Three members remain live with a present Inspect outcome and exactly one Inspect call. (corrected, see Corrections) | None; call and memo removed. |
+| `TestStatusSurfacesNotableLaunchapiObservation` | 329-390 | removed | Status remains live; detail names the notable observation, matched struct fields are asserted, and selected serialized JSON fields are asserted. (corrected, see Corrections) | None; observation removed. |
+| `TestStatusOmitsUnremarkableLaunchapiObservation` | 396-428 | removed | The unremarkable observation is absent from detail and the matched observation is populated with `Runnable=true`; JSON serialization is not asserted. (corrected, see Corrections) | None; observation removed. |
 
 The six removed tests contain floor, call, memo, or observation assertions.
 Their disk-live fixture assertion is already retained by the two reduced
@@ -174,10 +178,10 @@ The temporary import and seam line were removed again before the passing checks.
 
 ```text
 $ grep -rnE 'launchapi' internal/cli/liveness.go internal/cli/status.go
-(exit 0; no output)
+(exit 1; no matches and no output; corrected, see Corrections)
 
 $ grep -rnE 'InspectSignal|LaunchapiObservation|launchapi_observation|launchapiInspect|737|766' internal/cli/liveness.go internal/cli/status.go internal/cli/liveness_test.go
-(exit 0; no output)
+(exit 1; no matches and no output; corrected, see Corrections)
 
 $ go build ./...
 (exit 0; no output)
@@ -207,16 +211,15 @@ reason to delete the kept-dead classifier in this task.
 
 ## Left for the pin move
 
-- `.github/workflows/ci.yml:142` still includes
-  `TestRealLaunchapiInspectSessionTargetShape` in a `-run` pattern. A Go test
-  pattern that matches no test is harmless; the pin-move PR removes the name.
-- `go.mod:3` remains `go 1.26.0` and `go.mod:7` remains AMQ module `v0.116.2`.
-  This task changes no direct or indirect module version.
-- `internal/adoptionseam/floor.go:15-21` and
-  `internal/registry/versions.go:3-26` retain the adoption floor, pin constants,
-  and launch-verified row.
-- The pin-move PR owns the wake-hold probe and the AMQ v0.140.0 scratch reading.
-  Neither is changed or claimed here.
+- The workflow's stale `TestRealLaunchapiInspectSessionTargetShape` pattern was
+  removed by the pin move. (corrected, see Corrections)
+- The approved module inputs moved Go to 1.26.11 and AMQ to v0.140.0.
+  (corrected, see Corrections)
+- The adoption and registry pin constants, launch-verified row, doctor floor,
+  and five floor tests moved with the module pin. (corrected, see Corrections)
+- The AMQ v0.140.0 scratch reading was completed. The Claude wake-hold probe
+  was not run because it remains a lead gate requiring a real provider/session,
+  outside this reviewer's local pin verification. (corrected, see Corrections)
 
 ## Not done here
 
@@ -226,4 +229,23 @@ reason to delete the kept-dead classifier in this task.
   `docs/v3-followups.md`; those corrections belong to the lead.
 - No `go.mod`, `go.sum`, adoption-floor, registry, or workflow edit is included.
 - No module pin is moved.
+
+## Corrections (2026-11-11, with the pin move)
+
+The pin-move review re-read the four removed tests from
+`3f702b12205f443e2048ba260d8ac93de5b186a0:internal/cli/liveness_test.go`.
+The corrected table cells above now distinguish the exact disk status/detail,
+Inspect outcome/evidence, memo call count, structured observation assertions,
+and the absence of a JSON assertion in the unremarkable-observation test.
+
+Both required deletion greps were rerun. Each returned exit 1 with no matches
+and no output; the earlier exit-0 annotations were incorrect. The caller-chain
+blocks are abbreviated excerpts, not complete command output, as the new
+caveat states.
+
+The removed-name guard's final v0.140.0 run passed before the file was deleted:
+`go test ./internal/adoptionseam/ -run '^TestNoRemovedLaunchapiNames$' -count=1 -v`.
+The pin-move note records that run and the compiler-enforced replacement,
+including revert row 5's thirteen undefined removed names:
+`../330-pin-move-1/README.md`.
 

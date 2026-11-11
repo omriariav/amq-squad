@@ -261,7 +261,7 @@ the AMQ session is `session` (required for a launch), and every seat but the
 lead is in the roster. A seat's worktree is derived per handle under
 `<repo>/.worktrees/<handle>` unless the seat names one; a worktree that
 names the repository root is a parse error (the commit step moves a seat's
-branch). The runtimes are the providers AMQ v0.116.2's launch adapters serve.
+branch). The runtimes are the providers AMQ v0.140.0's launch adapters serve.
 
 A seat's fields are the typed seat list of the launch compiler. Model and
 effort travel as provider arguments: `--model` and the effort for Claude,

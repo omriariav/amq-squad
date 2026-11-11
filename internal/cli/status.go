@@ -381,8 +381,8 @@ func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member,
 	}
 	root := rec.Root
 
-	// Consume the single shared disk classifier: one disk read plus probe checks
-	// returns the verdict, signals, detail and status state.
+	// Call the shared disk classifier to read launch and presence records, check
+	// process identity, and return the verdict, signals, detail and status.
 	live := classifyAgentLivenessFromDisk(rec.AgentDir, root, profile, rec.Handle, m.Binary, probe)
 	rec.liveness = live
 	rec.ClassificationError = live.SourceError

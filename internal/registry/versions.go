@@ -3,7 +3,7 @@ package registry
 // PinnedAMQModule is the github.com/avivsinai/agent-message-queue version in
 // go.mod. TestPinnedAMQModuleMatchesGoMod keeps the two equal, so a go.mod
 // bump fails the build until this table knows the new pin.
-const PinnedAMQModule = "v0.116.2"
+const PinnedAMQModule = "v0.140.0"
 
 // launchVerified is the provider version each AMQ launch library verified
 // (internal/launch/adapter.go ProviderStaticInputCapabilities in that module
@@ -23,6 +23,10 @@ var launchVerified = map[string]map[string]string{
 	"v0.116.2": {
 		"claude": "2.1.233", "codex": "0.163.0", "grok": "1.0.5",
 		"cursor-agent": "2026.08.11-e8db854", "amq": "0.116.2",
+	},
+	"v0.140.0": {
+		"claude": "2.1.233", "codex": "0.163.0", "grok": "1.0.5",
+		"cursor-agent": "2026.08.11-e8db854", "amq": "0.140.0",
 	},
 }
 
