@@ -27,6 +27,7 @@ L4 = "^TestDriftClearsAStoreAlertOnlyForAPathThisRunRead$/^%s$"
 SKIP = "				if kind, legacy := store.Legacy(id); legacy {\n"
 REACHED = "		why, ok := read.reached[a.Name]\n		if !ok {\n			continue\n		}\n"
 NEGATIVE = "		why := read.reached[a.Name]\n		if slices.ContainsFunc(read.bad, func(u unreadableStore) bool { return u.path == a.Name }) {\n			continue\n		}\n"
+LISTED = "		if fi, err := os.Stat(store.Dir(\"gates\")); err == nil && fi.IsDir() {\n"
 RETRY = "		diff, err = g.run(ctx, \"api\", path,\n			\"-H\", \"Accept: application/vnd.github.diff\")\n	}\n"
 
 # (row, what the edit is, file, old, new, command)
@@ -116,6 +117,15 @@ CASES = [
     ("L4", "every clearing in the covered alert's words", TRAIN,
      'Detail: a.Detail + "; " + a.Why, GateID: a.ID})', 'Detail: a.Detail + "; a verified owner gate now covers it", GateID: a.ID})',
      MT("^TestTrainRecordsAStoreAlertsClearingInItsOwnWords$")),
+    # the #953 fix round
+    ("L4", "the gates directory marked as listed whatever the path is, as on b203e8fe (a gates path that is a dangling symlink)", DRIFT,
+     LISTED, "		if true {\n", MT(L4 % "a_gates_path_that_is_a_dangling_symlink")),
+    ("E4", "M2: any unknown flag answered by a second read (another flag's refusal)", GH,
+     'strings.Contains(ge.Stderr, "unknown flag: --allow-escape-sequences")', 'strings.Contains(ge.Stderr, "unknown flag")',
+     MT("^TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead$/^another_flag's_refusal$")),
+    ("E4", "M3: the read without the flag made up to twice (an unknown flag twice)", GH,
+     "	if unknownEscapeFlag(err) {\n", "	for i := 0; i < 2 && unknownEscapeFlag(err); i++ {\n",
+     MT("^TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead$/^an_unknown_flag_twice$")),
 ]
 
 FIRST = re.compile(r"^\s*(\S+_test\.go:\d+: .*|.*\bAssertionError\b.*|not ok .*|.*\[build failed\].*|\S+\.go:\d+:\d+: .*)$", re.M)

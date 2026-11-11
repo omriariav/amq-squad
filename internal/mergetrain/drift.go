@@ -238,11 +238,15 @@ func DriftNoted(ctx context.Context, l ReleaseLister, verify GateVerifier, root,
 
 // clearStoreAlerts removes the gate_store_unreadable alerts on disk whose
 // path this run read, and returns them as they were written (brief
-// 320-train-escape-legacy, L4). The condition is positive (the plan
-// reviewer's bound): an alert goes only when this run loaded the record it
-// names, skipped that record as legacy, or listed the gates directory it
-// names. One whose path this run did not reach (the record absent, its
-// session directory missing, the sessions' parent unlistable) stays where it
+// 320-train-escape-legacy, L4). The condition is positive. The plan
+// reviewer's bound names two conditions: this run LOADED the record the
+// alert names, or skipped it as legacy. The third, that this run listed the
+// gates directory the alert names (a directory that exists when followed),
+// is this PR's addition, ruled in by the reviewer as L4's third condition:
+// "An alert raised for a listing failure must be clearable by a run that
+// lists the directory, and no hand may edit it." One whose path this run did
+// not reach (the record absent, its session directory missing, the sessions'
+// parent unlistable, a gates path that is a dangling symlink) stays where it
 // is, and a path this run flagged again (read.bad) is never among the
 // reached.
 func clearStoreAlerts(dir string, read gateRead) (resolved []ResolvedAlert) {
@@ -325,7 +329,14 @@ func sessionTargets(root string, verify GateVerifier) gateRead {
 			bad = append(bad, unreadableStore{path: store.Dir("gates"), err: err})
 			continue
 		}
-		reached[store.Dir("gates")] = "the gate store can be listed again"
+		// the directory's key is positive too (the plan reviewer on #953):
+		// the gates path, followed, is a directory that exists, and its
+		// listing returned no error. A dangling symlink lists as nothing
+		// (gatestore's IDs answers nil on ErrNotExist), so it raises nothing
+		// and clears nothing, as no gates directory does
+		if fi, err := os.Stat(store.Dir("gates")); err == nil && fi.IsDir() {
+			reached[store.Dir("gates")] = "the gate store can be listed again"
+		}
 		own := e.Name() == ownName
 		for _, id := range ids {
 			rec, err := store.Load(id)

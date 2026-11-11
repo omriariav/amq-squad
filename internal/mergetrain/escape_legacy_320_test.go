@@ -197,6 +197,10 @@ func TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead(t *testing.T) {
 		{name: "gh's own refusal of the bytes", first: ghEscapeRefusal, reads: 1, stderr: ghEscapeRefusal},
 		{name: "an unknown flag, then HTTP 502", first: ghUnknownFlag, second: "gh: Bad Gateway (HTTP 502)", reads: 2, stderr: "gh: Bad Gateway (HTTP 502)"},
 		{name: "an unknown flag, then a diff too large", first: ghUnknownFlag, second: "gh: Sorry, the diff exceeded the maximum number of lines (HTTP 406)", reads: 2, incomplete: true},
+		// the #953 fix round: the second read is the last, and only this
+		// flag's refusal is answered by one
+		{name: "an unknown flag twice", first: ghUnknownFlag, second: ghUnknownFlag, reads: 2, stderr: ghUnknownFlag},
+		{name: "another flag's refusal", first: "unknown flag: --other", reads: 1, stderr: "unknown flag: --other"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -520,6 +524,20 @@ func TestDriftClearsAStoreAlertOnlyForAPathThisRunRead(t *testing.T) {
 		}},
 		{name: "a gates directory this run did not list", plant: func(t *testing.T, base, release string) string {
 			return gates(release) // the release session holds no gate store
+		}},
+		// the #953 fix round: the path is there (a link), the directory is
+		// not, and a listing of nothing is not a listing of the directory
+		{name: "a gates path that is a dangling symlink", plant: func(t *testing.T, base, release string) string {
+			if err := os.MkdirAll(filepath.Dir(gates(release)), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(release, "gone"), gates(release)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(gates(release)); err != nil {
+				t.Fatal(err)
+			}
+			return gates(release)
 		}},
 		{name: "an alert this run raises again", raised: 1, again: true, plant: func(t *testing.T, base, release string) string {
 			path := filepath.Join(gates(release), "rel-torn.json")
