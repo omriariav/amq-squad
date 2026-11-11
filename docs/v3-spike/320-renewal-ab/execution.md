@@ -324,6 +324,8 @@ second; in `internal/task/task.go`, the tag
 `json:"manual_renewals,omitempty"` became `json:"manual_renewals"` for the
 third. This section first carried `:231`, `:231` and `:227`, where the two
 assertions sat on #952's merge (`347ccf4e`); #954 moved them down ten lines.
+The three runs' output is kept in the lead's gate files and is not in this
+folder.
 
 The restored row also proves the rewritten bytes contain
 `"activity_renewals": 1` and `"last_renewal": "activity"`, omit the
