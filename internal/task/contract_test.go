@@ -2,8 +2,10 @@ package task
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"reflect"
 	"sort"
@@ -44,6 +46,16 @@ func parseNonTestPackage(t *testing.T) (*token.FileSet, []parsedSource) {
 	return fset, files
 }
 
+func unparen(expr ast.Expr) ast.Expr {
+	for {
+		paren, ok := expr.(*ast.ParenExpr)
+		if !ok {
+			return expr
+		}
+		expr = paren.X
+	}
+}
+
 func TestEveryStateWriteIsDeclared(t *testing.T) {
 	fset, files := parseNonTestPackage(t)
 	var writes []stateWrite
@@ -53,36 +65,19 @@ func TestEveryStateWriteIsDeclared(t *testing.T) {
 			if !ok || fn.Body == nil {
 				continue
 			}
-			ast.Inspect(fn.Body, func(node ast.Node) bool {
-				switch node := node.(type) {
-				case *ast.UnaryExpr:
-					selector, ok := node.X.(*ast.SelectorExpr)
-					if node.Op == token.AND && ok && selector.Sel.Name == "State" {
-						pos := fset.Position(node.Pos())
-						t.Errorf("%s:%d: the address of a state field is taken; the write that follows is not declared", pos.Filename, pos.Line)
-					}
-				case *ast.AssignStmt:
-					for i, lhs := range node.Lhs {
-						sel, ok := lhs.(*ast.SelectorExpr)
-						if !ok || sel.Sel.Name != "State" {
-							continue
-						}
-						if i >= len(node.Rhs) {
-							pos := fset.Position(lhs.Pos())
-							t.Errorf("%s:%d: a state written from an expression is not declared", pos.Filename, pos.Line)
-							continue
-						}
-						writes = appendStateWrite(t, fset, writes, fn.Name.Name, node.Rhs[i])
-					}
-				case *ast.KeyValueExpr:
-					key, ok := node.Key.(*ast.Ident)
-					if ok && key.Name == "State" {
-						writes = appendStateWrite(t, fset, writes, fn.Name.Name, node.Value)
-					}
-				}
-				return true
-			})
+			inspectStateWrites(t, fset, fn.Body, fn.Name.Name, false, &writes)
 		}
+		ast.Inspect(source.file, func(node ast.Node) bool {
+			if fn, ok := node.(*ast.FuncDecl); ok {
+				if fn.Recv != nil {
+					inspectStateWrites(t, fset, fn.Recv, "", true, &writes)
+				}
+				inspectStateWrites(t, fset, fn.Type, "", true, &writes)
+				return false
+			}
+			inspectStateWrite(t, fset, node, "", true, &writes)
+			return true
+		})
 	}
 	if len(writes) == 0 {
 		t.Fatal("state-write scan found no sites")
@@ -110,33 +105,140 @@ func TestEveryStateWriteIsDeclared(t *testing.T) {
 	}
 }
 
+func inspectStateWrites(t *testing.T, fset *token.FileSet, root ast.Node, writer string, outside bool, writes *[]stateWrite) {
+	t.Helper()
+	ast.Inspect(root, func(node ast.Node) bool {
+		inspectStateWrite(t, fset, node, writer, outside, writes)
+		return true
+	})
+}
+
+func inspectStateWrite(t *testing.T, fset *token.FileSet, node ast.Node, writer string, outside bool, writes *[]stateWrite) {
+	t.Helper()
+	report := func(expr ast.Expr) {
+		pos := fset.Position(expr.Pos())
+		if outside {
+			t.Errorf("%s:%d: a state written outside a declared function is not declared", pos.Filename, pos.Line)
+			return
+		}
+		t.Errorf("%s:%d: a state written from an expression is not declared", pos.Filename, pos.Line)
+	}
+	switch node := node.(type) {
+	case *ast.UnaryExpr:
+		selector, ok := unparen(node.X).(*ast.SelectorExpr)
+		if node.Op == token.AND && ok && selector.Sel.Name == "State" {
+			if outside {
+				report(node.X)
+				return
+			}
+			pos := fset.Position(node.Pos())
+			t.Errorf("%s:%d: the address of a state field is taken; the write that follows is not declared", pos.Filename, pos.Line)
+		}
+	case *ast.AssignStmt:
+		for i, lhs := range node.Lhs {
+			sel, ok := unparen(lhs).(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "State" {
+				continue
+			}
+			if outside || (node.Tok != token.ASSIGN && node.Tok != token.DEFINE) || i >= len(node.Rhs) {
+				report(lhs)
+				continue
+			}
+			*writes = appendStateWrite(t, fset, *writes, writer, node.Rhs[i])
+		}
+	case *ast.RangeStmt:
+		if node.Tok != token.ASSIGN {
+			return
+		}
+		for _, target := range []ast.Expr{node.Key, node.Value} {
+			if target == nil {
+				continue
+			}
+			sel, ok := unparen(target).(*ast.SelectorExpr)
+			if ok && sel.Sel.Name == "State" {
+				report(target)
+			}
+		}
+	case *ast.KeyValueExpr:
+		key, ok := node.Key.(*ast.Ident)
+		if !ok || key.Name != "State" {
+			return
+		}
+		if outside {
+			report(key)
+			return
+		}
+		*writes = appendStateWrite(t, fset, *writes, writer, node.Value)
+	}
+}
+
 type parsedFunction struct {
-	key       string
-	name      string
-	receiver  string
-	recvIdent string
-	pointer   bool
-	body      *ast.BlockStmt
-	edges     map[string]bool
+	key        string
+	name       string
+	receiver   string
+	recvObject types.Object
+	pointer    bool
+	pos        token.Pos
+	body       *ast.BlockStmt
+	edges      map[string]bool
 }
 
 func TestEveryStoreMethodIsTiedToItsMoves(t *testing.T) {
-	_, files := parseNonTestPackage(t)
+	fset, files := parseNonTestPackage(t)
+	astFiles := make([]*ast.File, len(files))
+	for i := range files {
+		astFiles[i] = files[i].file
+	}
+	info := &types.Info{
+		Defs:       map[*ast.Ident]types.Object{},
+		Uses:       map[*ast.Ident]types.Object{},
+		Selections: map[*ast.SelectorExpr]*types.Selection{},
+		Types:      map[ast.Expr]types.TypeAndValue{},
+	}
+	config := &types.Config{Importer: importer.ForCompiler(fset, "source", nil)}
+	pkg, err := config.Check("github.com/omriariav/amq-squad/v3/internal/task", fset, astFiles, info)
+	if err != nil {
+		t.Fatal(err)
+	}
 	nodes := map[string]*parsedFunction{}
+	functionKeys := map[*types.Func]string{}
 	packageFuncs := map[string]string{}
 	storeMethods := map[string]string{}
 	for _, source := range files {
 		for _, decl := range source.file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
+			if !ok {
 				continue
 			}
-			receiver, recvIdent, pointer := receiver(fn)
+			fnObject, ok := info.Defs[fn.Name].(*types.Func)
+			if !ok {
+				t.Fatalf("%s does not resolve to a function", fn.Name.Name)
+			}
+			if (fn.Recv == nil && fn.Name.Name == "init") || fn.Name.Name == "_" {
+				pos := fset.Position(fn.Pos())
+				t.Errorf("%s:%d: %s is not a declared root", pos.Filename, pos.Line, fn.Name.Name)
+				continue
+			}
+			receiver, pointer, namedReceiver := functionReceiver(fnObject)
+			if !namedReceiver {
+				pos := fset.Position(fn.Pos())
+				t.Errorf("%s:%d: %s has a receiver that is not a named type", pos.Filename, pos.Line, fn.Name.Name)
+				continue
+			}
 			key := "func:" + fn.Name.Name
 			if receiver != "" {
 				key = "method:" + receiver + ":" + fn.Name.Name
 			}
-			nodes[key] = &parsedFunction{key: key, name: fn.Name.Name, receiver: receiver, recvIdent: recvIdent, pointer: pointer, body: fn.Body, edges: map[string]bool{}}
+			if fn.Body == nil {
+				pos := fset.Position(fn.Pos())
+				t.Errorf("%s:%d: %s is declared without a body", pos.Filename, pos.Line, fn.Name.Name)
+			}
+			var recvObject types.Object
+			if fn.Recv != nil && len(fn.Recv.List) > 0 && len(fn.Recv.List[0].Names) > 0 {
+				recvObject = info.Defs[fn.Recv.List[0].Names[0]]
+			}
+			nodes[key] = &parsedFunction{key: key, name: fn.Name.Name, receiver: receiver, recvObject: recvObject, pointer: pointer, pos: fn.Pos(), body: fn.Body, edges: map[string]bool{}}
+			functionKeys[fnObject] = key
 			if receiver == "" {
 				packageFuncs[fn.Name.Name] = key
 			} else if receiver == "Store" {
@@ -144,31 +246,110 @@ func TestEveryStoreMethodIsTiedToItsMoves(t *testing.T) {
 			}
 		}
 	}
-	for _, node := range nodes {
-		ast.Inspect(node.body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
+	for _, source := range files {
+		ast.Inspect(source.file, func(n ast.Node) bool {
+			literal, ok := n.(*ast.CompositeLit)
+			if !ok || len(literal.Elts) == 0 {
+				return true
+			}
+			if _, keyed := literal.Elts[0].(*ast.KeyValueExpr); keyed {
+				return true
+			}
+			pos := fset.Position(literal.Pos())
+			typeAndValue, recorded := info.Types[literal]
+			if !recorded || typeAndValue.Type == nil {
+				t.Errorf("%s:%d: an unkeyed literal has no recorded type", pos.Filename, pos.Line)
+				return true
+			}
+			typ := types.Unalias(typeAndValue.Type)
+			if pointer, ok := typ.Underlying().(*types.Pointer); ok {
+				typ = types.Unalias(pointer.Elem())
+			}
+			if _, ok := typ.(*types.TypeParam); ok {
+				t.Errorf("%s:%d: an unkeyed literal of a type parameter is not declared", pos.Filename, pos.Line)
+				return true
+			}
+			structure, ok := typ.Underlying().(*types.Struct)
 			if !ok {
 				return true
 			}
-			switch fun := call.Fun.(type) {
-			case *ast.Ident:
-				if key := packageFuncs[fun.Name]; key != "" {
-					node.edges[key] = true
-				}
-			case *ast.SelectorExpr:
-				recv, ok := fun.X.(*ast.Ident)
-				if node.receiver == "Store" && ok && recv.Name == node.recvIdent {
-					if key := storeMethods[fun.Sel.Name]; key != "" {
-						node.edges[key] = true
-					}
+			for i := 0; i < structure.NumFields(); i++ {
+				if structure.Field(i).Name() == "State" {
+					t.Errorf("%s:%d: an unkeyed literal of a struct with a State field is not declared", pos.Filename, pos.Line)
+					break
 				}
 			}
 			return true
 		})
 	}
+	selectors := map[*ast.Ident]*ast.SelectorExpr{}
+	for _, source := range files {
+		ast.Inspect(source.file, func(n ast.Node) bool {
+			if selector, ok := n.(*ast.SelectorExpr); ok {
+				selectors[selector.Sel] = selector
+			}
+			return true
+		})
+	}
+	insideFunction := map[*ast.Ident]bool{}
+	for _, node := range nodes {
+		if node.body == nil {
+			continue
+		}
+		ast.Inspect(node.body, func(n ast.Node) bool {
+			ident, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			insideFunction[ident] = true
+			used, ok := info.Uses[ident].(*types.Func)
+			if !ok || used.Pkg() != pkg {
+				return true
+			}
+			used = used.Origin()
+			key := functionKeys[used]
+			if key == "" {
+				pos := fset.Position(ident.Pos())
+				t.Errorf("%s:%d: %s uses %s, which has no parsed declaration", pos.Filename, pos.Line, node.name, used.Name())
+				return true
+			}
+			if receiver, _, _ := functionReceiver(used); receiver != "Store" {
+				node.edges[key] = true
+				return true
+			}
+			selector := selectors[ident]
+			var operand *ast.Ident
+			if selector != nil {
+				operand, _ = unparen(selector.X).(*ast.Ident)
+			}
+			if node.receiver == "Store" && operand != nil && node.recvObject != nil && info.Uses[operand] == node.recvObject {
+				node.edges[key] = true
+				return true
+			}
+			pos := fset.Position(ident.Pos())
+			t.Errorf("%s:%d: %s uses Store.%s on a value that is not the enclosing method's receiver", pos.Filename, pos.Line, node.name, used.Name())
+			return true
+		})
+	}
+	for ident, object := range info.Uses {
+		used, ok := object.(*types.Func)
+		if !ok || used.Pkg() != pkg || insideFunction[ident] {
+			continue
+		}
+		used = used.Origin()
+		pos := fset.Position(ident.Pos())
+		t.Errorf("%s:%d: %s is used outside a function body", pos.Filename, pos.Line, used.Name())
+	}
 	writerNames := map[string]bool{}
 	for _, move := range Moves() {
 		writerNames[move.Writer] = true
+	}
+	for _, node := range nodes {
+		if node.receiver == "" || node.receiver == "Store" || !writerNames[node.name] {
+			continue
+		}
+		pos := fset.Position(node.pos)
+		t.Errorf("%s:%d: method of %s is named like the writer %s", pos.Filename, pos.Line, node.receiver, node.name)
 	}
 	writers := map[string]string{}
 	for name := range writerNames {
@@ -192,8 +373,8 @@ func TestEveryStoreMethodIsTiedToItsMoves(t *testing.T) {
 	}
 	for name, key := range storeMethods {
 		node := nodes[key]
-		if node.pointer && ast.IsExported(name) {
-			t.Errorf("exported Store method %s has a pointer receiver", name)
+		if node.pointer {
+			t.Errorf("Store method %s has a pointer receiver", name)
 		}
 		if ast.IsExported(name) && !reflected[name] {
 			t.Errorf("exported parsed Store method %s is absent from Store's value method set", name)
@@ -240,21 +421,21 @@ func TestEveryStoreMethodIsTiedToItsMoves(t *testing.T) {
 	}
 }
 
-func receiver(fn *ast.FuncDecl) (typ, ident string, pointer bool) {
-	if fn.Recv == nil || len(fn.Recv.List) == 0 {
-		return "", "", false
+func functionReceiver(fn *types.Func) (name string, pointer bool, named bool) {
+	signature, ok := fn.Type().(*types.Signature)
+	if !ok || signature.Recv() == nil {
+		return "", false, true
 	}
-	expr := fn.Recv.List[0].Type
-	if star, ok := expr.(*ast.StarExpr); ok {
-		pointer, expr = true, star.X
+	typ := types.Unalias(signature.Recv().Type())
+	if indirect, ok := typ.(*types.Pointer); ok {
+		pointer = true
+		typ = types.Unalias(indirect.Elem())
 	}
-	if name, ok := expr.(*ast.Ident); ok {
-		typ = name.Name
+	declared, ok := typ.(*types.Named)
+	if !ok {
+		return "", pointer, false
 	}
-	if len(fn.Recv.List[0].Names) > 0 {
-		ident = fn.Recv.List[0].Names[0].Name
-	}
-	return typ, ident, pointer
+	return declared.Obj().Name(), pointer, true
 }
 
 func reachableWriters(start string, nodes map[string]*parsedFunction, writers map[string]string) []string {
