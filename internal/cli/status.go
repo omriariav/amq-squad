@@ -225,11 +225,6 @@ type statusRecord struct {
 	ClassificationError string        `json:"classification_error,omitempty"`
 	Signals             statusSignals `json:"signals"`
 	liveness            agentLiveness
-	// LaunchapiObservation is gh#766's structured launchapi liveness detail:
-	// the session Inspect's ParticipantObservationV1 matched to this member's
-	// handle. Corroborates/explains Detail only -- never changes
-	// status/record_state.
-	LaunchapiObservation *launchapiObservationJSON `json:"launchapi_observation,omitempty"`
 	// Activity is an additive, honest busy/progress signal. Heartbeat-file
 	// entries come from an agent-written activity.json; task-store entries only
 	// seed current-task ownership and must not be treated as liveness.
@@ -386,12 +381,10 @@ func classifyMemberStatusFromEntries(t team.Team, profile string, m team.Member,
 	}
 	root := rec.Root
 
-	// Consume the single shared liveness classifier: one disk read + probe checks
-	// returning the verdict, signals, detail and status state. The rollup wrapper
-	// layers gh#737's session-level launchapi Inspect floor on top.
-	live := classifyAgentLivenessForRollup(t.Project, rec.AgentDir, root, profile, rec.Handle, m.Role, m.Binary, workstream, rec.CWD, probe)
+	// Consume the single shared disk classifier: one disk read plus probe checks
+	// returns the verdict, signals, detail and status state.
+	live := classifyAgentLivenessFromDisk(rec.AgentDir, root, profile, rec.Handle, m.Binary, probe)
 	rec.liveness = live
-	rec.LaunchapiObservation = live.LaunchapiObservation
 	rec.ClassificationError = live.SourceError
 	rec.Signals = live.Signals
 	rec.Status = live.Status
