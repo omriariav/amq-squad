@@ -564,6 +564,17 @@ as #960 corrected it.
   orchestrator skill) names the publish as the lead's own step; the release
   agent prepares and checks, never publishes; a refused step goes back to
   the owner, never to another session.
+- **A hand cut's `release prepare` still posts the gate questions** (seen
+  at the rc.2 cut, 2026-11-11; the plan reviewer's item): the owner chose a
+  cut by hand with the two gates not answered, and the prepare posted both
+  questions to his Buzz channel with a 30-minute window and no attach to
+  accept a reply
+  (`docs/v3-spike/5-release-evidence/release-v3.2.0-rc.2/gate-questions.txt`).
+  Either a prepare for a hand cut suppresses the questions, or the notes'
+  owner steps say the questions arrive and need no answer.
+- **The notes' prerelease step assumes the flow:** the owner steps say to mark
+  the prerelease after the publish because the flow never does; a hand cut's
+  `gh release create` takes `--prerelease --latest=false` itself. Say both.
 - Briefs that carry another PR's commits conflict after the merge train
   rebases and lands the carried PR, as #907 did after #901's `12d1a8ba`
   landed as `27fa44f0`. Make briefs depend on that PR instead of carrying its
