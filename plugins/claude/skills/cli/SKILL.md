@@ -104,8 +104,9 @@ doorbell says whether to renew by hand: it carries that sentence until this
 seat's hooks are proven, which means trusted at its launch or one tool result
 ingested from it since. While it does, renew after each tool batch, at least
 every five minutes; the owner ends it by trusting the amq-squad entries in
-`/hooks`. Every doorbell also says that a command running longer than the
-lease loses it: run long work in the background and poll it.
+`/hooks`, and the sentence goes at this seat's next ingested tool result or
+its next launch. Every doorbell also says that a command running longer than
+the lease loses it: run long work in the background and poll it.
 
 ```sh
 amq-squad task list --project P --session S --json

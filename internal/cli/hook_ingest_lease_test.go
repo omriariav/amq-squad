@@ -24,6 +24,16 @@ func ingestToolResult(t *testing.T, handle string) bool {
 	return strings.Contains(out, `"lease_renewed":true`)
 }
 
+func ingestStop(t *testing.T, handle string) string {
+	t.Helper()
+	withHookStdin(t, []byte(`{"hook_event_name":"Stop"}`))
+	out, _, err := captureOutput(t, func() error { return Run([]string{"evidence", "ingest", "--me", handle, "--json"}, "test") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 // Review 1 ruling 3: evidence ingest renews the seat's claimed lease on a
 // tool result, at most once per renewal interval; never an unclaimed lease.
 func TestEvidenceIngestRenewsTheClaimedLease(t *testing.T) {
@@ -337,4 +347,56 @@ func TestEvidenceIngestRenewalTiming(t *testing.T) {
 	writing := measure(1)
 	reading := measure(20)
 	t.Logf("ingest with a renewal write: %v; inside the interval: p50 %v, p95 %v", writing[0], reading[9], reading[18])
+}
+
+func TestManualRenewalOmitsZeroActivityRenewals(t *testing.T) {
+	f := newHookFixture(t)
+	store, err := taskstore.Open(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Add(taskstore.AddInput{Title: "manual only", Class: "script"}, f.now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	previousTaskNow := taskNow
+	taskNow = func() time.Time { return f.now }
+	t.Cleanup(func() { taskNow = previousTaskNow })
+	if _, err := taskCLI(t, "renew", "--me", "cto"); err != nil {
+		t.Fatalf("manual task renew: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(store.Dir, "t1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"manual_renewals": 1`) || strings.Contains(string(raw), `"activity_renewals"`) {
+		t.Fatalf("manual-only task = %s", raw)
+	}
+}
+
+func TestEvidenceIngestStopRenewsTheClaimedLease(t *testing.T) {
+	f := newHookFixture(t)
+	store, err := taskstore.Open(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Add(taskstore.AddInput{Title: "stop", Class: "script"}, f.now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t1", "cto", nil, 10*time.Minute, f.now.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	out := ingestStop(t, "cto")
+	if !strings.Contains(out, `"lease_renewed":true`) {
+		t.Fatal("Stop ingest did not report renewal")
+	}
+	got, err := store.Get("t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Lease.ActivityRenewals != 1 || got.Lease.LastRenewal != "activity" {
+		t.Fatalf("lease after Stop ingest = %+v", got.Lease)
+	}
 }

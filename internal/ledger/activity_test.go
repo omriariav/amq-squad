@@ -31,6 +31,10 @@ func TestHasActivitySinceRequiresACompleteOwnToolResultAtOrAfterTheBoundary(t *t
 		{"T9 another handle", []map[string]any{{"at": since.Format(time.RFC3339Nano), "handle": "other", "event": "PostToolUse", "tool": "Bash", "outcome": "ok"}}, "", false},
 		{"T10 unparsable rows", []map[string]any{{"at": "not-a-time", "handle": "dev", "event": "PostToolUse", "tool": "Bash", "outcome": "ok"}}, "not json\n", false},
 		{"T11 missing ledger", nil, "", false},
+		{"T12 tool result then Stop", []map[string]any{
+			{"at": since.Format(time.RFC3339Nano), "handle": "dev", "event": "PostToolUse", "tool": "Bash", "outcome": "ok"},
+			{"at": since.Add(time.Second).Format(time.RFC3339Nano), "handle": "dev", "event": "Stop"},
+		}, "", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
