@@ -1,5 +1,6 @@
 {
  "about": "The lead's pins for #950 round 2 (2026-11-11). width = visibleWidth of the carry fe6fdc2c's pi/extensions/lib/width.ts; expected = truncateToWidth(text, max_width) under the brief's rule (the lead's reference, probe only); carry and head are fe6fdc2c's and fcd95493's outputs, for the note. Strings are JSON-escaped; U+001B is \\u001b.",
+ "about_follow_up": "W22, W23 and T15 to T18 are the lead's pins for the #955 follow-up (2026-11-11), computed the same way. W22, W23 and T15 to T17 are rows no round 2 pin had (the lead's mutations MR1, K1 and K3 passed the suite without them). T18 is one of the five cases of the lead's probe 8 where a PM or DCS cut run keeps an OSC or APC the carry dropped.",
  "widths": [
   {
    "name": "W01 double ESC then SGR",
@@ -147,6 +148,20 @@
    "width": 12,
    "head_fcd95493": 12,
    "pi_tui_1_3_0": 6
+  },
+  {
+   "name": "W22 unterminated OSC then SGR: the SGR is inside the run",
+   "text": "\u001b]abc\u001b[0mdef",
+   "width": 14,
+   "head_fcd95493": 14,
+   "pi_tui_1_3_0": 7
+  },
+  {
+   "name": "W23 unterminated APC then SGR: the SGR is inside the run",
+   "text": "ab\u001b_x\u001b[0mdefgh",
+   "width": 16,
+   "head_fcd95493": 16,
+   "pi_tui_1_3_0": 9
   }
  ],
  "truncations": [
@@ -261,6 +276,38 @@
    "expected": "abc\u001b[0m...\u001b[0m",
    "carry_fe6fdc2c": "abc\u001b[0m...\u001b[0m",
    "head_fcd95493": "abc\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T15 ESC chain then a CSI pi-tui skips and the cut parser calls incomplete",
+   "text": "ab\u001b\u001b[1émcdefgh",
+   "max_width": 8,
+   "expected": "ab\u001b\u001b[1émc\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "ab\u001b\u001b[1émc\u001b[0m...\u001b[0m",
+   "head_fcd95493": "ab\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T16 an SGR right before the cut is dropped",
+   "text": "ab\u001b[31mcdéf",
+   "max_width": 5,
+   "expected": "ab\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "ab\u001b[0m...\u001b[0m",
+   "head_fcd95493": "ab\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T17 a CSI pi-tui skips and the cut parser calls incomplete is one zero-width unit",
+   "text": "ab\u001b[1émcdefgh",
+   "max_width": 6,
+   "expected": "ab\u001b[1émc\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "ab\u001b[1émc\u001b[0m...\u001b[0m",
+   "head_fcd95493": "ab\u001b[1émc\u001b[0m...\u001b[0m"
+  },
+  {
+   "name": "T18 a PM run ended by a later OSC's BEL is one cut unit and keeps that OSC",
+   "text": "\u001b^;]m\u001b]\u0007\t汉q8",
+   "max_width": 9,
+   "expected": "\u001b^;]m\u001b]\u0007\u001b[0m...\u001b[0m",
+   "carry_fe6fdc2c": "\u001b^;]m\u001b[0m...\u001b[0m",
+   "head_fcd95493": "\u001b[0m...\u001b[0m"
   }
  ]
 }

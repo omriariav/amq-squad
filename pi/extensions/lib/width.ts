@@ -139,6 +139,10 @@ function measureUnitAt(text: string, pos: number): WidthUnit {
 
 function cutRunLength(text: string, pos: number): number {
 	if (text.charCodeAt(pos) !== 0x1b) return 0;
+	// The last ESC decides the run. Each earlier ESC followed by ESC is a
+	// one-code-unit measure unit of width 2; allowing a cut between them would
+	// leave a lone ESC before the sequence begun by the next one. Treat the
+	// chain and the run begun by its last ESC as one cut unit.
 	let last = pos;
 	while (text.charCodeAt(last + 1) === 0x1b) last++;
 	if (last > pos) {
@@ -155,6 +159,9 @@ function cutUnitAt(text: string, pos: number): WidthUnit {
 	if (!run) return measured;
 	let end = pos + run;
 	let width = 0;
+	// A measure unit may begin inside this run and end after it, as in T05.
+	// Extend through that unit so cut units partition the string and their
+	// widths still add up to visibleWidth.
 	for (let i = pos; i < end;) {
 		const unit = measureUnitAt(text, i);
 		width += unit.width;
@@ -218,7 +225,7 @@ function clipFragment(text: string, maxWidth: number): { text: string; width: nu
 	let pendingAnsi = "";
 	let width = 0;
 	for (let i = 0; i < text.length;) {
-		const unit = cutUnitAt(text, i);
+		const unit = measureUnitAt(text, i);
 		i += unit.text.length;
 		if (unit.ansi) {
 			pendingAnsi += unit.text;

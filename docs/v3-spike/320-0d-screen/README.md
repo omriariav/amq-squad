@@ -83,7 +83,8 @@ The run exited 1 at `"汉字かなカナ": ours 6, pi-tui 12`.
 Reverted expression 3: the CSI skip accepted every final byte U+0040-U+007E
 instead of only pi-tui's `m`, `G`, `K`, `H`, and `J`. The run exited 1 at
 `"\\u001b[?25lprivate": ours 7, pi-tui 12`. Unknown finals remain visible text
-for both measures.
+for both measures. The quotes for expressions 2 and 3 are fragments of their
+assertion lines; the complete lines are under `## 0d9 controlled reverts`.
 
 The restored property row exited 0.
 
@@ -99,8 +100,10 @@ cd pi
 HOME=/private/tmp/amq-squad-t104-home node --test --test-reporter=spec --test-name-pattern='ESC-led CSI' test/screen.test.ts
 ```
 
-Reverted expression: the call to `escapeRunLength` in `unitAt` was replaced by
-zero, restoring code-point cuts. The run exited 1 first at:
+Reverted expression, on the head this run was made on: the call to
+`escapeRunLength` in `unitAt` was replaced by zero, restoring code-point cuts.
+Round 2 replaced `unitAt` with `measureUnitAt` and `cutUnitAt`; its reverts
+are under `### Measure and truncation model`. The run exited 1 first at:
 
 ```text
 AssertionError: "A\u001b\u001b[0m...\u001b[0m" cut "\u001b[5 q" at 6
@@ -115,10 +118,11 @@ including whitespace or comments before `(`, must have exactly one quoted
 relative `./` or `../` argument ending in `.ts`. Static relative imports still
 name their `.ts` file. Type-only imports, type-position `import`, `typeof
 import`, and a relative `await import("./lib/width.ts")` pass. F5, F11, and
-f13 through f17 pin those decisions: a variable `require`, bare static import,
-built-in `require`, relative `.js` import, and non-erasable enum all fail. The
-scan refuses call-like text inside strings, regular-expression literals,
-template literals, comments, and object `.import` properties too.
+f13 through f17 pin those decisions: a variable `require`, bare dynamic
+import, built-in `require`, relative `.js` import, and non-erasable enum all
+fail. The scan also reads call-like text inside strings, regular-expression
+literals, template literals, comments, and object `.import` properties, and
+passes it only with one quoted relative argument ending in `.ts`.
 
 Deliberate over-refusals include a package scope in a comment and an object
 method named `.import`. Named bypass limits are an escaped package specifier,
@@ -376,10 +380,19 @@ exited 1; the restored run exited 0.
 The fixed-overflow message has its own narrow-width row. At width 12 the
 message itself is longer than the pane and must pass through the same helper.
 Removing the `fitWidth` call returned the full `… 35 more lines; enlarge the
-pane`; the first failing line was:
+pane`. The reverted command was:
+
+```sh
+cd pi
+node --test --test-reporter=spec --test-name-pattern='fixed-overflow message is width-fitted' test/screen.test.ts
+```
+
+Reverted expression: `return fitWidth([` was changed to `return [`. The first
+failing assertion and its reported line were:
 
 ```text
 ✖ the fixed-overflow message is width-fitted even when the pane is narrower than the message
+AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
 ```
 
 ## The measured scan starts at the pane-sized task cap
@@ -650,8 +663,9 @@ cd pi
 HOME=/tmp/amq-t149/home node --test --test-reporter=spec --test-name-pattern='ESC-led CSI' test/screen.test.ts
 ```
 
-Reverted expression: the `escapeRunLength` result in `unitAt` was replaced by
-zero. It exited 1 first at:
+Reverted expression, on the head this run was made on (round 2 replaced
+`unitAt`): the `escapeRunLength` result in `unitAt` was replaced by zero. It
+exited 1 first at:
 
 ```text
 AssertionError [ERR_ASSERTION]: "A\u001b\u001b[0m...\u001b[0m" cut "\u001b[5 q" at 6
@@ -679,7 +693,9 @@ It was copied byte for byte to `pi/test/width-pins.json`; the final `cmp`
 exited 0. The pinned row requires exactly 21 width cases and 14 truncation
 cases. Every width must equal the carry and be an upper bound for pi-tui
 1.3.0. Every truncation must equal the pin and remain within its requested
-width under both the local measure and pi-tui.
+width under both the local measure and pi-tui. The follow-up replaced this
+pins file; its size, hash and counts are under
+`## Follow-up: words and clipFragment`.
 
 ### Measure and truncation model
 
@@ -737,21 +753,36 @@ Actual message: "Rendered line 5 exceeds terminal width (51 > 50)."
 T08 is deliberately stricter than both historical implementations. Its
 expected output is `"\u001b[0m...\u001b[0m"`; the carry produced
 `"\u001bP\u001b[0m...\u001b[0m"`, and the head produced
-`"\u001bP\u001b[31\u0007\u001b[0m...\u001b[0m"`. The state therefore never
-keeps more than the carry, but may keep less than the head.
+`"\u001bP\u001b[31\u0007\u001b[0m...\u001b[0m"`. On this input the state
+keeps less than the carry and less than the head. That is not a bound on every
+input: in the lead's probe below the state never kept more visible width than
+the carry, and it can keep zero-width text the carry dropped (T03 keeps the
+chain's `ESC[31m`).
 
-The lead's independent probe `probe950/probe4.ts`, recorded at 02:55:55 IST
-on 2026-11-11, checked 300,000 strings with 0 width differences from the
-carry. Across 574,607 truncations it found 0 local or pi-tui budget violations
-and 0 outputs longer than the carry. The lead's `probe950/suite-r2.sh`, run
-from 02:56:23 to 02:57:07, recorded `npm test` exit 0 with 137 passed, 1
-skipped, and 0 failed, and lint exit 0. These lead probe files were evidence
-only and neither landed.
+The lead's independent probe `probe950/probe8.ts`, the lead's run under the
+gate lock from 06:19:25 to 06:19:48 IST on 2026-11-11 on round 2's `width.ts`,
+drew 300,000 strings for each of the seeds 950, 955 and 9550 (236,731, 237,246
+and 237,040 distinct). Every width equalled the carry's. In 2,100,000
+truncation calls per seed no output differed from the lead's reference rule,
+and none exceeded its width under the local measure or pi-tui. 36, 34 and 31
+outputs kept more of the input than the carry did. The lead's
+`probe950/probe9.ts` (06:20 IST, the same generator and seeds) classified
+them: in each the extra text has width 0, and no output that ends in the
+ellipsis kept more visible width than the carry's. This paragraph replaces an
+earlier one that reported `probe950/probe4.ts` with 300,000 strings and 0
+outputs longer than the carry: that probe's generator repeated its state, so
+it drew 1,589 distinct strings, and its counts are withdrawn. The lead's
+`probe950/suite-r2.sh`, run from 02:56:23 to 02:57:07, recorded `npm test`
+exit 0 with 137 passed, 1 skipped, and 0 failed, and lint exit 0. These lead
+probe files were evidence only and none landed.
 
-Seat-provided text reaches the screen through `clean()` in
-`pi/extensions/lib/words.ts`, which replaces U+0000 through U+001F with a
-space. ESC therefore reaches the screen only through the screen's own styled
-strings.
+Task and block text reaches the screen through `clean()` in
+`pi/extensions/lib/words.ts`, which replaces U+0000 through U+001F and U+007F
+through U+009F with a space. Other status text does not pass through it: a
+warning's record, a stop decision's seat, reason and reason code, a train
+alert's detail and a train refusal are shown as status wrote them, with
+whitespace folded. Where that text comes from, and what the screen does with
+control characters in it, is under `## Follow-up: words and clipFragment`.
 
 ### Lint rule 2 fixtures
 
@@ -777,9 +808,11 @@ restored immediately after the expected failure.
 
 `docs/status-contract.md` now matches the code: `waits_for` is empty except
 for a pending `file_lock` wait, where it contains one `{task_id, path}` per
-holder, sorted by `task_id`, and `path` is `task.OverlapDeclaration`.
-The final paragraph is at lines 109 through 112. The measure and cut-unit
-split is at `pi/extensions/lib/width.ts` lines 94 through 164, the exact pin
+holder, sorted by `task_id`, and `path` is one declaration of the first
+overlapping pair (`task.OverlapDeclaration`): the shared one when the two are
+equal, else the literal one, else the pending task's.
+The final paragraph is at lines 109 through 114. The measure and cut-unit
+split is at `pi/extensions/lib/width.ts` lines 94 through 172, the exact pin
 row at `pi/test/screen.test.ts` lines 131 through 148, and the added lint
 fixtures and assertions at `pi/test/lint.test.ts` lines 44 through 71.
 
@@ -880,3 +913,371 @@ commands from the 0d7 gate block all exited 0.
 HOME=/private/tmp/amq-squad-t104-go/home GOCACHE=/private/tmp/amq-squad-t104-go/gocache GOMODCACHE=/private/tmp/amq-squad-t104-go/gomodcache GOPROXY=off go run ./scripts/redact-evidence -check docs/v3-spike/320-0d-screen/ # exit 0
 git diff --check # exit 0
 ```
+
+## Follow-up: words and clipFragment
+
+Line numbers under `pi/` in this section are measured on this change's tree.
+Go line numbers are as of `a855037d`. This section replaces the first
+attempt's section of the same name (task t156, stopped at a gate): its words
+were corrected by the lead and landed here as a lead input, and its code is
+the first attempt's, unchanged.
+
+The copied pin artifact is 9,348 bytes with SHA-256
+`b8434636f1891893e777954903da6238f564b830e74d1d679611572a8a064e1d`.
+It contains 23 width pins and 18 truncation pins. `cmp` against the supplied
+artifact was silent. The appended clip row and control row are byte-for-byte
+copies of their supplied fragments.
+
+### The reverts
+
+Each revert changed one expression, ran its command from `pi`, and was
+restored. Each entry gives the file and line, the line's code before and
+after, the first failing test line (its duration left out) with the test's
+line, and the first assertion line, copied. The thirteen entries K1 through
+R3d were run again by the seat on this tree for this section, with the
+expressions as printed. The clipFragment, g1 and g2 entries, and 6b's record
+in place under ``## `render(width)` keeps every physical line inside pi-tui's
+contract``, stand on the first attempt's runs and on the lead's runs of 2026-11-11 on the same
+tree; they were not run again by the seat.
+
+The commands:
+
+```sh
+cd pi
+node --test --test-reporter=spec test/screen.test.ts   # "screen"
+node --test --test-reporter=spec test/lint.test.ts     # "lint"
+node --test --test-reporter=spec --test-name-pattern='clipped custom ellipsis' test/screen.test.ts   # "clip"
+node --test --test-reporter=spec --test-name-pattern='control characters in status text' test/screen.test.ts   # "control"
+```
+
+clipFragment, `pi/extensions/lib/width.ts:228`, the clip command:
+
+```text
+before: const unit = measureUnitAt(text, i);
+after:  const unit = cutUnitAt(text, i);
+✖ a clipped custom ellipsis is cut on measure units
+test at test/screen.test.ts:511:1
+AssertionError [ERR_ASSERTION]: the OSC 8 open is dropped
+```
+
+K1, `pi/extensions/lib/width.ts:149`, the screen command:
+
+```text
+before: const suffix = ansiLength(text, last) || escapeRunLength(text, last);
+after:  const suffix = escapeRunLength(text, last);
+✖ the pinned carry measure and round 2 truncations stay exact
+test at test/screen.test.ts:131:1
+AssertionError [ERR_ASSERTION]: T15 ESC chain then a CSI pi-tui skips and the cut parser calls incomplete: truncation
+```
+
+K3, `pi/extensions/lib/width.ts:157`, the screen command:
+
+```text
+before: if (measured.ansi || text.charCodeAt(pos) !== 0x1b) return measured;
+after:  if (text.charCodeAt(pos) !== 0x1b) return measured;
+✖ the pinned carry measure and round 2 truncations stay exact
+test at test/screen.test.ts:131:1
+AssertionError [ERR_ASSERTION]: T16 an SGR right before the cut is dropped: truncation
+```
+
+MR1, `pi/extensions/lib/width.ts:117` (the second of the file's two
+occurrences, the one in `measureRunLength`), the screen command:
+
+```text
+before: if (next === "]" || next === "_") {
+after:  if (false) {
+✖ the pinned carry measure and round 2 truncations stay exact
+test at test/screen.test.ts:131:1
+AssertionError [ERR_ASSERTION]: W22 unterminated OSC then SGR: the SGR is inside the run: local width
+```
+
+PM1, `pi/extensions/lib/width.ts:72`, the screen command. The pinned test
+fails too; the run row is the first:
+
+```text
+before: if (next === "]" || next === "_" || next === "P" || next === "X" || next === "^") {
+after:  if (next === "]" || next === "_" || next === "P" || next === "X") {
+✖ truncation keeps every ESC-led run whole or moves the cut before it
+test at test/screen.test.ts:110:1
+AssertionError [ERR_ASSERTION]: "\u001b^\u001b[0m...\u001b[0m" cut "\u001b^pm\u001b\\" at 6
+```
+
+R1a, `pi/extensions/lib/width.ts:130`, the screen command. The clip row
+fails too; the pinned test is the first:
+
+```text
+before: const run = measureRunLength(text, pos);
+after:  const run = escapeRunLength(text, pos);
+✖ the pinned carry measure and round 2 truncations stay exact
+test at test/screen.test.ts:131:1
+AssertionError [ERR_ASSERTION]: W01 double ESC then SGR: local width
+```
+
+R1a2, `pi/extensions/lib/width.ts:171`, the screen command:
+
+```text
+before: return { text: text.slice(pos, end), width, ansi: false };
+after:  return { text: text.slice(pos, end), width: plainWidth(text.slice(pos, end)), ansi: false };
+✖ the pinned carry measure and round 2 truncations stay exact
+test at test/screen.test.ts:131:1
+AssertionError [ERR_ASSERTION]: T02 ESC chain joins the SGR: truncation
+```
+
+R1b, `pi/extensions/lib/width.ts:147`, the screen command:
+
+```text
+before: while (text.charCodeAt(last + 1) === 0x1b) last++;
+after:  (the line removed)
+✖ the pinned carry measure and round 2 truncations stay exact
+test at test/screen.test.ts:131:1
+AssertionError [ERR_ASSERTION]: T02 ESC chain joins the SGR: truncation
+```
+
+R1c, `pi/extensions/lib/width.ts:169`, the screen command:
+
+```text
+before: if (i > end) end = i;
+after:  (the line removed)
+✖ the pinned carry measure and round 2 truncations stay exact
+test at test/screen.test.ts:131:1
+AssertionError [ERR_ASSERTION]: T05 straddle W15: the unit ends after the CSI's final: truncation
+```
+
+R2, `pi/extensions/lib/width.ts:89` (`escapeRunLength`'s last return; the
+same text appears earlier in the file, and those lines stay), the screen
+command:
+
+```text
+before: return text.length - pos;
+after:  return 1;
+✖ the pinned carry measure and round 2 truncations stay exact
+test at test/screen.test.ts:131:1
+AssertionError [ERR_ASSERTION]: T09 G5: incomplete run, cut before the ESC: truncation
+```
+
+The four lint reverts fail the same test, each first on its own fixture. The
+assertion's message goes on for one line per diagnostic; its first line is
+copied.
+
+R3a, `pi/scripts/lint.mjs:52`, the lint command:
+
+```text
+before: const callHead = new RegExp(String.raw`(?<![\p{ID_Continue}$])(?:import|require)${trivia}\(`, "gu");
+after:  const callHead = new RegExp(String.raw`(?<![\p{ID_Continue}$])(?:import)${trivia}\(`, "gu");
+✖ lint permits erased types and relative .ts calls but gives each refused extension one diagnostic
+test at test/lint.test.ts:11:1
+AssertionError [ERR_ASSERTION]: f13-require-variable.ts: extensions/f01-side-effect.ts: erased extension source contains @earendil-works/ (name the package as pi-tui in comments; pi supplies it at run time)
+```
+
+R3b, `pi/scripts/lint.mjs:53`, the lint command:
+
+```text
+before: const relativeOnly = new RegExp(String.raw`^${trivia}(?:"(?:\.\/|\.\.\/)(?:[^"\\\r\n]|\\.)*\.ts"|'(?:\.\/|\.\.\/)(?:[^'\\\r\n]|\\.)*\.ts')${trivia}\)`);
+after:  const relativeOnly = new RegExp(String.raw`^${trivia}(?:"[^"]*"|'[^']*')${trivia}\)`);
+✖ lint permits erased types and relative .ts calls but gives each refused extension one diagnostic
+test at test/lint.test.ts:11:1
+AssertionError [ERR_ASSERTION]: f14-bare-import.ts: extensions/f01-side-effect.ts: erased extension source contains @earendil-works/ (name the package as pi-tui in comments; pi supplies it at run time)
+```
+
+R3c, `pi/scripts/lint.mjs:53`, the lint command:
+
+```text
+before: const relativeOnly = new RegExp(String.raw`^${trivia}(?:"(?:\.\/|\.\.\/)(?:[^"\\\r\n]|\\.)*\.ts"|'(?:\.\/|\.\.\/)(?:[^'\\\r\n]|\\.)*\.ts')${trivia}\)`);
+after:  const relativeOnly = new RegExp(String.raw`^${trivia}(?:"(?:\.\/|\.\.\/)(?:[^"\\\r\n]|\\.)*"|'(?:\.\/|\.\.\/)(?:[^'\\\r\n]|\\.)*')${trivia}\)`);
+✖ lint permits erased types and relative .ts calls but gives each refused extension one diagnostic
+test at test/lint.test.ts:11:1
+AssertionError [ERR_ASSERTION]: f16-relative-js.ts: extensions/f01-side-effect.ts: erased extension source contains @earendil-works/ (name the package as pi-tui in comments; pi supplies it at run time)
+```
+
+R3d, `pi/scripts/lint.mjs:37`, the lint command:
+
+```text
+before: problems.push(`${rel}: not erasable TypeScript: ${err.message.split("\n")[0]}`);
+after:  (the statement removed)
+✖ lint permits erased types and relative .ts calls but gives each refused extension one diagnostic
+test at test/lint.test.ts:11:1
+AssertionError [ERR_ASSERTION]: f17-not-erasable.ts: extensions/f01-side-effect.ts: erased extension source contains @earendil-works/ (name the package as pi-tui in comments; pi supplies it at run time)
+```
+
+g1, `pi/extensions/lib/screen.ts:509`, the control command:
+
+```text
+before: const fitWidth = (lines: string[]): string[] => lines.map((line) => truncateToWidth(line.replace(controlChars, " "), width));
+after:  const fitWidth = (lines: string[]): string[] => lines.map((line) => truncateToWidth(line, width));
+✖ control characters in status text never reach a drawn line
+test at test/screen.test.ts:522:1
+AssertionError [ERR_ASSERTION]: "  seat dev\u001b]0;s\u0007's launch failed; ask the lead to relaunch the roster"
+```
+
+g2, `pi/extensions/lib/screen.ts:500`, the control command:
+
+```text
+before: ui.setWidget(SCREEN_KEY, this.expanded ? [`amq-squad: ${this.error.replace(controlChars, " ") || "reading the team's status"}`, commandsLine("team")] : undefined, { placement: "belowEditor" });
+after:  ui.setWidget(SCREEN_KEY, this.expanded ? [`amq-squad: ${this.error || "reading the team's status"}`, commandsLine("team")] : undefined, { placement: "belowEditor" });
+✖ control characters in status text never reach a drawn line
+test at test/screen.test.ts:522:1
+AssertionError [ERR_ASSERTION]: "amq-squad: status --json failed: exit 1: open /p/\u001b]0;n\u0007: no such file"
+```
+
+### T18
+
+T18 is `"\u001b^;]m\u001b]\u0007\t汉q8"` cut at 9. The ellipsis takes 3, so
+the budget is 6 (`pi/extensions/lib/width.ts:259`). At the first ESC
+`cutUnitAt` (:155) asks `cutRunLength` (:140) for the cut run. No second ESC
+follows, so it returns `escapeRunLength`'s answer (:152): the PM branch
+(:72-74) scans to the first BEL and returns a run of 8 code units, the ESC
+through the BEL. That function measures no width. `cutUnitAt`'s loop
+(:165-170) then adds up the measure units inside the run: the ESC is 2, `^`,
+`;`, `]` and `m` are 1 each, and the nested `ESC ] BEL` is a complete OSC, a
+zero-width unit (`measureUnitAt`, :127-138). The cut unit is 6 wide and fits
+the budget whole, with the nested OSC inside it. The tab is 3 (:9) and does
+not fit, so the cut is there. The carry walked measure units one at a time:
+it kept the same six columns, held the zero-width OSC pending, and dropped it
+when the tab did not fit. So the pin keeps `ESC ^ ; ] m ESC ] BEL` where the
+carry kept `ESC ^ ; ] m`: the same visible width and one zero-width sequence
+more. The other cases the lead's probe classified were not traced here.
+
+### Where status text comes from
+
+Read on `a855037d`; nothing in this subsection was run on a live team.
+
+A git dir's path in a decision's reason. A worktree's `.git` file names its
+git dir on its `gitdir: ` line (`internal/seatcommit/git.go:176-183`). When
+that dir's own `gitdir` file cannot be read or does not point back,
+`worktreePaths` returns `the git dir %s does not belong to the worktree %s`
+with the line's text in it (:186). `ArchiveAttemptReason` returns that error
+(`internal/seatcommit/commit.go:590-593`; `ArchiveAttempt`, :557, calls it).
+Two paths carry the same text into a decision:
+
+- The attempts-log scan. For an attempt blocked with `widen_requested` or the
+  growth gate, `scanAttemptsLog` calls the archiver and returns its error
+  (`internal/scheduler/exits.go:442-448`; the archiver is
+  `CleanSeats.ArchiveAttempt`, `internal/schedproc/prepare.go:194-201`). The
+  tick returns it (`internal/scheduler/scheduler.go:461-462`) and the process
+  logs a `tick_error` decision whose reason is the error's text
+  (`internal/schedproc/process.go:254`).
+- The clean after a seat's confirmed close. `CleanAttempt` returns the error
+  (`internal/schedproc/prepare.go:123-130`) and its caller logs a
+  `seat_clean_deferred` decision whose reason is the error's text
+  (`internal/scheduler/exits.go:821-822`; `logCleanDeferred`, :671, :680).
+
+Not settled: whether the Codex sandbox or the hook guard stops a seat writing
+its own worktree's `.git` file. Neither path was run.
+
+A lease holder's handle. `task claim --me H` takes the handle from `actor()`
+(`internal/cli/task.go:196-211`), which trims it, falls back to `AM_ME`,
+refuses an empty one, and checks that it is not the operator (:206); it
+checks nothing about the handle's characters. With a live scheduler the verb
+calls `ClaimOffered`
+(:570, :582), which grants nothing: it accepts only a task already leased to
+that holder and not yet claimed (`internal/task/lease.go:439-462`, the test at
+:447). With no live scheduler it calls `ClaimServing` (:598), which reaches
+`grant` (`internal/task/lease.go:389`, :424; `grant` is at :64) and there
+`SeatHandle` (:65). `SeatHandle` (`internal/task/unclean.go:87-93`) refuses
+the empty handle, `.`, `..` and any handle with `/`, `\` or NUL (:89),
+after trimming white space from its ends (:88); an ESC, a BEL or any other
+control character inside the handle is accepted. The exported `Store.Grant`
+(`internal/task/lease.go:236-244`) is a separate entry to the same `grant`
+(:242); `task claim` does not call it. A lease holder's handle is logged as
+the seat of `task_budget_spent` (`internal/scheduler/scheduler.go:429`) and
+`task_budget_warning` (:454). So a handle with a control character can become
+a lease holder through `task claim` only when no scheduler is live. Not run.
+
+The warnings. Status's warnings come from these producers:
+
+| Line | The warning | Its detail |
+|---|---|---|
+| `internal/cli/status.go:93` | `gate store: <error>` | the error of `readHookGates` (:90) |
+| `internal/cli/status.go:98` | `gate store: gate <id> is a legacy <kind> gate ...` | a stored gate's id and kind (`internal/gatestore/legacy.go:40-42`) |
+| `internal/status/collect.go:70` | `task store: <error>` | the error of `task.Snapshot` |
+| `internal/status/collect.go:73` | `scheduler state: <error>` | the error of `scheduler.ReadState` |
+| `internal/status/collect.go:76` | `launch alarms: <error>` | the error of `launch.ReadAlarms` |
+| `internal/status/collect.go:83` | `mailbox scan: <n> unreadable messages skipped` | a count only |
+| `internal/status/collect.go:116` | `agents: <error>` | the error of reading the root's `agents` directory |
+| `internal/status/collect.go:154` | `clears: <error>` | the error of `schedproc.ReadClears` |
+| `internal/status/collect.go:167` | `seat <handle> launch record: <error>` | the handle and the error of `launch.Read` |
+| `internal/status/collect.go:183` | `seat <handle> ledger: <error>` | the handle and the error of reading the seat's ledger file |
+| `internal/status/collect.go:477` | `alert <name> unreadable` | the alert file's base name |
+| `internal/status/screen.go:44` | `lead record: <error>` | the error of reading the lead's record |
+| `internal/status/screen.go:53` | `scheduler launch record: <error>` | the error of reading the scheduler's launch record |
+| `internal/status/screen.go:61` | `decisions log: <error>` | the error of `schedproc.ReadDecisionsTail` |
+| `internal/status/screen.go:73` | `merge train audit log: <error>` | the error of the train's audit read |
+| `internal/status/relay.go:255` | `relay record <name> unreadable (<code>)` | the record file's base name and a fixed code |
+| `internal/status/collect.go:228` | a staged Claude seat's hooks are silent | fixed words and the proof's time |
+| `internal/status/collect.go:236` | a staged Claude seat's worktree has allow rules, or a settings file that cannot be read | every allow string of the worktree's `.claude/settings.json` and `.claude/settings.local.json`, or `<file>: unreadable` for one that cannot be read or parsed (`internal/claudeseat/claudeseat.go:287-309`) |
+| `internal/status/collect.go:239` | a staged Claude seat has external includes pending | the paths of imported or linked memory files outside the worktree (`internal/claudeseat/externalincludes.go:143`) |
+| `internal/status/screen.go:228` | a seat's launch went over its ceiling | numbers and the slowest segment's name from the seat's launch timing |
+| `internal/status/screen.go:232` | a seat's wake is off | the wake audit's reason, or fixed words |
+| `internal/status/screen.go:237` | a pi seat's wake | fixed words |
+| `internal/status/screen.go:240` | a seat waits at a harness dialog | the marker file's time and its age |
+| `internal/status/screen.go:243` | a pi seat's provider has no key | the reason from `piKeyMissing` |
+
+The seat rows are `seatWarnings` (`internal/status/collect.go:216-241`) and
+`launchWarnings` (`internal/status/screen.go:219-245`), joined at
+`internal/status/collect.go:536`. `buildStatusContract` puts the gate store's
+two in front of the rest (`internal/cli/status.go:114`).
+
+What a seat can write. Two rows carry text read from the seat's own worktree:
+`internal/status/collect.go:236` and :239. In the `<error>` rows the detail is
+an error's text from a read or a decode; whether a seat can put text into any
+of them was not settled, row by row. The wake audit's reason
+(`internal/status/screen.go:232`) is copied at the seat's launch from AMQ's
+prepare preview (`internal/seatlaunch/compile.go:343`) into the seat's staged
+wake record (:214), which status reads (`internal/status/screen.go:142-143`);
+whether a seat can rewrite that record was not settled.
+
+What status does to the text. `status.Build` copies the warnings
+(`internal/status/classify.go:126`) and passes them and each seat's through
+`redactAll` (:351, :378, :455). That redacts credentials: a credential's
+value is replaced whole, whatever it holds. It does no other replacement of
+control characters.
+
+### What the two replacements cover
+
+Covered: the line shown before any status is read
+(`pi/extensions/lib/screen.ts:500`; the array's second element is
+`commandsLine("team")`, fixed words) and every line of the expanded screen,
+which leaves through `fitWidth` (:509, called at :513 and :518), the stale
+line (:512) among them.
+
+Not covered, each a place where status text or a verb's reply reaches the
+lead's terminal without the replacement:
+
+- the collapsed screen's key outcome notice
+  (`pi/extensions/lib/screen.ts:446`);
+- the counts line (`pi/extensions/lib/screen.ts:532`; `countsLine`, :367-371):
+  the session's name and counts;
+- the dialogs in `pi/extensions/lib/keys.ts`: reset's two selects (:233, :237)
+  and its input (:243), dismiss's two selects (:271, :279), which show seat
+  handles and a warning's words, answer's select (:300), which shows each
+  gate's first question line, widen's select (:344) and widen's confirm
+  (:368), which shows the refused paths as recorded. The title at :343 and
+  :362 and the seat's reason at :360 pass through `clean()` first;
+- the gate-question notice (`pi/extensions/lib/keys.ts:323`): the gate's plain
+  question and its identifiers from `gate status --json`, shown whether or not
+  the screen is expanded;
+- plain `amq-squad status`: `writeStatusContractTable`
+  (`internal/cli/status.go:118-147`) prints the table and the warnings
+  (:146-147) as they are.
+
+The other `ui.notify` calls (`pi/extensions/amq-squad.ts:297`,
+`pi/extensions/lib/commands.ts:55`, `pi/extensions/lib/team.ts:464`,
+`pi/extensions/lib/amq-bridge.ts:688`) are not handed the status document.
+Two of them carry a key outcome's line (`commands.ts:78`, `team.ts:464`), as
+`screen.ts:446` does; a key outcome's line can carry a verb's refusal.
+Whether text a seat wrote reaches a refusal was not settled.
+
+### What ran
+
+The seat applied the lead's two patches with plain `git apply` (exit 0 and 0).
+After each, `git status --porcelain` listed the six declared files and `git
+hash-object` equalled the lead's list for all six. The thirteen reverts K1
+through R3d were run with the commands above: each exited 1 with the test line
+and the assertion line printed in its entry, and each file was restored to its
+listed blob before the next. From `pi`: `npm ci --ignore-scripts --offline`
+exited 0; `npm test` exited 0 with 140 passing, 1 skipped and 0 failing; `node
+scripts/lint.mjs` exited 0. From the root: `go build ./...` exited 0; `go run
+./scripts/redact-evidence -check docs/v3-spike/320-0d-screen/` exited 0; `cmp`
+of `pi/test/width-pins.json` against the supplied artifact exited 0; `git diff
+--check` exited 0. The whole-repository runs (`make ci`, `go test ./...`) were
+not run in the seat's sandbox; they are the lead's, on the PR head.

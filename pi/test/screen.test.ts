@@ -133,8 +133,8 @@ test("the pinned carry measure and round 2 truncations stay exact", () => {
 		widths: Array<{ name: string; text: string; width: number }>;
 		truncations: Array<{ name: string; text: string; max_width: number; expected: string }>;
 	};
-	assert.equal(pins.widths.length, 21, "the width pins lost a case");
-	assert.equal(pins.truncations.length, 14, "the truncation pins lost a case");
+	assert.equal(pins.widths.length, 23, "the width pins lost a case");
+	assert.equal(pins.truncations.length, 18, "the truncation pins lost a case");
 	for (const pin of pins.widths) {
 		assert.equal(visibleWidth(pin.text), pin.width, `${pin.name}: local width`);
 		assert.ok(piVisibleWidth(pin.text) <= pin.width, `${pin.name}: pi-tui width exceeds ${pin.width}`);
@@ -502,4 +502,40 @@ test("a task waiting no_roster_seat names the pool, and a stale record is no sea
 	const seats = block(lines, "seats");
 	assert.equal(seats[0], `seats (${fixture.seats.length})`);
 	assert.ok(!seats.some((l) => l.includes("senior-dev")), seats.join("\n"));
+});
+
+// A custom ellipsis wider than the requested width is clipped on measure
+// units, as the carry clipped it: a zero-width sequence still pending when
+// the budget ends is dropped with the text that did not fit. No product
+// caller passes an ellipsis.
+test("a clipped custom ellipsis is cut on measure units", () => {
+	assert.equal(truncateToWidth("abcdef", 2, "\x1b\x1b]8;;u\x07x"), "\x1b[0m\x1b\x1b[0m", "the OSC 8 open is dropped");
+	assert.equal(truncateToWidth("abcdef", 2, "\x1b\x1b[31mxyz"), "\x1b[0m\x1b\x1b[0m", "the SGR is dropped");
+});
+
+// Status text reaches the screen's lines through short(), which only folds
+// whitespace, and a seat can write some of that text: a git dir path in a
+// tick_error's reason, a lease holder's handle, a file name in a train
+// refusal. The screen replaces C0 and C1 control characters with a space at
+// its two exits, the fitted lines and the line shown before any status was
+// read, so none of it can drive the lead's terminal.
+test("control characters in status text never reach a drawn line", () => {
+	const osc = (tag: string) => `\x1b]0;${tag}\x07`;
+	const status: ScreenStatus = {
+		...fixture,
+		decisions: [{ at: "2026-11-01T09:04:00Z", kind: "seat_launch_failed", seat: `dev${osc("s")}`, task_id: "", reason: `the git dir /tmp/${osc("r")} does not belong`, reason_code: `code${osc("c")}`, stage: "" }],
+		train: { runs: [{ ...fixture.train!.runs[0], refusal: `#812: f${osc("f")}.go is protected (x)` }], alerts: [{ ...fixture.train!.alerts[0], detail: `tag ${osc("a")}\u009b31m has no accepted owner gate` }] },
+	};
+	const lines = drawScreen(status, 200, 400, `status --json failed: exit 1: open /p/${osc("e")}: no such file`);
+	for (const tag of ["s", "r", "c", "f", "a", "e"]) assert.ok(lines.some((l) => l.includes(`]0;${tag}`)), `the ${tag} text is on the screen`);
+	for (const l of lines) assert.ok(!/[\u0000-\u001f\u007f-\u009f]/.test(l), JSON.stringify(l));
+
+	const ctx = fakeCtx({ hasUI: true });
+	const screen = new Screen(cfg());
+	screen.error = `status --json failed: exit 1: open /p/${osc("n")}: no such file`;
+	screen.ctx = ctx;
+	screen.render();
+	const first = ctx.widgets[SCREEN_KEY].lines ?? [];
+	assert.ok(first.some((l) => l.includes("]0;n")), "the error text is on the line shown before any status");
+	for (const l of first) assert.ok(!/[\u0000-\u001f\u007f-\u009f]/.test(l), JSON.stringify(l));
 });
