@@ -53,6 +53,10 @@ Each command exited 0.
 
 ## Controlled reverts
 
+Line numbers in A1 to B7 below are as of 81f60af0 (round 1's head), except
+A1, A3 and A4, which the follow-up re-measured on its own head; their
+commands are in "Follow-up: rows and words".
+
 Each revert changed only the expression named below, ran the focused command,
 copied the first failing line, and was immediately restored.
 
@@ -68,7 +72,7 @@ env HOME=/tmp/amq-t148/home CODEX_HOME=/tmp/amq-t148/codex GOCACHE=/tmp/amq-t148
 First failing line, exit 1:
 
 ```text
-hook_ingest_lease_test.go:58: first-renewal decisions = [], err <nil>
+hook_ingest_lease_test.go:67: first-renewal decisions = [], err <nil>
 ```
 
 ### A2
@@ -98,7 +102,7 @@ env HOME=/tmp/amq-t148/home CODEX_HOME=/tmp/amq-t148/codex GOCACHE=/tmp/amq-t148
 First failing line, exit 1:
 
 ```text
-hook_ingest_lease_test.go:151: attempt 1 decisions = [{At:2026-10-23 12:00:00 +0000 UTC Decision:{Kind:lease_renewed TaskID:t1 Seat:cto Pool: Reason:first activity renewal of attempt 1 Stage: ReasonCode:}} {At:2026-10-23 12:02:00 +0000 UTC Decision:{Kind:lease_renewed TaskID:t1 Seat:cto Pool: Reason:first activity renewal of attempt 1 Stage: ReasonCode:}}], err <nil>
+hook_ingest_lease_test.go:160: attempt 1 decisions = [{At:2026-10-23 12:00:00 +0000 UTC Decision:{Kind:lease_renewed TaskID:t1 Seat:cto Pool: Reason:first activity renewal of attempt 1 Stage: ReasonCode:}} {At:2026-10-23 12:02:00 +0000 UTC Decision:{Kind:lease_renewed TaskID:t1 Seat:cto Pool: Reason:first activity renewal of attempt 1 Stage: ReasonCode:}}], err <nil>
 ```
 
 ### A4
@@ -114,8 +118,20 @@ env HOME=/tmp/amq-t148/home CODEX_HOME=/tmp/amq-t148/codex GOCACHE=/tmp/amq-t148
 First failing line, exit 1:
 
 ```text
-hook_ingest_lease_test.go:211: legacy decision = [], err <nil>
+hook_ingest_lease_test.go:241: legacy decision = [], err <nil>
 ```
+
+### Follow-up gates
+
+- `env -i PATH="$PATH" HOME=/tmp/amq-t154/home GOCACHE=/tmp/amq-t154/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go build ./...`: exit 0. The sandbox printed a non-fatal module stat-cache write warning.
+- `env -i PATH="$PATH" HOME=/tmp/amq-t154/home GOCACHE=/tmp/amq-t154/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go vet ./internal/ledger/... ./internal/cli/...`: exit 0.
+- `env -i PATH="$PATH" HOME=/tmp/amq-t154/home GOCACHE=/tmp/amq-t154/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 ./internal/ledger/`: exit 0.
+- `env -i PATH="$PATH" HOME=/tmp/amq-t154/home GOCACHE=/tmp/amq-t154/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run 'TestEvidenceIngest|TestEachAttempt|TestLegacyUnlabelled|TestManualRenewalOmitsZeroActivityRenewals' ./internal/cli/`: exit 0.
+- `env -i PATH="$PATH" HOME=/tmp/amq-t154/home TMPDIR="$TMPDIR" GOCACHE=/tmp/amq-t154/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 ./internal/cli/`: exit 1. Its sole failure was the known sandbox PTY residual, `wait_posture_pty_test.go:88: tmux pane identity = "%0_3880\\n"`; every other CLI test passed.
+- `PYTHONPATH=/tmp/amq-t148/python make skills-check`: exit 0; all 14 skill checks passed.
+- `env -i PATH="$PATH" HOME=/tmp/amq-t154/home CODEX_HOME=/tmp/amq-t154/codex TMPDIR="$TMPDIR" GOCACHE=/tmp/amq-t154/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off PYTHONPATH=/tmp/amq-t148/python NPM_FLAGS=--offline make ci`: exit 2. Every Go package except `internal/cli` passed; its sole failure was the same known PTY residual at `%0_27555`. Make stopped before its later phases.
+- `env HOME=/tmp/amq-t154/home GOCACHE=/tmp/amq-t154/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go run ./scripts/redact-evidence -check docs/v3-spike/320-renewal-ab/`: exit 0.
+- The source-input comparisons, `git diff --check`, and `gofmt -l internal/cli/hook_ingest_lease_test.go` exited 0 with no output. The absolute user-path and host-temp-path scans each printed `0`.
 
 ### B1
 
@@ -222,13 +238,13 @@ env -i PATH="$PATH" HOME=/tmp/amq-t152/home GOCACHE=/tmp/amq-t152/gocache GOMODC
 
 Each run exited 1 and the expression was restored immediately:
 
-- Dropping `row.Malformed` first failed at `T4 malformed row: got true, err <nil>, want false and nil`.
-- Dropping `row.Truncated` first failed at `T5 truncated row: got true, err <nil>, want false and nil`.
-- Replacing the event predicate with `found = true` first failed at `T6 other events: got true, err <nil>, want false and nil`.
-- Dropping `&& row.Outcome != ""` first failed at `T7 missing outcome: got true, err <nil>, want false and nil`.
-- Dropping `row.Tool != ""` first failed at `T8 missing tool: got true, err <nil>, want false and nil`.
-- Disabling the `at.Before(since)` check with `false && at.Before(since)` first failed at `T2 PostToolUse before boundary: got true, err <nil>, want false and nil`.
-- Replacing `at.Before(since)` with `!at.After(since)` first failed at `T1 PostToolUse at boundary: got false, err <nil>, want true and nil`.
+- Dropping `row.Malformed` first failed at `activity_test.go:71: T4 malformed row: got true, err <nil>, want false and nil`.
+- Dropping `row.Truncated` first failed at `activity_test.go:71: T5 truncated row: got true, err <nil>, want false and nil`.
+- Replacing the event predicate with `found = true` first failed at `activity_test.go:71: T6 other events: got true, err <nil>, want false and nil`.
+- Dropping `&& row.Outcome != ""` first failed at `activity_test.go:71: T7 missing outcome: got true, err <nil>, want false and nil`.
+- Dropping `row.Tool != ""` first failed at `activity_test.go:71: T8 missing tool: got true, err <nil>, want false and nil`.
+- Disabling the `at.Before(since)` check with `false && at.Before(since)` first failed at `activity_test.go:71: T2 PostToolUse before boundary: got true, err <nil>, want false and nil`.
+- Replacing `at.Before(since)` with `!at.After(since)` first failed at `activity_test.go:71: T1 PostToolUse at boundary: got false, err <nil>, want true and nil`.
 
 ### Ledger read error
 
@@ -248,7 +264,7 @@ slots_test.go:302: read error removed the manual fallback
 The two scheduler option mutants used:
 
 ```sh
-env -i PATH="$PATH" HOME=/tmp/amq-t152/home TMPDIR=/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/ GOCACHE=/tmp/amq-t152/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestSchedulerRunWiresCodexActivityAdmissionToTheSessionLedger$' ./internal/cli
+env -i PATH="$PATH" HOME=/tmp/amq-t152/home TMPDIR="$TMPDIR" GOCACHE=/tmp/amq-t152/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestSchedulerRunWiresCodexActivityAdmissionToTheSessionLedger$' ./internal/cli
 ```
 
 Removing `CodexActivityAdmission: slots.AdmitCodexActivity` exited 1 first at
@@ -259,7 +275,7 @@ Removing `Root: root` from the real slots exited 1 first at
 The launch-time mutant used:
 
 ```sh
-env -i PATH="$PATH" HOME=/tmp/amq-t152/home TMPDIR=/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/ GOCACHE=/tmp/amq-t152/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestLaunchAdmitsCodexActivityTrustAndWarnsWithExactCommands$' ./internal/seatlaunch
+env -i PATH="$PATH" HOME=/tmp/amq-t152/home TMPDIR="$TMPDIR" GOCACHE=/tmp/amq-t152/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestLaunchAdmitsCodexActivityTrustAndWarnsWithExactCommands$' ./internal/seatlaunch
 ```
 
 Replacing `launched := o.Now().UTC()` with `time.Time{}` exited 1 first at:
@@ -290,7 +306,7 @@ already claimed.
 Each legacy mutant used:
 
 ```sh
-env -i PATH="$PATH" HOME=/tmp/amq-t152/home TMPDIR=/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/ GOCACHE=/tmp/amq-t152/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestLegacyUnlabelledRenewalsDoNotHideFirstActivity$' ./internal/cli
+env -i PATH="$PATH" HOME=/tmp/amq-t152/home TMPDIR="$TMPDIR" GOCACHE=/tmp/amq-t152/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestLegacyUnlabelledRenewalsDoNotHideFirstActivity$' ./internal/cli
 ```
 
 - Requiring all renewals to be labelled before the decision exited 1 first at `hook_ingest_lease_test.go:231: legacy decision = [], err <nil>`.
@@ -316,7 +332,7 @@ slots_test.go:236: trusted doorbell = "The scheduler leased you task t1 (work, c
 
 ## Limits and facts
 
-- A seat that never calls a tool keeps the manual-renew sentence. This is the safe side.
+- An untrusted seat that never calls a tool keeps the manual-renew sentence. This is the safe side.
 - "Once per attempt" does not survive an rc.1 rewrite of the task because the labels are dropped; the next activity renewal logs once more with the unlabelled suffix.
 - The decision append error is ignored in `internal/cli/hook_ingest.go`; logging that error once is a 3.2.x item.
 - A seat adopted by the scheduler instead of launched gains no admission and keeps the sentence until a launch.
@@ -369,7 +385,7 @@ scratch Go caches, and `GOPROXY=off`.
 - `go test -count=1 ./internal/seatlaunch/...`: exit 0 in 21.854 s.
 - `PYTHONPATH=/tmp/amq-t148/python make skills-check`: exit 0; all 14 skill
   checks passed.
-- `env -i PATH="$PATH" HOME=/tmp/amq-t152/home CODEX_HOME=/tmp/amq-t152/codex TMPDIR=/private/var/folders/gx/wg9xtfn96wx9z4gkb9mp_hxr0000gn/T/ GOCACHE=/tmp/amq-t152/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off PYTHONPATH=/tmp/amq-t148/python NPM_FLAGS=--offline make ci`: exit 2. Every package except `internal/cli` passed. Its sole failure was the same known PTY residual, this time with pane identity `%0_73478`. Because the Go test phase failed, make stopped before later skill and npm phases.
+- `env -i PATH="$PATH" HOME=/tmp/amq-t152/home CODEX_HOME=/tmp/amq-t152/codex TMPDIR="$TMPDIR" GOCACHE=/tmp/amq-t152/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off PYTHONPATH=/tmp/amq-t148/python NPM_FLAGS=--offline make ci`: exit 2. Every package except `internal/cli` passed. Its sole failure was the same known PTY residual, this time with pane identity `%0_73478`. Because the Go test phase failed, make stopped before later skill and npm phases.
 - `env HOME=/tmp/amq-t152/home GOCACHE=/tmp/amq-t152/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go run ./scripts/redact-evidence -check docs/v3-spike/320-renewal-ab/`: exit 0.
 - The absolute user-path scan printed `0`.
 - `git diff --check`: exit 0.
@@ -379,3 +395,95 @@ cases, real scheduler wiring, launch timestamp, initial offered claim, and
 frozen rc.1 rewrite all exited 0 after their controlled mutants were restored.
 
 No test or setup command reached the network. No host gate script was run.
+
+## Follow-up: rows and words
+
+The four supplied text inputs landed byte for byte. Their sha256 values are
+`8803bbf9017893dc328213323823f798943061c2a8f002e5b2ee98871c0ff539`
+for the carried heading,
+`f81488bd9ad16e2d8df6ae47262d00f7b0b4ccd6e8e0edeb0fbcbbd02459eb63`
+for the limits sentence,
+`1e0a49e3cbcb3010bd607e1fa650a7e27ca82158e6b14d8504a2693d24ec05c7`
+for the release-note fallback, and
+`155fc2650f831763ccf30c352a745c9df7625411d627a21ff4dbb12cbb1550f0`
+for the skill renewal sentence.
+
+### Sticky proof row
+
+```sh
+env -i PATH="$PATH" HOME=/tmp/amq-t154/home GOCACHE=/tmp/amq-t154/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestHasActivitySinceRequiresACompleteOwnToolResultAtOrAfterTheBoundary$' ./internal/ledger
+```
+
+Reverted expression: removed the three-line `if found { return }` guard at
+the start of the ledger callback. Exit 1, first failing line:
+
+```text
+activity_test.go:71: T12 tool result then Stop: got false, err <nil>, want true and nil
+```
+
+### Zero activity-renewal omission
+
+```sh
+env -i PATH="$PATH" HOME=/tmp/amq-t154/home GOCACHE=/tmp/amq-t154/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestManualRenewalOmitsZeroActivityRenewals$' ./internal/cli/
+```
+
+Reverted expression: `json:"activity_renewals,omitempty"` became
+`json:"activity_renewals"`. Exit 1, first failing line:
+
+```text
+hook_ingest_lease_test.go:375: manual-only task = {
+```
+
+### Stop ingest renewal
+
+```sh
+env -i PATH="$PATH" HOME=/tmp/amq-t154/home GOCACHE=/tmp/amq-t154/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestEvidenceIngestStopRenewsTheClaimedLease$' ./internal/cli/
+```
+
+Reverted expression: `case "Stop": return true` became `return false`.
+Exit 1, first failing line:
+
+```text
+hook_ingest_lease_test.go:393: Stop ingest did not report renewal
+```
+
+### Re-measured carried rows
+
+A1 used:
+
+```sh
+env HOME=/tmp/amq-t148/home CODEX_HOME=/tmp/amq-t148/codex GOCACHE=/tmp/amq-t148/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestEvidenceIngestRenewsTheClaimedLease$' ./internal/cli
+```
+
+Reverted expression: `t.Lease.ActivityRenewals == 1` became
+`t.Lease.Renewals == 1`. Exit 1, first failing line:
+
+```text
+hook_ingest_lease_test.go:67: first-renewal decisions = [], err <nil>
+```
+
+A3 used:
+
+```sh
+env HOME=/tmp/amq-t148/home CODEX_HOME=/tmp/amq-t148/codex GOCACHE=/tmp/amq-t148/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestEachAttemptLogsOnlyItsFirstActivityRenewal$' ./internal/cli
+```
+
+Reverted expression: `ActivityRenewals == 1` became
+`ActivityRenewals >= 1`. Exit 1, first failing line:
+
+```text
+hook_ingest_lease_test.go:160: attempt 1 decisions = [{At:2026-10-23 12:00:00 +0000 UTC Decision:{Kind:lease_renewed TaskID:t1 Seat:cto Pool: Reason:first activity renewal of attempt 1 Stage: ReasonCode:}} {At:2026-10-23 12:02:00 +0000 UTC Decision:{Kind:lease_renewed TaskID:t1 Seat:cto Pool: Reason:first activity renewal of attempt 1 Stage: ReasonCode:}}], err <nil>
+```
+
+A4 used:
+
+```sh
+env HOME=/tmp/amq-t148/home CODEX_HOME=/tmp/amq-t148/codex GOCACHE=/tmp/amq-t148/gocache GOMODCACHE="$(go env GOMODCACHE)" GOPROXY=off go test -count=1 -run '^TestLegacyUnlabelledRenewalsDoNotHideFirstActivity$' ./internal/cli
+```
+
+Reverted expression: the first-activity decision additionally required
+`Renewals == ActivityRenewals + ManualRenewals`. Exit 1, first failing line:
+
+```text
+hook_ingest_lease_test.go:241: legacy decision = [], err <nil>
+```
