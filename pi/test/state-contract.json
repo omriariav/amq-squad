@@ -42,6 +42,7 @@
         "via": [
           "Grant",
           "GrantClean",
+          "Claim",
           "ClaimServing"
         ],
         "writer": "grant",
@@ -50,7 +51,6 @@
           "scheduler",
           "asserted_handle"
         ],
-        "needs": "no blocker; the seat holds nothing; the seat is leasable",
         "clears_block_group": false
       },
       {
@@ -89,7 +89,7 @@
         "who": [
           "live_holder"
         ],
-        "needs": "no declared files; a required verdict must pass",
+        "needs": "Done has no prior report and no declared files; when a verdict is required or a sealed verdict is present, that verdict passes",
         "clears_block_group": true
       },
       {
@@ -104,7 +104,7 @@
           "scheduler",
           "harness_shell"
         ],
-        "needs": "a report; a required verdict must pass",
+        "needs": "a report exists; CompleteBound also has a nonnegative PR number and, when positive, a valid free binding; when a verdict is required or a sealed verdict is present, that verdict passes",
         "clears_block_group": true
       },
       {
@@ -121,12 +121,13 @@
           "scheduler",
           "harness_shell"
         ],
-        "needs": "a required verdict is missing or does not pass",
+        "needs": "Done has no prior report and no declared files; Complete and CompleteBound have a report, and CompleteBound has a valid free binding; a verdict is required but absent, or a sealed verdict is present and does not pass",
         "clears_block_group": false
       },
       {
         "from": "in_progress",
         "via": [
+          "RefuseCommit",
           "RefuseCommitPaths"
         ],
         "writer": "block",
@@ -135,7 +136,7 @@
           "scheduler",
           "harness_shell"
         ],
-        "needs": "a report",
+        "needs": "paths are exact, a report exists, the route is empty, lead, or owner, and the reason code is non-empty",
         "clears_block_group": false
       },
       {
@@ -208,9 +209,10 @@
         "writer": "ResetBy",
         "to": "pending",
         "who": [
-          "creator"
+          "creator",
+          "asserted_handle"
         ],
-        "needs": "the route is not owner",
+        "needs": "the caller is non-empty, the route is not owner, and the caller matches the creator when recorded; when no creator is recorded, any non-empty caller is accepted",
         "clears_block_group": true
       },
       {
@@ -235,12 +237,13 @@
         "who": [
           "scheduler"
         ],
-        "needs": "the block reason and the match",
+        "needs": "the block reason matches, and the optional match function is absent or accepts the task",
         "clears_block_group": true
       },
       {
         "from": "blocked",
         "via": [
+          "Widen",
           "WidenGated"
         ],
         "writer": "WidenGated",
@@ -248,12 +251,13 @@
         "who": [
           "proven_lead"
         ],
-        "needs": "no report; refused paths; reason widen_requested or growth_gate_required",
+        "needs": "added paths and their union are valid and non-empty, reason and actor are non-empty, actor is not holder or reporter, no active file conflicts, and the task has no report, refused paths, and a widen-request reason",
         "clears_block_group": true
       },
       {
         "from": "blocked",
         "via": [
+          "Widen",
           "WidenGated"
         ],
         "writer": "WidenGated",
@@ -261,7 +265,7 @@
         "who": [
           "proven_lead"
         ],
-        "needs": "a report; the lead is not the reporter",
+        "needs": "added paths and their union are valid and non-empty, reason and actor are non-empty, actor is not holder or reporter, no active file conflicts, and a report exists",
         "clears_block_group": true
       },
       {
@@ -274,7 +278,7 @@
         "who": [
           "proven_lead"
         ],
-        "needs": "the route becomes owner",
+        "needs": "the reason code is non-empty",
         "clears_block_group": false
       },
       {
@@ -361,6 +365,20 @@
           "failed",
           "commit_refused",
           "blocked"
+        ],
+        "conditional": [
+          {
+            "outcome": "failed",
+            "condition": "the verifier is mechanical and the attempt has no verdict"
+          },
+          {
+            "outcome": "commit_refused",
+            "condition": "the verifier is mechanical and the attempt has no verdict"
+          },
+          {
+            "outcome": "blocked",
+            "condition": "the verifier is mechanical, the attempt has no verdict, and the detail is not verdict_missing"
+          }
         ]
       },
       {
