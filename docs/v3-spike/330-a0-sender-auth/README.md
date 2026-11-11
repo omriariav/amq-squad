@@ -109,8 +109,8 @@ paragraph above.
 
 ## Rows every A and B brief must carry
 
-"Today" uses the three requested values; row 12's is narrowed in its cell,
-and row 8's test covers half of its statement. `holds` means both a seam and
+"Today" uses the three requested values; rows 8's and 12's are narrowed in
+their cells. `holds` means both a seam and
 an existing test assert the statement; `does not hold` names the current
 contrary behavior; `not determinable` means the channel or assertion has no
 seam and test in this repository.
@@ -124,11 +124,11 @@ seam and test in this repository.
 | 5 | An unthreaded answer binds only when one gate is open and its question is the latest the squad showed the owner in that channel. | does not hold | One open gate is selected, then the answer is re-asked solely because it is unthreaded; there is no latest-question comparison (`internal/gateverify/core.go:249-295`). | `internal/gateverify/bare311_test.go:61-92` asserts the one-gate re-ask and multi-gate refusal. | A1, A4 |
 | 6 | A yes never binds a gate raised after it. | does not hold | The verifier permits `created_at` as early as `issued_at - 60 s`; it has no strict answer-after-raise comparison (`internal/gatestore/record.go:38-46`, `internal/gateverify/verify.go:169-178`). | `internal/gateverify/core_test.go:155-166` asserts the skew/window edges, not the D4 ordering rule. | A1, B3 |
 | 7 | An answer created before a re-ask does not approve the re-asked question. | does not hold | A valid re-ask id is added to the allowed thread ids, but `Verify` compares time only with the original record window (`internal/gateverify/verify.go:169-204`). | `internal/gateverify/core_test.go:221-228` asserts a reply to the re-ask is accepted; it has no pre-re-ask timestamp refusal. | A2, A4 |
-| 8 | One decision per event id survives the re-ask. | holds | Gate and event consumption marks are checked before verification (`internal/gatestore/store.go:484-501`). | `internal/gateverify/core_test.go:71-76` asserts the same event and a later decision are replay refusals, with no re-ask in the test. The re-ask test accepts one reply and replays nothing (`internal/gateverify/core_test.go:187-228`). No existing test replays an event after a re-ask. | A2, B3 |
-| 9 | Nothing typed in the lead's chat binds a gate (beyond /confirm for a team plan). | holds | `/answer` writes no answer; `/confirm` is a registered command accepted only from the spawned pi (`pi/extensions/lib/keys.ts:21-28`, `internal/cli/lead_start.go:427-445`). | `pi/test/keys.test.ts:317-340` asserts the answer key on each of the four typed gate kinds runs gate status only and writes no answer. `internal/cli/lead_start_test.go:514-563` asserts a model-shell child cannot use the TUI door and the spawned pi can. | A3 |
+| 8 | One decision per event id survives the re-ask. | holds, narrowed: one decision per event id has a seam and a test; across a re-ask it has the seam and no test | Gate and event consumption marks are checked before verification (`internal/gatestore/store.go:484-501`). | `internal/gateverify/core_test.go:71-76` asserts the same event and a later decision are replay refusals, with no re-ask in the test. The re-ask test accepts one reply and replays nothing (`internal/gateverify/core_test.go:187-228`). No existing test replays an event after a re-ask. | A2, B3 |
+| 9 | Nothing typed in the lead's chat binds a gate (beyond /confirm for a team plan). | holds | `/answer` writes no answer; `/confirm` is a registered command accepted only from the spawned pi (`pi/extensions/lib/keys.ts:21-28`, `internal/cli/lead_start.go:427-445`). | `pi/test/keys.test.ts:317-340` asserts the answer key, for each of five actions across the four typed gates, runs gate status only and writes no answer. `internal/cli/lead_start_test.go:514-563` asserts a model-shell child cannot use the TUI door and the spawned pi can. | A3 |
 | 10 | A yes relayed by the Grok bot binds nothing. | not determinable | No Grok bot face or gate seam exists (`docs/v3-followups.md:615-623`); the scoped non-test code search above had 0 matches. | none found; same 0-match search. | A5 |
 | 11 | Every binding answer is the owner's signed Buzz reply, fetched by id and checked against the pinned key. | holds | Fetch and owner-event checks (`internal/buzz/inbound.go:224-265`, `internal/buzz/inbound.go:282-300`). | `internal/buzz/handler_test.go:172-247` asserts the handler acts only on the event fetched by id, never on the delivered text. `internal/gateverify/core_test.go:23-76` asserts owner success and wrong key, body key, forged signature and replay refusals on the raw event it is given. | A1, A2, A4, B3 |
-| 12 | No model output is an input of the binding decision. | holds, narrowed: model output is never accepted as the owner's answer (`internal/buzz/relay.go:646-683`, `internal/gateverify/verify.go:130-148`); the gate's target and its question text are written by the caller that raised it (`internal/cli/gate.go:138-139`, `internal/cli/gate.go:172`; `internal/cli/gate_store.go:99`; `internal/gatestore/record.go:171-181`) and `Verify` consumes them | Relay output is held back by shape; the core independently checks the signed owner event (`internal/buzz/relay.go:646-683`, `internal/gateverify/verify.go:130-148`). The question must carry the record's text (`internal/gateverify/verify.go:219-237`). | `internal/buzz/phone_test.go:250-300` and `internal/gateverify/core_test.go:34-49` assert the two layers. | A3, A5, B3 |
+| 12 | No model output is an input of the binding decision. | holds, narrowed: model output is never accepted as the owner's answer (`internal/buzz/relay.go:646-683`, `internal/gateverify/verify.go:130-148`); the gate's id, action, target and window are chosen by the caller that raised it, and a programmatic raiser also supplies facts (`internal/cli/gate.go:138-139`, `internal/cli/gate.go:172`; `internal/cli/gate_store.go:99`); the harness renders the question text from those fields (`internal/gatestore/record.go:167-181`, `internal/gatestore/plain.go:161-172`), and `Verify` consumes the record and that text | Relay output is held back by shape; the core independently checks the signed owner event (`internal/buzz/relay.go:646-683`, `internal/gateverify/verify.go:130-148`). The question must carry the record's text (`internal/gateverify/verify.go:219-237`). | `internal/buzz/phone_test.go:250-300` and `internal/gateverify/core_test.go:34-49` assert the two layers. | A3, A5, B3 |
 
 No proposed row: D1 through D4's binding properties are represented by rows
 1 through 12. The free-conversation half of D1 is channel behavior, not an
@@ -283,7 +283,8 @@ past commit.
 | `internal/cli/gate.go:138-139` | `target, note := *targetFlag, *noteFlag` |
 | `internal/cli/gate.go:172` | `return storeGateRaise(ctx, gate, capability.Action, target, *windowFlag, *jsonOut, os.Stdout)` |
 | `internal/cli/gate_store.go:99` | `spec := gatestore.Spec{GateID: id, Action: action, Target: target, RaisedBy: sel.Handle, Window: window, Squad: core.Store.Squad()}` |
-| `internal/gatestore/record.go:171-181` | `digest := gatetarget.Digest(s.Action, s.Target)` |
+| `internal/gatestore/record.go:167-181` | `facts := s.Facts.normalize()` |
+| `internal/gatestore/plain.go:161-172` | `func TextOf(r Record) string {` |
 | `pi/extensions/lib/keys.ts:295-328` | `async answer(ctx: ExtensionContext, st: ScreenStatus): Promise<KeyOutcome> {` |
 | `pi/test/keys.test.ts:317-340` | `// Row 9 (Q7 answered no): each of the four typed gate kinds shows "waiting` |
 | `internal/buzz/handler_test.go:172-247` | `// Acceptance 2 and the principle: the attachment never reads the DM` |
@@ -329,13 +330,14 @@ past commit.
 
 2026-11-11, the lead's docs PR after the read-only Codex pass on #967 (head
 `d1b4c18db59a82f23ff80387c8f66bd144ea30a4`). Line numbers below are the
-note's as merged in `0c72f069e388ef461e6c0b341a9156c291a4d4a4`. No verdict on
-rows 1 to 11 changed.
+note's as merged in `0c72f069e388ef461e6c0b341a9156c291a4d4a4`. Row 8's verdict
+is narrowed (item 5); no verdict on rows 1 to 7 and 9 to 11 changed.
 
 1. Row 12's Today cell said `holds` alone. That was broader than the code
-   establishes: the caller that raises a gate writes its target and facts, and
-   those become the record and the question text `Verify` consumes. The cell
-   is narrowed; the statement's twelve words are unchanged. Every A and B
+   establishes: the caller that raises a gate chooses its id, action, target
+   and window, a programmatic raiser also supplies facts, and the harness
+   renders from them the record and the question text `Verify` consumes. The
+   cell is narrowed; the statement's words are unchanged. Every A and B
    brief that carries row 12 carries the narrowed cell with it.
 2. The paragraph at :84-93 said "All seven ... and all thirteen ... were
    read. No path was found". The two searches behind it do not reach the
@@ -347,7 +349,9 @@ rows 1 to 11 changed.
    display; the sentence now says "binding".
 5. Row 8's test cell cited a replay test with no re-ask in it. The cell says
    so, and that no existing test replays an event after a re-ask; the seam
-   cell is unchanged. A2's brief adds that test row.
+   cell is unchanged. The Today cell said `holds` alone, which the note's own
+   definition does not allow without a test of the re-ask half; it is
+   narrowed. A2's brief must carry that test row.
 6. Row 9's test cell gains the test that asserts `/answer` writes no answer.
 7. Row 11's test cell gains the test of the fetch by id; the test it cited
    checks the raw event it is given.
