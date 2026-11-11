@@ -23,11 +23,10 @@ const PinnedAMQModule = "v0.140.0"
 
 // AdoptionFloorContractSemver is the minimum launchapi contract semver this
 // backend requires. Deliberately distinct from internal/cli's
-// doctorMinAMQVersion (see TestGeneralOperationFloorUnchanged): this
-// launchapi backend is opt-in, so raising the general-operation floor for
-// every user who never touches it would tax them for zero benefit — the
-// wake/mail path is proven on amq 0.60.x. The two floors merge only when
-// the launchapi backend becomes the auto default (gh#733's v2.31.0+ line).
+// doctorMinAMQVersion (see TestGeneralOperationFloorUnchanged): that
+// constant is the floor for the installed amq binaries and moves with the
+// go.mod pin; this one is a requirement on the launchapi contract compiled
+// into this binary, sent by NegotiateAdoptionFloor below.
 //
 // gh#746/gh#768: the launchapi package's negotiable contract is unchanged
 // since v0.70.0. launchapi.ContractSemverV1 is still "0.61.1" through
@@ -67,12 +66,11 @@ const AdoptionFloorContractSemver = ">=0.61.1"
 //     being honored, not just accepted.
 //
 // Not required here: on_live, placement, executable_identity, wrapper,
-// lifecycle_v1, plan_only_commands_v1 — real features on v0.70.0 through
-// v0.75.0 (unchanged, see AdoptionFloorContractSemver's doc comment), but
-// nothing in this package calls the paths that need them yet. AMQ v0.139.0
-// removed lifecycle_v1; this list was verified against v0.140.0's advertised
-// compatibility surface. Extending this list is a one-line change when that
-// changes.
+// plan_only_commands_v1. The list below is what NegotiateAdoptionFloor
+// requires, not what this package forwards: PrepareInput carries a
+// Placement that the requirement does not name. AMQ v0.139.0 removed
+// lifecycle_v1, which this comment listed until then. At the v0.140.0 pin
+// TestNegotiateAdoptionFloorSatisfiedByPinnedAMQ passes with these six.
 var AdoptionFloorFeatures = []string{
 	launchapi.FeatureBaseRoot,
 	launchapi.FeatureInitialInput,

@@ -250,6 +250,10 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	root := q.SessionRoot()
 	// An absent AMQ root or session is created the way `up` creates it
 	// (brief 31-1, item 7: the missing-session refusal gave way to it).
+	// ensureSquadSession takes an existing session directory as created,
+	// and `lead --team` makes the scheduler directory under it before it
+	// starts this command (startLeadScheduler), so on that route nothing is
+	// created here.
 	handles := []string{leadHandle}
 	for _, s := range q.Seats {
 		handles = append(handles, s.Handle)

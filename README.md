@@ -107,8 +107,8 @@ omriariav/amq-squad`. The skills (`amq-squad:wizard`, `amq-squad:cli`,
 
 `amq-squad doctor` probes all of these and names what is missing:
 
-- `amq` 0.140.0 or later on `PATH` (and `amq-remote`, `amq-owner-sign` at the
-  same release when installed); `amq-squad doctor` refuses an older one
+- `amq` 0.140.0 or later on `PATH` (and `amq-remote`, `amq-owner-sign`, each
+  0.140.0 or later when installed); `amq-squad doctor` refuses an older one
 - Claude Code (`claude`) for Claude seats, with the owner's pin and token file
   (below)
 - Codex (`codex`) for Codex seats, with each seat repository trusted in
@@ -439,7 +439,12 @@ Two entry points, each one AMQ launch request with every seat behind
   ```
 
   (drop `--dry-run` to start it; a pi-runtime build only). `scheduler run`
-  creates an absent AMQ root and session the way `up` does. The lead takes
+  creates an absent AMQ root and session the way `up` does, when the session
+  directory does not exist. Started by `lead --team` it finds the directory
+  the lead has already made and creates nothing: in a repository where `amq
+  coop init` has not run, `lead --team` creates no session and the launch
+  is refused (`base_root_unauthorized`); do host step 1 first, or start
+  with `up`. The lead takes
   squad.yaml's AMQ identity (its session root, its `lead:` handle); an
   `AM_ME`/`AM_ROOT` already in the environment must match it or it refuses.
   One lead per root: a second `lead --team` on the same root is refused

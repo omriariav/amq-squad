@@ -18,12 +18,12 @@ import (
 // AMQ's Codex dialog hook (3.0.1). A Codex seat's AMQ wake types the
 // doorbell into the pane; a doorbell at a Codex approval prompt cancels the
 // pending command and runs as a new prompt (AMQ docs/wake-operations.md:
-// 458-473 at v0.116.2). AMQ's dialog hook entries in <codex home>/hooks.json
+// 596-597 at v0.140.0). AMQ's dialog hook entries in <codex home>/hooks.json
 // hold the doorbell while a prompt is open. One read-only detection serves
 // the launch's wake gate (seatlaunch) and doctor's row (cli).
 
 // CodexDialogHookEvents are the events AMQ's Codex dialog hook wires
-// (internal/cli/wake_dialog_codex_unix.go:37-44 at AMQ v0.116.2).
+// (internal/cli/wake_dialog_codex_unix.go:38-45 at AMQ v0.140.0).
 var CodexDialogHookEvents = []string{"Stop", "UserPromptSubmit", "Interrupt", "SessionStart", "SessionEnd", "PermissionRequest"}
 
 // CodexActivityHookEvents are the installed 0.166.0 catalogue events that
@@ -32,7 +32,7 @@ var CodexDialogHookEvents = []string{"Stop", "UserPromptSubmit", "Interrupt", "S
 var CodexActivityHookEvents = []string{"PostToolUse", "Stop"}
 
 // CodexDialogHookMarker prefixes every AMQ dialog hook command
-// (internal/cli/wake_dialog_unix.go:32 at AMQ v0.116.2).
+// (internal/dialogguard/dialogguard.go:14 at AMQ v0.140.0).
 const CodexDialogHookMarker = "AMQ_DIALOG_HOOK=1 "
 
 // CodexDialogHookFix is the owner's step that installs the hook.
@@ -219,8 +219,8 @@ const codexDialogNoMarkerTest = `{ case "${AM_ROOT-}" in */./*|*/../*|*/.|*/..) 
 	`[ ! -e "$AM_ROOT/agents/$AM_ME/.wake.dialog" ] && ` +
 	`[ ! -L "$AM_ROOT/agents/$AM_ME/.wake.dialog" ]; }`
 
-// codexDialogCloseCommand mirrors AMQ v0.116.2's
-// internal/cli/wake_dialog_codex_unix.go codexDialogHookCommand("close").
+// codexDialogCloseCommand mirrors AMQ v0.140.0's codexDialogHookCommand
+// with the verb "close" (internal/cli/wake_dialog_codex_unix.go:54-62).
 func codexDialogCloseCommand(amqBin, home string) string {
 	store := filepath.Join(home, ".amq", "codex-threads", "current")
 	gate := `[ -n "${AM_ME-}" ] && ` + codexDialogNoMarkerTest + ` && exit 0; `

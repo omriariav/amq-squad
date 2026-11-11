@@ -29,8 +29,10 @@ What it proves:
   file). The rows of the retired path (the attachment's own DM reads, its
   once-only marks, redelivery) are gone.
 
-This run needs amq, amq-remote and amq-owner-sign v0.116.2 or later
-installed by the owner (his AMQ upgrade). The checkpoint of 5-amq-B ran its
+This run needs amq, amq-remote and amq-owner-sign 0.140.0 or later
+installed by the owner (his AMQ upgrade): 0.140.0 is doctor's floor for this
+build, and the mailbox adapter needs amq-remote v0.116.2 or later
+(`enroll.sh`'s own check). The checkpoint of 5-amq-B ran its
 rows against binaries built from the v0.116.2 module in a scratch
 directory, never installed (`docs/v3-spike/5-amq-execution.md`, part B);
 the rows here are the live rows against the installed binaries.
@@ -49,10 +51,11 @@ export PATH=/tmp/owner45/bin:$PATH AMQ_SQUAD=/tmp/owner45/bin/amq-squad AMQ_NO_U
 amq --version; amq-remote --version; amq-owner-sign --version
 ```
 
-Expected: `0.116.2` three times (or later; record the versions). An older
-amq-remote stops the run here: the mailbox adapter needs v0.116.2.
+Expected: `0.140.0` or later, three times (record the versions). An older
+one stops the run here: doctor's floor is 0.140.0 (0.1b), and the mailbox
+adapter needs amq-remote v0.116.2.
 
-0.1b Doctor (5-amq-B row): `amq-squad doctor` names the AMQ floor v0.116.2
+0.1b Doctor (5-amq-B row): `amq-squad doctor` names the AMQ floor 0.140.0
 and passes it (part A); with an older amq-remote it fails and names the
 floor. Record the line.
 
@@ -265,15 +268,18 @@ Expected within one attach tick: an attach `handled` line with `"kind":"gate"`,
 phone serve's result row under your answer reading `accepted g45-owner-01
 tag` (ids and the class only; neither your answer nor the question is
 echoed). Record T7 (the handled line's `at`) and T7b (the result row seen).
-The busy window (a 3.0 limit, plan R42; upstream ask 18): amq-remote runs
-one request at a time and answers a DM sent before the previous one's
-result row as `busy`; that DM never reaches the attachment, and serve does
-not tell the attachment about it, so nothing on the Mac records it. The
-owner waits for each result row before the next DM. A gate answer lost to
-busy costs a re-answer (the gate stays open); a routed message lost to
-busy is re-sent by the owner. This text is the whole mitigation in 3.0.
-If a `busy` row appears during this run, record it and send the message
-again.
+The busy window (a 3.0 limit, plan R42; upstream ask 18): amq-remote
+v0.116.2 ran one request at a time on the mailbox target and answered a DM
+sent before the previous one's result row as `busy`; that DM never reached
+the attachment, and serve did not tell the attachment about it, so nothing
+on the Mac recorded it. At amq-remote 0.140.0, this build's floor, a
+mailbox target admits concurrent requests: two owner DMs sent about 100 ms
+apart were both routed (the lead's run of 2026-11-11; at 0.116.2 the same
+two gave one routed and one `busy`). In this run the owner still waits for
+each result row before the next DM: the table's rows are written in that
+order. If a `busy` row appears during this run, record it and send the
+message again: a gate answer lost to busy costs a re-answer (the gate stays
+open), and a routed message lost to busy is re-sent by the owner.
 
 5.3 Lead:
 
@@ -474,7 +480,7 @@ the pipe. The no-secret-output evidence is the dry run's canary test
 | T13 clear answer verified (attach handled line) | |
 | T14 seat cleared (record names gate and event) | |
 | clear answer event id = record event_id | |
-| doctor AMQ floor line (0.1b; floor v0.116.2) | |
+| doctor AMQ floor line (0.1b; floor 0.140.0) | |
 | manifest: mailbox target, handle attach, reply_timeout 60s, commands on (1.2, 3.1) | |
 | `amq-remote bindings` output (3.1; not expected to list the strict share) | |
 | `amq-remote sessions`: target amq-squad, harness mailbox (4.3) | |
