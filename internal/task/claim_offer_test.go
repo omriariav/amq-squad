@@ -24,6 +24,9 @@ func TestClaimOfferedAcceptsOnlyTheLiveOfferForItsHolderAndPool(t *testing.T) {
 	if err != nil || got.Lease == nil || got.Lease.ClaimedAt == nil || got.Pool == nil || *got.Pool != *sol {
 		t.Fatalf("seat A's offered claim: %+v, %v", got, err)
 	}
+	if got.Lease.Renewals != 0 || got.Lease.ActivityRenewals != 0 || got.Lease.ManualRenewals != 0 || got.Lease.LastRenewal != "" {
+		t.Fatalf("initial offered claim counted as a renewal: %+v", got.Lease)
+	}
 }
 
 func TestClaimOfferedRefusesAnExpiredOfferAndActivityNeverRenewsIt(t *testing.T) {

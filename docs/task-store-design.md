@@ -82,7 +82,14 @@ Lease object:
 | `expires_at` | time | lease expiry |
 | `claimed_at` | time or null | when the holder claimed it; null is an unclaimed assignment |
 | `renewed_at` | time or null | last renewal |
-| `renewals` | int | renewal count |
+| `renewals` | int | renewal count, every source |
+| `activity_renewals` | int, omitted at 0 | renewals by the seat's runtime activity (the hook ingest) |
+| `manual_renewals` | int, omitted at 0 | renewals by `task renew` or by the holder claiming its own claimed lease again |
+| `last_renewal` | string, omitted before the first labelled renewal | `activity` or `manual`: the source of the latest renewal |
+
+A lease written by 3.2.0-rc.1 or older carries no labels: `renewals` minus the
+two labelled counts is its unlabelled count, and it is read and renewed as it
+stands.
 
 Fields that v2 carried and 3.0 drops: the outbox and delivery states, the
 dispatch metadata, completion notification suppression, lifecycle

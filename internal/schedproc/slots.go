@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/ledger"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
@@ -31,39 +32,62 @@ type Slots struct {
 	// Target is the launch's record of the owner's grant for each seat's
 	// commit step: repository, base branch and push URL (R2).
 	Target seatcommit.Target
+	// Root is the AMQ session root whose per-handle hook ledger supplies the
+	// second leg of Codex activity admission.
+	Root string
 	// LogDecision records launch-time repairs such as a stale index refresh.
 	LogDecision func(scheduler.Decision)
 
 	mu    sync.Mutex
 	inUse map[string]string // handle -> request id
 	byReq map[string]string // request id -> handle
-	// codexActivityTrusted is the trust result admitted at that seat's most
-	// recent launch. Absence is conservative: a Codex seat gets the manual
-	// renewal instruction until a launch has admitted its activity hooks.
-	codexActivityTrusted map[string]bool
+	// codexActivityAdmission is replaced at every seat launch. Absence is
+	// conservative: a Codex seat gets the manual renewal instruction until a
+	// launch has admitted trusted hooks or its own ledger proves activity.
+	codexActivityAdmission map[string]codexActivityAdmission
 }
 
-// AdmitCodexActivity records the launch-time exact-hash trust result.
-func (s *Slots) AdmitCodexActivity(handle string, trusted bool) {
+type codexActivityAdmission struct {
+	trusted  bool
+	launched time.Time
+}
+
+// AdmitCodexActivity records the launch-time exact-hash trust result and the
+// boundary after which only this handle's activity ledger can supply trust.
+func (s *Slots) AdmitCodexActivity(handle string, trusted bool, launched time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.codexActivityTrusted == nil {
-		s.codexActivityTrusted = map[string]bool{}
+	if s.codexActivityAdmission == nil {
+		s.codexActivityAdmission = map[string]codexActivityAdmission{}
 	}
-	s.codexActivityTrusted[handle] = trusted
+	s.codexActivityAdmission[handle] = codexActivityAdmission{trusted: trusted, launched: launched}
 }
 
 // NeedsManualRenew reports whether dispatch must tell this Codex seat to
 // renew by hand. Non-Codex seats use their established activity producers.
 func (s *Slots) NeedsManualRenew(handle string) bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	runtime := ""
 	for _, seat := range s.Squad.Seats {
 		if seat.Handle == handle {
-			return seat.Runtime == "codex" && !s.codexActivityTrusted[handle]
+			runtime = seat.Runtime
+			break
 		}
 	}
-	return false
+	admission, admitted := s.codexActivityAdmission[handle]
+	root := s.Root
+	s.mu.Unlock()
+	if runtime != "codex" {
+		return false
+	}
+	if admitted && admission.trusted {
+		return false
+	}
+	if !admitted || admission.launched.IsZero() || root == "" {
+		return true
+	}
+	active, err := ledger.HasActivitySince(root, handle, admission.launched)
+	return err != nil || !active
 }
 
 func poolMatches(p task.Pool, seat seatlaunch.Seat) bool {

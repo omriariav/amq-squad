@@ -148,7 +148,14 @@ func prepareClaimPool(t *Task, pool *Pool, requireKnown bool) error {
 	return nil
 }
 
-func claim(t *Task, dur time.Duration, now time.Time) {
+type renewalSource string
+
+const (
+	renewalActivity renewalSource = "activity"
+	renewalManual   renewalSource = "manual"
+)
+
+func claim(t *Task, dur time.Duration, now time.Time, source renewalSource) {
 	if dur <= 0 {
 		dur = DefaultLeaseDuration
 	}
@@ -157,6 +164,13 @@ func claim(t *Task, dur time.Duration, now time.Time) {
 		t.Lease.ClaimedAt = &at
 	} else {
 		t.Lease.Renewals++
+		switch source {
+		case renewalActivity:
+			t.Lease.ActivityRenewals++
+		case renewalManual:
+			t.Lease.ManualRenewals++
+		}
+		t.Lease.LastRenewal = string(source)
 	}
 	// Monotonic: an older timestamp never moves renewed_at back or shortens
 	// an extension another writer already committed.
@@ -340,7 +354,7 @@ func (s Store) Claim(id, holder string, pool *Pool, dur time.Duration, now time.
 				return err
 			}
 		}
-		claim(t, dur, now)
+		claim(t, dur, now, renewalManual)
 		all.touch(t.ID)
 		out = *t
 		return nil
@@ -411,7 +425,7 @@ func (s Store) ClaimServing(id, holder string, pool *Pool, dur time.Duration, no
 				return err
 			}
 		}
-		claim(t, dur, now)
+		claim(t, dur, now, renewalManual)
 		all.touch(t.ID)
 		out = *t
 		return nil
@@ -439,7 +453,7 @@ func (s Store) ClaimOffered(id, holder string, pool *Pool, dur time.Duration, no
 		if err := requireLiveHolder(t, holder, now); err != nil {
 			return err
 		}
-		claim(t, dur, now)
+		claim(t, dur, now, renewalManual)
 		all.touch(t.ID)
 		out = *t
 		return nil
@@ -454,7 +468,7 @@ func (s Store) RenewAttempt(holder string, attempt int, dur, minInterval time.Du
 	if attempt <= 0 {
 		return Task{}, false, ErrNoLease
 	}
-	return s.renew(s.update, holder, attempt, dur, minInterval, now)
+	return s.renew(s.update, holder, attempt, dur, minInterval, now, renewalManual)
 }
 
 // RenewNoWaitAttempt is the attempt-bound hook path.
@@ -462,7 +476,7 @@ func (s Store) RenewNoWaitAttempt(holder string, attempt int, dur, minInterval t
 	if attempt <= 0 {
 		return Task{}, false, ErrNoLease
 	}
-	return s.renew(s.updateNoWait, holder, attempt, dur, minInterval, now)
+	return s.renew(s.updateNoWait, holder, attempt, dur, minInterval, now, renewalActivity)
 }
 
 // RenewNoWaitActivity binds one runtime event to the exact task and attempt
@@ -484,7 +498,7 @@ func (s Store) RenewNoWaitActivity(holder string, began time.Time, dur, minInter
 	if held.Lease.RenewedAt != nil && now.Sub(*held.Lease.RenewedAt) < minInterval && now.Before(held.Lease.ExpiresAt) {
 		return *held, false, nil
 	}
-	return s.renewTaskAttempt(s.updateNoWait, holder, held.ID, held.Attempt, dur, minInterval, now)
+	return s.renewTaskAttempt(s.updateNoWait, holder, held.ID, held.Attempt, dur, minInterval, now, renewalActivity)
 }
 
 // LeaseNormalization is one pre-3.2.0 live lease upgraded in place.
@@ -575,7 +589,7 @@ func (s Store) normalizeLeases(update func(time.Time, func(*tasks) error) error,
 // exhausted. It is a normal non-renewal, not a reason to revive the lease.
 var ErrBudgetSpent = errors.New("task budget spent")
 
-func (s Store) renew(update func(time.Time, func(*tasks) error) error, holder string, attempt int, dur, minInterval time.Duration, now time.Time) (Task, bool, error) {
+func (s Store) renew(update func(time.Time, func(*tasks) error) error, holder string, attempt int, dur, minInterval time.Duration, now time.Time, source renewalSource) (Task, bool, error) {
 	list, err := Snapshot(s.Dir) // lock-free pre-check keeps the hook path cheap
 	if err != nil {
 		return Task{}, false, err
@@ -596,10 +610,10 @@ func (s Store) renew(update func(time.Time, func(*tasks) error) error, holder st
 	if renewAfterPrecheck != nil {
 		renewAfterPrecheck()
 	}
-	return s.renewTaskAttempt(update, holder, held.ID, held.Attempt, dur, minInterval, now)
+	return s.renewTaskAttempt(update, holder, held.ID, held.Attempt, dur, minInterval, now, source)
 }
 
-func (s Store) renewTaskAttempt(update func(time.Time, func(*tasks) error) error, holder, taskID string, attempt int, dur, minInterval time.Duration, now time.Time) (Task, bool, error) {
+func (s Store) renewTaskAttempt(update func(time.Time, func(*tasks) error) error, holder, taskID string, attempt int, dur, minInterval time.Duration, now time.Time, source renewalSource) (Task, bool, error) {
 	var out Task
 	wrote := false
 	err := update(now, func(all *tasks) error {
@@ -625,7 +639,7 @@ func (s Store) renewTaskAttempt(update func(time.Time, func(*tasks) error) error
 		if t.Lease.RenewedAt != nil && now.Sub(*t.Lease.RenewedAt) < minInterval {
 			return nil
 		}
-		claim(t, dur, now)
+		claim(t, dur, now, source)
 		all.touch(t.ID)
 		out, wrote = *t, true
 		return nil
