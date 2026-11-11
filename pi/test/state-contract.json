@@ -1,0 +1,387 @@
+{
+  "schema": "amq-squad-state-contract/1",
+  "task": {
+    "states": [
+      {
+        "name": "pending",
+        "terminal": false
+      },
+      {
+        "name": "in_progress",
+        "terminal": false
+      },
+      {
+        "name": "blocked",
+        "terminal": false
+      },
+      {
+        "name": "completed",
+        "terminal": true
+      },
+      {
+        "name": "cancelled",
+        "terminal": true
+      }
+    ],
+    "moves": [
+      {
+        "from": "",
+        "via": [
+          "Add",
+          "AddWithFileWaits"
+        ],
+        "writer": "AddWithFileWaits",
+        "to": "pending",
+        "who": [
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "pending",
+        "via": [
+          "Grant",
+          "GrantClean",
+          "ClaimServing"
+        ],
+        "writer": "grant",
+        "to": "in_progress",
+        "who": [
+          "scheduler",
+          "asserted_handle"
+        ],
+        "needs": "no blocker; the seat holds nothing; the seat is leasable",
+        "clears_block_group": false
+      },
+      {
+        "from": "pending",
+        "via": [
+          "Block",
+          "BlockWithPaths"
+        ],
+        "writer": "block",
+        "to": "blocked",
+        "who": [
+          "scheduler",
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "pending",
+        "via": [
+          "Cancel"
+        ],
+        "writer": "Cancel",
+        "to": "cancelled",
+        "who": [
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Done"
+        ],
+        "writer": "complete",
+        "to": "completed",
+        "who": [
+          "live_holder"
+        ],
+        "needs": "no declared files; a required verdict must pass",
+        "clears_block_group": true
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Complete",
+          "CompleteBound"
+        ],
+        "writer": "complete",
+        "to": "completed",
+        "who": [
+          "scheduler",
+          "harness_shell"
+        ],
+        "needs": "a report; a required verdict must pass",
+        "clears_block_group": true
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Done",
+          "Complete",
+          "CompleteBound"
+        ],
+        "writer": "block",
+        "to": "blocked",
+        "who": [
+          "live_holder",
+          "scheduler",
+          "harness_shell"
+        ],
+        "needs": "a required verdict is missing or does not pass",
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "RefuseCommitPaths"
+        ],
+        "writer": "block",
+        "to": "blocked",
+        "who": [
+          "scheduler",
+          "harness_shell"
+        ],
+        "needs": "a report",
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Block",
+          "BlockWithPaths"
+        ],
+        "writer": "block",
+        "to": "blocked",
+        "who": [
+          "live_holder"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Fail"
+        ],
+        "writer": "Fail",
+        "to": "pending",
+        "who": [
+          "live_holder"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Release"
+        ],
+        "writer": "Release",
+        "to": "pending",
+        "who": [
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "ExpireDue"
+        ],
+        "writer": "ExpireDue",
+        "to": "pending",
+        "who": [
+          "scheduler"
+        ],
+        "needs": "no report; the lease is due",
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Cancel"
+        ],
+        "writer": "Cancel",
+        "to": "cancelled",
+        "who": [
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "ResetBy"
+        ],
+        "writer": "ResetBy",
+        "to": "pending",
+        "who": [
+          "creator"
+        ],
+        "needs": "the route is not owner",
+        "clears_block_group": true
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "Reset"
+        ],
+        "writer": "Reset",
+        "to": "pending",
+        "who": [
+          "scheduler"
+        ],
+        "clears_block_group": true
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "ResetIfBlocked"
+        ],
+        "writer": "ResetIfBlocked",
+        "to": "pending",
+        "who": [
+          "scheduler"
+        ],
+        "needs": "the block reason and the match",
+        "clears_block_group": true
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "WidenGated"
+        ],
+        "writer": "WidenGated",
+        "to": "pending",
+        "who": [
+          "proven_lead"
+        ],
+        "needs": "no report; refused paths; reason widen_requested or growth_gate_required",
+        "clears_block_group": true
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "WidenGated"
+        ],
+        "writer": "WidenGated",
+        "to": "in_progress",
+        "who": [
+          "proven_lead"
+        ],
+        "needs": "a report; the lead is not the reporter",
+        "clears_block_group": true
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "Escalate"
+        ],
+        "writer": "block",
+        "to": "blocked",
+        "who": [
+          "proven_lead"
+        ],
+        "needs": "the route becomes owner",
+        "clears_block_group": false
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "Cancel"
+        ],
+        "writer": "Cancel",
+        "to": "cancelled",
+        "who": [
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      }
+    ],
+    "outcomes": [
+      "completed",
+      "unclaimed",
+      "expired",
+      "failed",
+      "released",
+      "blocked",
+      "cancelled",
+      "commit_refused"
+    ],
+    "routes": [
+      "lead",
+      "owner"
+    ],
+    "block_group": [
+      "block_reason",
+      "block_route",
+      "block_detail",
+      "block_attempt",
+      "refused_paths"
+    ],
+    "outcome_sets": [
+      {
+        "name": "retry_budget",
+        "reader_package": "internal/scheduler",
+        "reader_func": "DefaultRouter.Route",
+        "outcomes": [
+          "failed",
+          "expired"
+        ]
+      },
+      {
+        "name": "router_retry_effect",
+        "reader_package": "internal/routing",
+        "reader_func": "effect",
+        "outcomes": [
+          "failed",
+          "expired",
+          "commit_refused",
+          "blocked"
+        ],
+        "conditional": [
+          {
+            "outcome": "commit_refused",
+            "condition": "the attempt detail is classified true in RefusalWorkFailure"
+          },
+          {
+            "outcome": "blocked",
+            "condition": "the attempt detail is classified true in RefusalWorkFailure, or is unclassified (blocked defaults to a work failure)"
+          }
+        ]
+      },
+      {
+        "name": "weekly_report_failed",
+        "reader_package": "internal/routing",
+        "reader_func": "failedOutcome",
+        "outcomes": [
+          "failed",
+          "expired",
+          "commit_refused",
+          "blocked"
+        ]
+      },
+      {
+        "name": "verifier_fail",
+        "reader_package": "internal/routing",
+        "reader_func": "verifierResult",
+        "outcomes": [
+          "failed",
+          "commit_refused",
+          "blocked"
+        ]
+      },
+      {
+        "name": "exit_scan",
+        "reader_package": "internal/scheduler",
+        "reader_func": "scanAttemptsLog",
+        "outcomes": [
+          "failed",
+          "expired",
+          "unclaimed"
+        ]
+      },
+      {
+        "name": "seat_lapsed",
+        "reader_package": "internal/scheduler",
+        "reader_func": "idleSeatExcept",
+        "outcomes": [
+          "unclaimed",
+          "expired"
+        ]
+      }
+    ]
+  }
+}
