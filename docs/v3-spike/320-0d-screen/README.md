@@ -1228,9 +1228,10 @@ whether a seat can rewrite that record was not settled.
 
 What status does to the text. `status.Build` copies the warnings
 (`internal/status/classify.go:126`) and passes them and each seat's through
-`redactAll` (:351, :378, :455). That redacts credentials: a credential's
-value is replaced whole, whatever it holds. It does no other replacement of
-control characters.
+`redactAll` (:351, :378, :455). That redacts credentials: the span each
+redaction rule matches is replaced with a placeholder, and the text outside it
+is kept, control characters included (`internal/redact/redact.go:484-505`).
+It does no other replacement of control characters.
 
 ### What the two replacements cover
 
