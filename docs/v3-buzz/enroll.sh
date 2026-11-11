@@ -129,9 +129,9 @@ echo "relay: $RELAY"
 echo "share: $ROOT session $SESSION, name \"$NAME\", $DAYS-day window"
 
 # --- A: local -------------------------------------------------------------
-# The mailbox adapter needs amq-remote v0.116.2 or later; an older one
-# refuses the kind, so the script stops here first. Doctor's floor for this
-# build is higher (0.140.0) and is doctor's check, not this script's.
+# The script stops at an amq-remote below v0.116.2, the version brief
+# 5-amq-B's rows ran against; the mailbox kind dates from AMQ v0.111.0 (PR
+# #1226). Doctor's floor for this build (0.140.0) is doctor's check.
 RV=$(amq-remote version 2>/dev/null | awk '{print $2}')
 case $RV in
   0.11[7-9].* | 0.1[2-9][0-9].* | [1-9].* | 0.116.[2-9] | 0.116.[1-9][0-9]) ;;

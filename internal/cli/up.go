@@ -1132,7 +1132,7 @@ var tmuxNameRE = regexp.MustCompile(`[^a-z0-9-]+`)
 
 // upTmuxSessionName is the lead's tmux session: squad-lead-<repo, at most
 // 30 characters>-<sha256(repo path)[:5]>. It never matches AMQ's amq-*
-// sessions (AMQ v0.116.2 internal/launch/tmux_names.go:11-23), and the
+// sessions (AMQ v0.140.0 internal/launch/tmux_names.go:11-23), and the
 // lead stays out of the roster's session.
 func upTmuxSessionName(project string) string {
 	slug := strings.Trim(tmuxNameRE.ReplaceAllString(strings.ToLower(filepath.Base(project)), "-"), "-")

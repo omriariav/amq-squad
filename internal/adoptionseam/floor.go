@@ -69,7 +69,7 @@ const AdoptionFloorContractSemver = ">=0.61.1"
 // plan_only_commands_v1. The list below is what NegotiateAdoptionFloor
 // requires, not what this package forwards: PrepareInput carries a
 // Placement that the requirement does not name. AMQ v0.139.0 removed
-// lifecycle_v1, which this comment listed until then. At the v0.140.0 pin
+// lifecycle_v1; this comment listed it until PR #975. At the v0.140.0 pin
 // TestNegotiateAdoptionFloorSatisfiedByPinnedAMQ passes with these six.
 var AdoptionFloorFeatures = []string{
 	launchapi.FeatureBaseRoot,
