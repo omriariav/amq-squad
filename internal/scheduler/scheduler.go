@@ -1130,9 +1130,12 @@ func (s *Scheduler) seatExcluded(handle string) bool {
 // prepare passes. A typed newer_writer or schema_mismatch refusal is
 // recorded on the seat (one seat_excluded line per change) and the
 // search continues here. Any other failure is returned with its
-// seat: the dispatch loop raises a tamper as the typed block on the
-// task and ends that task's search, and logs any other failure once,
-// skips the seat for the pass and calls again.
+// seat. A tamper: the dispatch loop raises the typed block on the
+// task and ends that task's search when the store's block succeeds,
+// and returns the store's error when it does not. Any other failure
+// is logged once (its first repeat as seat_prepare_suppressed, later
+// repeats counted), the seat is skipped for the pass and the loop
+// calls again.
 func (s *Scheduler) preparedIdleSeat(list []task.Task, t task.Task, p task.Pool, skip map[string]bool, log func(Decision)) (string, error) {
 	for {
 		handle := s.idleSeatExcept(list, t, p, skip)
