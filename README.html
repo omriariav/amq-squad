@@ -349,8 +349,9 @@ short, with what rc.1 already had:</p>
 budget, with no <code>task renew</code> call needed. The budget is
 squad.yaml's <code>task_budget</code> (90 minutes by default) or
 <code>task add --budget</code>; the lead lengthens it with
-<code>task extend ID --by DURATION</code>. A lease from 3.1.2 gets at
-least one lease after the restart.</li>
+<code>task extend ID --by DURATION</code>. A lease from 3.1.2 gets a
+budget end at least one lease after the restart; its own expiry is
+unchanged.</li>
 <li>Codex seats need one owner step: after installing, launch one Codex
 seat, run Codex's <code>/hooks</code> and trust the amq-squad activity
 entries at the installed path. Nothing writes that trust for you. Until

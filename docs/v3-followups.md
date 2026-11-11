@@ -128,7 +128,8 @@ its PR. Nothing here is promised by date.
 - **rc.2 0e, done (#925, #930, #931):** the commit ledger can be downgraded
   or reinterpreted because its raw bytes are not sealed with schema-specific
   refusal reasons. Seal the raw bytes and refuse downgrades with distinct
-  `newer_writer` and `schema_mismatch` reasons; #904 and #909 land after it.
+  `newer_writer` and `schema_mismatch` reasons; #904 and #909 were to land
+  after it (neither merged; #934 and #943 replaced them).
 - **rc.2, done (#939, #940):** today identical refused bytes reuse their slot
   (`sameSlot` at `internal/seatcommit/quarantine.go:333`, and the reuse
   branch at `:213-221`), which allows the same-uid slot-reuse replay. A slot
@@ -140,8 +141,9 @@ its PR. Nothing here is promised by date.
   Source: `internal/uninstall/plan.go:78`. Since #934 `quarantine` is one of
   `sealedNames` (`internal/uninstall/plan.go:82`).
 - **The evidence anchor's `update-ref`** (`internal/seatcommit/commit.go:839`
-  at 6c881623; `:928` on e27dca44) passes an expected-old value, so it can
-  never overwrite an earlier chain's evidence ref. (The #933 gate.)
+  at 6c881623; `:928` on e27dca44) should pass an expected-old value, so
+  that it can never overwrite an earlier chain's evidence ref; today it
+  passes none. (The #933 gate.)
 - **An orphaned tamper block.** A crash between blockOnTamper's store write
   (`internal/scheduler/tamper.go:191`) and the tick's state write
   (`scheduler.go:537`) leaves a task blocked for an alarm no hold carries;
@@ -149,8 +151,10 @@ its PR. Nothing here is promised by date.
   the block, or a restart adopts blocks that name an alarm no hold carries.
   (The #933 gate.)
 - **A retry of `scheduler recover` that finds its own interrupted recovery**
-  (the new body under the old refused head) completes the head instead of
-  asking for a second decision. (The #933 gate.)
+  (the new body under the old refused head) should complete the head
+  instead of asking for a second decision; the rc.2 notes' known limit "A
+  crash between the recovery's two writes" says what happens today. (The
+  #933 gate.)
 - **The admitted successor's head** (0e's item, not the 0c-B port's; from
   t129's block on R15): after a write that stopped before its head under a
   raw head, the next locked writer derives its predecessor from the head
@@ -240,6 +244,22 @@ as #962 corrected it.
   `internal/cli/up_raw_layout_test.go:85-87`).
 - **"P5/P6 probes assert the per-tick counts, the status, the appended
   kinds"** (today they log them; the note cites the lead's rerun).
+- **The alarms file has older-reader rows:** v3.2.0-rc.1's and v3.1.2's
+  `uninstall` plan (`internal/uninstall/plan.go:330-343` in both, which
+  tries each name in the commits directory as a commit ledger) and `status`
+  (`internal/status/collect.go:491-515` in both, which reads only names that
+  end in `.json`) are run on a session that holds
+  `commits/<handle>.alarms.jsonl`, and a row says what each prints. (Placed
+  by the plan reviewer on #963, 2026-11-11. Today there is a reading of the
+  two tags only, the lead's and Codex's; the rc.2 notes' known limit 13 says
+  so. The comment at `internal/seatcommit/alarms.go:24-25`, "No released build
+  reads it", is inexact for that `uninstall` read and is corrected with the
+  rows.)
+- **An old `status` and an old screen read a `ledger_layout_migrated`
+  decisions line** and a row says what they show. (Placed by the plan
+  reviewer on #963, 2026-11-11. P5 has the old processes ticking over a
+  decisions file that holds two such lines without error; no row has an old
+  `status` or screen reading one.)
 
 ### Cancel and clean
 
@@ -371,9 +391,12 @@ as #962 corrected it.
   owner gate whose "yes" cannot be acted on safely. A strict refusal, a
   branch-update conflict and a PR already merged at another head each end in
   words with no gate, and an accepted legacy gate record never lifts them; a
-  transient read error during reconcile (5xx, transport, deadline, rate
-  limit, gh killed) audits and skips that PR while the run continues. See the
-  audit table below.
+  read error during reconcile that is not definite (bare EOF, 5xx,
+  transport, deadline, killed `gh`, unknown wording, and exact HTTP 4xx
+  other than 401, 403 or 404) writes `reconcile_read_failed`, skips that PR
+  and the run continues, except a non-definite Checks error in `waitCI`
+  inside `reconcileUpdates`, which ends the run in the recovery words. See
+  the audit table below.
 - **rc.2 item 7d, done in the rc.2 notes (known limit 11):** the rc.2 known
   limits re-state that the merge train's dry run still appends its audit
   entries (flagged `DryRun`); making the dry run read-only is 3.2.x.
@@ -457,8 +480,9 @@ as #960 corrected it.
 
 - The lead screen's "waiting on you" section lists only open gates, so it can
   say "Nothing is waiting on you" while a lead-routed stop is open. #904's
-  phase two lists the tamper alarm there; the other lead-routed stop kinds
-  should be listed there too.
+  phase two was to list the tamper alarm there; #904 did not merge (#934
+  replaced it), so the tamper alarm is not listed there either. Every
+  lead-routed stop kind should be listed there.
 - **Done (#955):** (Low priority) Write a decision line per task wait change,
   so a wait is on record when the screen cannot show its row. (A wait change
   now writes one `wait_changed` decision.)
