@@ -757,7 +757,6 @@ var confusables = map[rune]rune{
 }
 
 var (
-	answerVerbs = map[string]bool{"yes": true, "no": true, "approve": true, "deny": true}
 	// gateIDShape is a gate id as the squads mint them: rel-..., gate-...,
 	// or <kind>-<20 hex>
 	gateIDShape = regexp.MustCompile(`^((rel|gate)-[a-z0-9._-]+|[a-z][a-z0-9]*-[0-9a-f]{20})$`)
@@ -765,9 +764,9 @@ var (
 )
 
 // answerForm reports whether a whole line is an answer form: gateverify's
-// inbound parser (gatestore.ParseAnswer) accepts it, or, after trimming
-// punctuation and case, it is yes, no, approve or deny alone or followed by
-// a gate id and the rest of the typed tuple.
+// inbound parser accepts it, or, after the relay's wider normalization, its
+// first one or two fields are a decided bare-answer word, alone or followed
+// by a gate id and the rest of the typed tuple.
 func answerForm(line string, known map[string]bool) bool {
 	if _, err := gatestore.ParseAnswer(line); err == nil {
 		return true
@@ -778,10 +777,24 @@ func answerForm(line string, known map[string]bool) bool {
 			w = append(w, f)
 		}
 	}
-	if len(w) == 0 || len(w) > 4 || !answerVerbs[w[0]] {
+	if len(w) == 0 {
 		return false
 	}
-	rest := w[1:]
+	if _, ok := gatestore.BareVerb(strings.Join(w, " ")); ok {
+		return true
+	}
+	wordFields := 0
+	if _, ok := gatestore.BareVerb(w[0]); ok {
+		wordFields = 1
+	} else if len(w) >= 2 {
+		if _, ok := gatestore.BareVerb(strings.Join(w[:2], " ")); ok {
+			wordFields = 2
+		}
+	}
+	if wordFields == 0 || len(w)-wordFields > 3 {
+		return false
+	}
+	rest := w[wordFields:]
 	switch {
 	case len(rest) == 0:
 		return true
