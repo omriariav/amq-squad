@@ -4,7 +4,6 @@ amq-squad: amq-squad v3.2.0-rc.2 at /private/tmp/tokmtok-rc2-amq0116.aKQwBq/bin/
 amq: 0.116.2 at <home>/go/bin/amq
 amq-remote: amq-remote 0.116.2; amq-owner-sign: 0.116.2
 provider: <home>/.local/bin/claude 2.1.319 (Claude Code)
-live tmux sessions before: amq-amq-squad-f42a4d5279-v31-c7acc1c7 gws-ollama-session memory-wpp squad-lead-amq-squad-f42a4 
 amq coop init exit=0
 amq session create exit=0
 .amqrc: {  "root": ".agent-mail"}
@@ -21,6 +20,5 @@ tmux server pid: 45003
 processes under the scratch tmux server while live: 2
 processes naming the root after kill-server: 0
 processes of the scratch tmux tree still alive after kill-server: 0
-live tmux sessions after: amq-amq-squad-f42a4d5279-v31-c7acc1c7 gws-ollama-session memory-wpp squad-lead-amq-squad-f42a4 
 end 2026-11-11T18:30:09Z
 owner Codex home files unchanged (mtime and size): yes

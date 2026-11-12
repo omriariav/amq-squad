@@ -313,17 +313,17 @@ internal/cli/liveness.go:351:6: unreachable func: classifyAgentLivenessForRollup
 
 ## The files
 
-Beside this note, each passed through `go run ./scripts/redact-evidence` (it replaced no value, and `-check` is clean). A host path under the home directory is replaced by hand with the placeholder `<home>`; the count of replacements is beside each file that had one. After it the eleven files and this note hold 0 lines with a home path.
+Beside this note, each passed through `go run ./scripts/redact-evidence` (it replaced no value, and `-check` is clean). From each of the three measurement records (the `-run.txt` files) the two lines that list the host's other tmux sessions are left out. A host path under the home directory is replaced by hand with the placeholder `<home>`; the count of replacements is beside each file that had one. After it the eleven files and this note hold 0 lines with a home path.
 
 - decisions-soak.jsonl: 97 lines, 13571 bytes, sha256 a0fd1833d3c7f6b6f7a3fbb378f0ee62df18dc3443dc9578f4059375307f3f8e. Lines 21544 to 21640 of the decision log's copy. 1 placeholder.
 - soak-task-table.md: 17 lines, 2116 bytes, sha256 a077f49a4dc5d8017c51b69d629235706d4ad8334b847083e989aa9a7ba3baeb. The table under "The tasks".
 - lead-screen-2026-11-12.txt: 42 lines, 3768 bytes, sha256 3c9db393b56484189ef1af00a6800076086db8556cf5d006c02bc4f317522e25. The lead's pane at 2026-11-12T07:04:11Z. 1 placeholder.
-- measure-up-noinit-run.txt: 26 lines, 1462 bytes, sha256 8f7cd5f26b5791fb4ac0eece9627c92ad05bd87511584457da774a64eafe5e4e. Measurement 1's record. 1 placeholder.
+- measure-up-noinit-run.txt: 24 lines, 1217 bytes, sha256 ca6405484ffad91c2fc3106103b5a307fc15226cb27b93a180cad0358473f9df. Measurement 1's record. 1 placeholder.
 - measure-up-noinit-decisions.jsonl: 5 lines, 665 bytes, sha256 38bc4f7794922db197307a1b2cac5b96055e2a3e961852c8f8a1e98c0086974f. Measurement 1's decision log.
-- measure-claude-token-run.txt: 26 lines, 1275 bytes, sha256 0d313aae4316f9d89acb58a0372e53e80d93ec79e49d9aa4d3aa1b87ed93d11e. Measurement 2's record. 2 placeholders.
+- measure-claude-token-run.txt: 24 lines, 1030 bytes, sha256 4e19b65c2a57cacb5570c8375da5e294f8701c1408ccdecc89c988f731561a95. Measurement 2's record. 2 placeholders.
 - measure-claude-token-decisions.jsonl: 4 lines, 660 bytes, sha256 103041b4397d4722f99da8a63e58acbad3d5cbdfca082cc95ab45b9b0d140d35. Measurement 2's decision log.
 - deadcode-liveness.txt: 10 lines, 788 bytes, sha256 a287d2d29c21cbf495a3ed9291e74c3bd71cacedd3cd86eca39b9c015083e293. Measurement 3's ten lines.
-- measure-lead-noinit-run.txt: 21 lines, 1117 bytes, sha256 9a6cd99407b5420b9d0fa4ba038062cbdd4cfe2494fc54471842b08ad3b5797d. Measurement 1b's record. 1 placeholder.
+- measure-lead-noinit-run.txt: 19 lines, 872 bytes, sha256 fd86ba595567ee25b3004832d11290c680eb4088794249ab8d93036a1a32b865. Measurement 1b's record. 1 placeholder.
 - measure-lead-noinit-decisions.jsonl: 4 lines, 676 bytes, sha256 20fd979c55ef5e5c87f39aa42fe479be7282d7f6f5facb9a35b24ab285a8fc07. Measurement 1b's decision log.
 - measure-lead-noinit-doctor.txt: 40 lines, 7923 bytes, sha256 61b26f69980ebe02c15ebbba5dcd1a06b2e598a505133490d2712aa095c55c65. Measurement 1b's `doctor` output. 9 placeholders.
 
