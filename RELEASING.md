@@ -66,8 +66,8 @@ version.
    done. Install the binary built from the tag (`scripts/build-pi-runtime.sh
    all`, the one attached to the release). Then either restart the squad's own
    lead on it, or run `amq-squad lead --team -- --offline` in a scratch
-   repository (`git init` in an empty directory, no `squad.yaml`, a scratch
-   `HOME`). Record the lead's first screen, a tmux `capture-pane` at about
+   repository (`git init` in an empty directory; no `squad.yaml`, so the lead
+   comes up solo; a scratch `HOME`). Record the lead's first screen, a tmux `capture-pane` at about
    10 s, in the release evidence (`docs/v3-spike/5-release-evidence/release-<tag>/`).
    A dead pane or any `Failed to load extension` line means the release is
    not done. `make release-smoke` checks only the version, and CI stages no pi

@@ -220,7 +220,7 @@ Seen on 2026-11-12, after the copy of the decision log, on the installed rc.2 bu
 - The head is not a local commit: at 09:54:06Z `git merge-base --is-ancestor 91081d70ea66 origin/v3` exits 0, `git rev-list --count 1a3db2f1..91081d70` prints 2, and the seat's worktree holds no change (`git status --porcelain --untracked-files=all` prints 0 lines).
 - The check, at the v3.2.0-rc.2 tag: `internal/seatcommit/commit.go:679-697`. On a task branch the head counts as recorded when it equals the launch record's base (`restTarget`, `:784-790`) or is a commit of the seat's ledger; the clean refuses when `git rev-list` from that base to the head is not empty and the head is not recorded. It does not ask whether the head is on the remote branch.
 - By the check's code, the condition is: a seat whose task branch was cut from a tip later than the seat's launch base, and whose attempt ends with no commit, is refused at its next prepare with `seat_head_detached_unmerged`.
-- Not measured: whether a relaunch clears it; a cancel or an expiry in place of the block.
+- A relaunch from the lead's pane re-based every seat to the tip and the seat was not refused again, measured once at the 3.2.0 cut (the 3.2.0 evidence note); a restart alone does not clear it, measured once there too. Not measured: a cancel or an expiry in place of the block.
 
 ## What this PR corrects
 
@@ -236,7 +236,7 @@ Each is the lead's run, kept here as the run's own record. The first two were as
 
 ### 1. `up` in a repository where `amq coop init` has not run
 
-The command, run by the scratch script whose record is measure-up-noinit-run.txt: `amq-squad up --skip-install --wait 150s --json`, the v3.2.0-rc.2 binary, host amq 0.116.2, in a scratch repository with no `.amqrc` and no `.agent-mail`. From the record:
+The command, run by the scratch script whose record is measure-up-noinit-run.txt: `amq-squad up --skip-install --wait 150s --json`, the v3.2.0-rc.2 binary, host amq 0.116.2, in a scratch repository with no `.amqrc` and no `.agent-mail`. The scratch repository held a `squad.yaml` (a pi lead and one codex seat), written by the measurement's script (the v3.2.0 evidence note, "Corrections found at the cut", item 3). From the record:
 
 ```text
 start 2026-11-11T18:28:16Z
@@ -254,7 +254,7 @@ The run's decision log, measure-up-noinit-decisions.jsonl, holds 5 lines, in ord
 
 ### 1b. `lead --team` in a repository where `amq coop init` has not run
 
-The run's record is measure-lead-noinit-run.txt: the v3.2.0-rc.2 binary, host amq 0.116.2, a scratch repository with no `.amqrc`, a scratch HOME, and the lead started directly with `amq-squad lead --team -- --offline` (run on 2026-11-11 at #972's gate). From the record:
+The run's record is measure-lead-noinit-run.txt: the v3.2.0-rc.2 binary, host amq 0.116.2, a scratch repository with no `.amqrc`, a scratch HOME, and the lead started directly with `amq-squad lead --team -- --offline` (run on 2026-11-11 at #972's gate). The scratch repository held a `squad.yaml` (a pi lead and one codex seat), written by the measurement's script (the v3.2.0 evidence note, "Corrections found at the cut", item 3). From the record:
 
 ```text
 start 2026-11-11T18:13:55Z
