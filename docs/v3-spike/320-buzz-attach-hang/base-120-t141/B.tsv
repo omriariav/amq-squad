@@ -1,0 +1,11 @@
+run	exit	seconds	load_before	load_after	hang_point	companion_exit
+1	1	133	{ 2.31 2.29 2.70 }	{ 2.96 2.42 2.68 }	online while the lead runs	-
+2	1	134	{ 2.96 2.42 2.68 }	{ 1.68 2.05 2.48 }	online while the lead runs	-
+3	1	133	{ 1.68 2.05 2.48 }	{ 2.43 2.02 2.39 }	online while the lead runs	-
+4	1	133	{ 2.43 2.02 2.39 }	{ 2.65 2.23 2.42 }	online while the lead runs	-
+5	1	134	{ 2.65 2.23 2.42 }	{ 1.55 1.90 2.25 }	online while the lead runs	-
+6	1	133	{ 1.55 1.90 2.25 }	{ 1.11 1.56 2.06 }	online while the lead runs	-
+7	1	134	{ 1.11 1.56 2.06 }	{ 1.19 1.40 1.91 }	online while the lead runs	-
+8	1	133	{ 1.19 1.40 1.91 }	{ 1.13 1.39 1.84 }	online while the lead runs	-
+9	1	134	{ 1.13 1.39 1.84 }	{ 1.20 1.33 1.75 }	online while the lead runs	-
+10	1	133	{ 1.20 1.33 1.75 }	{ 1.27 1.27 1.66 }	online while the lead runs	-

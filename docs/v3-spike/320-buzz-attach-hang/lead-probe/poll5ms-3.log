@@ -1,0 +1,352 @@
+=== RUN   TestOwnerScriptDryRun
+    enroll_test.go:113: AMQ binary amq: 0.116.2 (/Users/omri/go/bin/amq)
+    enroll_test.go:113: AMQ binary amq-remote: 0.116.2 (<lead-tmp>/probe945/bin-5ms/amq-remote)
+    enroll_test.go:113: AMQ binary amq-owner-sign: 0.116.2 (/Users/omri/go/bin/amq-owner-sign)
+    enroll_test.go:173: run 1 (phase A): rc 10 in 414ms
+        owner: npub15czp5a6z6fz0009effk9cq6gngze55asnq7nc45zjwq2ud8zsapqfrtdz3 (a6041a7742d244f7bcb94a6c5c03489a059a53b0983d3c56829380ae34e28742)
+        relay: ws://127.0.0.1:65049
+        share: /private/tmp/4e-3490626887/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+        == A: amq init (endpoint handle remote, mailbox handle attach)
+        == A: amq-remote share --enable buzz-dm --enable buzz-profile --days 30
+        body:  0ad0967e15ddf58913f422a56331de961d8ad817e3a5d82f3c92ad6e0ec7e0ac (check this against what amq-owner-sign shows)
+        grants requested: 8
+        == B: the owner signs the grants (amq-owner-sign, key through the pipe)
+           OWNER STEP: set BUZZ_OWNER_KEY_CMD to your password manager's read command and rerun, e.g.
+             BUZZ_OWNER_KEY_CMD='op read "op://<vault>/<item>/<field>"' /Users/omri/scratch-review-945/docs/v3-buzz/enroll.sh npub15czp5a6z6fz0009effk9cq6gngze55asnq7nc45zjwq2ud8zsapqfrtdz3 ws://127.0.0.1:65049
+           The key goes from that command straight into amq-owner-sign and nowhere else.
+        save this output, sign it in one step, then enroll the bundle:
+          amq-owner-sign --share <this-output> --out <bundle.json> --relay <wss-url>
+          amq-remote share --root /private/tmp/4e-3490626887/.amq-squad/buzz/root --session amq-squad --bundle <bundle.json> --target <target> --relay <wss-url> [--dm-channel <channel> --native-session <id>]
+    enroll_test.go:229: run 2 (owner signs through the pipe): rc 11 in 9.21s
+        owner: npub15czp5a6z6fz0009effk9cq6gngze55asnq7nc45zjwq2ud8zsapqfrtdz3 (a6041a7742d244f7bcb94a6c5c03489a059a53b0983d3c56829380ae34e28742)
+        relay: ws://127.0.0.1:65049
+        share: /private/tmp/4e-3490626887/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+        body:  0ad0967e15ddf58913f422a56331de961d8ad817e3a5d82f3c92ad6e0ec7e0ac (check this against what amq-owner-sign shows)
+        grants requested: 8
+        == B: the owner signs the grants (amq-owner-sign, key through the pipe)
+           OWNER: amq-owner-sign shows the body; check it is 0ad0967e15ddf58913f422a56331de961d8ad817e3a5d82f3c92ad6e0ec7e0ac and type its first 8 characters.
+        You are about to sign these grants and publish a policy for this body.
+        session:     amq-squad
+        body pubkey: 0ad0967e15ddf58913f422a56331de961d8ad817e3a5d82f3c92ad6e0ec7e0ac
+          kind 20003: kind=20003&created_at<1796931108 (until 2026-12-10T19:31:48Z)
+          kind 1059: kind=1059&created_at<1796931108 (until 2026-12-10T19:31:48Z)
+          kind 24200: kind=24200&created_at<1796931108 (until 2026-12-10T19:31:48Z)
+          kind 44200: kind=44200&created_at<1796931108 (until 2026-12-10T19:31:48Z)
+          kind 10100: kind=10100&created_at<1796931108 (until 2026-12-10T19:31:48Z)
+          kind 0: kind=0&created_at<1796931108 (until 2026-12-10T19:31:48Z)
+          kind 9: kind=9&created_at<1796931108 (until 2026-12-10T19:31:48Z)
+          kind 40003: kind=40003&created_at<1796931108 (until 2026-12-10T19:31:48Z)
+        check the body pubkey against the share output, then type its first 8 characters to sign: 0ad0967e
+        owner nsec or hex (hidden): owner pubkey: a6041a7742d244f7bcb94a6c5c03489a059a53b0983d3c56829380ae34e28742
+        wrote 8 signed grants to /private/tmp/4e-3490626887/.amq-squad/buzz/bundle.json
+        published kind 30177 policy b6b9c7b2d86b68f90faefecd75de8bf37e6df15e2b77c02fc06f9645bdba9e7b
+        next: amq-remote share --session amq-squad --bundle /private/tmp/4e-3490626887/.amq-squad/buzz/bundle.json --target <target> --relay ws://127.0.0.1:65049
+        == C: amq-remote share --bundle (enroll)
+        grants enrolled: 8
+        == D: amq-remote share --target --relay --presence "amq-squad"
+        == D: amq-remote up (background, publishes the profile and presence)
+             doctor: "discovery": "policy_present"
+             doctor: "presence": "online"
+             doctor: "state": "authenticated"
+        == D: OWNER STEP (phone or Buzz Desktop): open a DM with the agent named "amq-squad"
+             and send the DM channel id back: rerun with BUZZ_DM_CHANNEL=<channel id>.
+             agent npub: npub1ptgfvls4mh6cjyl5y2jkxvw7jcwc4kqhuwjasteuj2kkurk8uzkqvvcqeh
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m████ ▄▄▄▄▄ █   █▄ █▄▄██▀▀▄▄▄██ ▄▄▄▄▄ ████[0m
+        [40;37;1m████ █   █ █ ▀▄ █▀ ▄▄▄ ▀█▄▀  █ █   █ ████[0m
+        [40;37;1m████ █▄▄▄█ █▀██▀▀█▀▄▀▀█▀█▀▄▄ █ █▄▄▄█ ████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄▀▄█ █▄█ ▀ █▄▀ ▀ █▄▄▄▄▄▄▄████[0m
+        [40;37;1m████  ▀█▄ ▄█▀▀▀▄▀█▀ ▀ ▀▄█ ▄ ▄██ █▄ ▄▄████[0m
+        [40;37;1m█████▄ ▄▄▄▄▀▄█▀ ▄▄▀▄ ▀█▀▄▀  ▄▄▀▄▀ ▄▄█████[0m
+        [40;37;1m█████▀█▀ █▄█▀█▄█▄▀█▀ ▄▀█▄ ▄ █▀▄▀▄▄██▄████[0m
+        [40;37;1m████ ▀▄█ ▄▄█ ▀ █▀█▀ █ ▀█▀▀▄▄█▄▄█▀▄▄ ▀████[0m
+        [40;37;1m█████▄ ▄ █▄  ▄█▄▀▀█▀ ▄█▄▀   ▄█▄▀▄▀█▄▄████[0m
+        [40;37;1m████▄ ▀▀█▄▄▄▀▄▀ ▄▄▄▄▀▀▀▀▄  ▄▄▀▀▄ ▄▄ ▀████[0m
+        [40;37;1m████ ██  ▀▄█▄ ██▄▀█ ▀▄█▄▄▄ ▀▄▄▄ ▄▄▀▀█████[0m
+        [40;37;1m██████▄▀ █▄ █ ██▀▄▄▄▀ ▄▀ ▀▀▄▀▄█  ▄█▄▀████[0m
+        [40;37;1m████▄▄█▄▄▄▄▄ ▄▄▄ ▀▀ ▀▄▀▄█▄ ▀ ▄▄▄  ▀▀█████[0m
+        [40;37;1m████ ▄▄▄▄▄ █▀▀▀ █▄▀▄   ▀▄▀█▀ █▄█ ██ █████[0m
+        [40;37;1m████ █   █ █▄█  ▄▀█▀▄▄█▄▄▄▀█ ▄   █▀▀ ████[0m
+        [40;37;1m████ █▄▄▄█ █▀▀▀  █▀▄   ▀█▀█  ▀ █  ▄▄█████[0m
+        [40;37;1m████▄▄▄▄▄▄▄█▄▄▄█▄██▄█▄██▄▄▄▄▄█▄██▄██▄████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+        [40;37;1m█████████████████████████████████████████[0m
+    enroll_test.go:245: MEASURED: grants at enrollment 8 (kinds [20003 1059 24200 44200 10100 0 9 40003]), window 720h0m0s, expires 2026-12-10T19:31:48Z
+    enroll_test.go:251: RECORDED (scratch-built amq-remote): manifest after phase D:
+        {
+          "adapters": [
+            {
+              "kind": "mailbox",
+              "target": "amq-squad",
+              "config": {
+                "handle": "attach",
+                "reply_timeout": "60s"
+              }
+            }
+          ],
+          "layer": "remote",
+          "relay": {
+            "url": "ws://127.0.0.1:65049",
+            "shares": [
+              {
+                "target": "amq-squad",
+                "session": "amq-squad",
+                "owner_pubkey": "a6041a7742d244f7bcb94a6c5c03489a059a53b0983d3c56829380ae34e28742",
+                "presence": true,
+                "name": "amq-squad"
+              }
+            ]
+          },
+          "schema_version": 2
+        }
+    enroll_test.go:173: run 3 (bind): rc 0 in 1.107s
+        owner: npub15czp5a6z6fz0009effk9cq6gngze55asnq7nc45zjwq2ud8zsapqfrtdz3 (a6041a7742d244f7bcb94a6c5c03489a059a53b0983d3c56829380ae34e28742)
+        relay: ws://127.0.0.1:65049
+        share: /private/tmp/4e-3490626887/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+        body:  0ad0967e15ddf58913f422a56331de961d8ad817e3a5d82f3c92ad6e0ec7e0ac (check this against what amq-owner-sign shows)
+        grants requested: 8
+        grants enrolled: 8
+        == E: amq-remote share --target amq-squad --dm-channel <channel> --native-session attach --min-evidence submitted
+        == E: amq-squad remote bind
+        gate binding written: /private/tmp/4e-3490626887/.amq-squad/gate-binding.json
+        body npub1ptgfvls4mh6cjyl5y2jkxvw7jcwc4kqhuwjasteuj2kkurk8uzkqvvcqeh (0ad0967e15ddf58913f422a56331de961d8ad817e3a5d82f3c92ad6e0ec7e0ac), owner a6041a7742d244f7bcb94a6c5c03489a059a53b0983d3c56829380ae34e28742
+        8 grants (kinds [20003 1059 24200 44200 10100 0 9 40003]), expire 2026-12-10T19:31:48Z
+        share target amq-squad: kind mailbox, handle attach, reply_timeout 60s, DM commands on (channel dm-4-5-dryrun)
+        created /private/tmp/4e-3490626887/.amq-squad/issuer-key.pem
+        created /private/tmp/4e-3490626887/.amq-squad/authorization-trust.json
+        == F: stopping the enrollment endpoint (amq-squad remote attach runs it from now on)
+        enrolled. next: amq-squad remote attach --lead <lead handle> --project <dir> --session <session>
+    enroll_test.go:272: run 4 (renew): rc 0 in 5.107s
+        owner: npub15czp5a6z6fz0009effk9cq6gngze55asnq7nc45zjwq2ud8zsapqfrtdz3 (a6041a7742d244f7bcb94a6c5c03489a059a53b0983d3c56829380ae34e28742)
+        relay: ws://127.0.0.1:65049
+        share: /private/tmp/4e-3490626887/.amq-squad/buzz/root session amq-squad, name "amq-squad", 30-day window
+        == A: amq-remote share --renew (a new 30-day window for the same agent)
+        save this output, sign it in one step, then enroll the bundle:
+          amq-owner-sign --share <this-output> --out <bundle.json> --relay <wss-url>
+          amq-remote share --root /private/tmp/4e-3490626887/.amq-squad/buzz/root --session amq-squad --bundle <bundle.json> --target <target> --relay <wss-url> [--dm-channel <channel> --native-session <id>]
+        body:  0ad0967e15ddf58913f422a56331de961d8ad817e3a5d82f3c92ad6e0ec7e0ac (check this against what amq-owner-sign shows)
+        grants requested: 8
+        == B: the owner signs the grants (amq-owner-sign, key through the pipe)
+           OWNER: amq-owner-sign shows the body; check it is 0ad0967e15ddf58913f422a56331de961d8ad817e3a5d82f3c92ad6e0ec7e0ac and type its first 8 characters.
+        You are about to sign these grants and publish a policy for this body.
+        session:     amq-squad
+        body pubkey: 0ad0967e15ddf58913f422a56331de961d8ad817e3a5d82f3c92ad6e0ec7e0ac
+          kind 20003: kind=20003&created_at<1796931119 (until 2026-12-10T19:31:59Z)
+          kind 1059: kind=1059&created_at<1796931119 (until 2026-12-10T19:31:59Z)
+          kind 24200: kind=24200&created_at<1796931119 (until 2026-12-10T19:31:59Z)
+          kind 44200: kind=44200&created_at<1796931119 (until 2026-12-10T19:31:59Z)
+          kind 10100: kind=10100&created_at<1796931119 (until 2026-12-10T19:31:59Z)
+          kind 0: kind=0&created_at<1796931119 (until 2026-12-10T19:31:59Z)
+          kind 9: kind=9&created_at<1796931119 (until 2026-12-10T19:31:59Z)
+          kind 40003: kind=40003&created_at<1796931119 (until 2026-12-10T19:31:59Z)
+        check the body pubkey against the share output, then type its first 8 characters to sign: 0ad0967e
+        owner nsec or hex (hidden): owner pubkey: a6041a7742d244f7bcb94a6c5c03489a059a53b0983d3c56829380ae34e28742
+        wrote 8 signed grants to /private/tmp/4e-3490626887/.amq-squad/buzz/bundle.json
+        published kind 30177 policy eaa9d1137f379d6fb18a8b4041eb1e9f091d279762c4b7b4e2a58c17c7198cc0
+        next: amq-remote share --session amq-squad --bundle /private/tmp/4e-3490626887/.amq-squad/buzz/bundle.json --target <target> --relay ws://127.0.0.1:65049
+        == C: amq-remote share --bundle (enroll)
+        grants enrolled: 8
+        == E: amq-squad remote bind
+        gate binding written: /private/tmp/4e-3490626887/.amq-squad/gate-binding.json
+        body npub1ptgfvls4mh6cjyl5y2jkxvw7jcwc4kqhuwjasteuj2kkurk8uzkqvvcqeh (0ad0967e15ddf58913f422a56331de961d8ad817e3a5d82f3c92ad6e0ec7e0ac), owner a6041a7742d244f7bcb94a6c5c03489a059a53b0983d3c56829380ae34e28742
+        8 grants (kinds [20003 1059 24200 44200 10100 0 9 40003]), expire 2026-12-10T19:31:59Z
+        share target amq-squad: kind mailbox, handle attach, reply_timeout 60s, DM commands on (channel dm-4-5-dryrun)
+        enrolled. next: amq-squad remote attach --lead <lead handle> --project <dir> --session <session>
+    enroll_test.go:340: MEASURED: presence online 67ms after the status row went live; offline 10ms after it went stale
+    enroll_test.go:351: MEASURED: share binding {Target:amq-squad Kind:mailbox Handle:attach ReplyTimeout:60s Channel:dm-4-5-dryrun Commands:true MinEvidence:submitted Presence:true}
+    enroll_test.go:373: gate question text:
+        Create a tag named v3.0.0-dry?
+        Asked by lead-a.
+        Yes lets it run. No stops it.
+        
+        ----------
+        amq-squad gate rel-dry
+        squad: root-sha256:53037ef147e23a5e84526d6d47c66e238fac3fc39309bf2733771fc7314a0b29
+        class: release (tag)
+        target: git tag v3.0.0-dry
+        digest: sha256:2abd66fc97e373838ee34f0090af1538706e713c180020a3befa9f4ce856d076
+    enroll_test.go:407: RECORDED (scratch-built amq-remote): serve's delivery header {ID:2026-11-10T19-32-06.875Z_pid51187_ea82134d From:buzz Thread:cockpit/dm-4-5-dryrun Labels:[acp buzz nostr:d00ad522908109b74061e9f669111e2a78ab097a545af66b04fe20aeac979d08] Body:}
+    enroll_test.go:425: RECORDED (scratch-built amq-remote): serve's result row kind 40003 tags [[h dm-4-5-dryrun] [e 01c217284e52742fad396f2f3c04030c7027f5d9ad078f82fbc69df048e26f7f] [auth a6041a7742d244f7bcb94a6c5c03489a059a53b0983d3c56829380ae34e28742 kind=40003&created_at<1796931119 0e1c0ea978d8d32c5b664daf658fe155744001434020101c6cbd740ef421f811c99907d857197c6be174600917420b358645e600750808c299b85d1eea91bdf4]] content "amq-squad: completed\n\naccepted rel-dry tag"
+    enroll_test.go:429: MEASURED (scratch-built amq-remote, local relay): owner answer to serve's running row (delivery done) 1.013s; handler step (fetch connection, verify, commit, reply) 156ms; answer to the result row on the relay 2.002s; open connections at the fetch 2 (serve 1), after 1
+    enroll_test.go:435: hung: no signal for "serve delivers the route" (the run's 2m0s budget ran out)
+    enroll_test.go:182: failure-time attach inbox list: [], <nil>
+    enroll_test.go:197: failure-time directory /private/tmp/4e-3490626887/.amq-squad/buzz/root/agents/attach/inbox/new: [], <nil>
+    enroll_test.go:197: failure-time directory /private/tmp/4e-3490626887/.amq-squad/buzz/root/agents/attach/inbox/cur: [2026-11-10T19-32-06.875Z_pid51187_ea82134d.md], <nil>
+    enroll_test.go:197: failure-time directory /private/tmp/4e-3490626887/.amq-squad/buzz/root/agents/attach/dlq/new: [], <nil>
+    enroll_test.go:197: failure-time directory /private/tmp/4e-3490626887/.amq-squad/buzz/root/agents/attach/dlq/cur: [], <nil>
+    enroll_test.go:197: failure-time directory /private/tmp/4e-3490626887/.amq-squad/buzz/root/agents/buzz/inbox/new: [], <nil>
+    enroll_test.go:197: failure-time directory /private/tmp/4e-3490626887/.amq-squad/buzz/root/agents/buzz/inbox/cur: [2026-11-10T19-32-07.907Z_pid51196_c90fe20a.md 2026-11-10T19-32-07.984Z_pid51197_4e61acd3.md], <nil>
+    enroll_test.go:197: failure-time directory /private/tmp/4e-3490626887/.amq-squad/buzz/root/extensions/remote/mailbox/amq-squad: [amqr1_mj2xu6rnhe3dqnzzmvrtemtdmvsdsyzrmiagc3lrfvzxc5lbmqadsyzuga3tamzufvrgcytefu2wiyrvfvrggzdbfvtdsntcmi3dszdcgrrgm.json amqr1_mj2xu6rnhe3dqnzzmvrtemtdmvsdsyzrmiagc3lrfvzxc5lbmqadsyzuga3tamzufvrgcytefu2wiyrvfvrggzdbfvtdsntcmi3dszdcgrrgm.lock amqr1_mj2xu6rnhe3dqnzzmvrtemtdmvsdsyzrmiagc3lrfvzxc5lbmqadsyzuga3tamzufvrgcytefu2wiyrvfvrggzdbfvtdsntcmi3dszdcgrrgm.outcome.json amqr1_mj2xu6rnhe3dqnzzmvrtemtdmvsdsyzrmiagc3lrfvzxc5lbmqagkytgmzstiytgfu3tcy3gfu2tgzjyfvqwcn3dfu3tsnzqgiyteyrumeytm.json amqr1_mj2xu6rnhe3dqnzzmvrtemtdmvsdsyzrmiagc3lrfvzxc5lbmqagkytgmzstiytgfu3tcy3gfu2tgzjyfvqwcn3dfu3tsnzqgiyteyrumeytm.lock], <nil>
+    enroll_test.go:199: failure-time mailbox journal amqr1_mj2xu6rnhe3dqnzzmvrtemtdmvsdsyzrmiagc3lrfvzxc5lbmqagkytgmzstiytgfu3tcy3gfu2tgzjyfvqwcn3dfu3tsnzqgiyteyrumeytm.json: undelivered="its delivery never started" cancelled=false created="" message_id="" acked=false prompt_present=false read_err=<nil> decode_err=<nil> lock=free (the probe acquired and released it for this instant) lock_err=<nil>
+    enroll_test.go:199: failure-time serve SIGQUIT: no held supervisor pid (read_err=open /private/tmp/4e-3490626887/.amq-squad/buzz/enroll-up.pid: no such file or directory parse_err=strconv.Atoi: parsing "": invalid syntax)
+    enroll_test.go:199: failure-time /private/tmp/4e-3490626887/.amq-squad/buzz/root/attach/up.log:
+        amq-remote up: supervising serve for root /private/tmp/4e-3490626887/.amq-squad/buzz/root (registry /private/tmp/4e-3490626887/.amq-squad/buzz/root/attach/keepalive-registry.json)
+        
+        amq-remote 0.116.2 serving root=/private/tmp/4e-3490626887/.amq-squad/buzz/root handle=remote socket=/private/tmp/4e-3490626887/.amq-squad/buzz/root/extensions/remote/endpoint.sock targets=1
+        amq-squad                mailbox  live     idle     epoch=mailbox:attach caps=submit,cancel observed=2026-11-10T19:31:53.259624Z
+        relay ws://127.0.0.1:65049: 1 shared session(s)
+        relay share amq-squad: its manifest entry changed; restart serve, or remove and re-add the share, to adopt it
+        amq-remote up: shutting down
+        
+        amq-remote up: supervising serve for root /private/tmp/4e-3490626887/.amq-squad/buzz/root (registry /private/tmp/4e-3490626887/.amq-squad/buzz/root/attach/keepalive-registry.json)
+        
+        amq-remote 0.116.2 serving root=/private/tmp/4e-3490626887/.amq-squad/buzz/root handle=remote socket=/private/tmp/4e-3490626887/.amq-squad/buzz/root/extensions/remote/endpoint.sock targets=1
+        amq-squad                mailbox  live     idle     epoch=mailbox:attach caps=submit,cancel observed=2026-11-10T19:32:04.733989Z
+        relay ws://127.0.0.1:65049: 1 shared session(s)
+        amq-remote up: shutting down
+        
+        amq-remote up: supervising serve for root /private/tmp/4e-3490626887/.amq-squad/buzz/root (registry /private/tmp/4e-3490626887/.amq-squad/buzz/root/attach/keepalive-registry.json)
+        
+        amq-remote 0.116.2 serving root=/private/tmp/4e-3490626887/.amq-squad/buzz/root handle=remote socket=/private/tmp/4e-3490626887/.amq-squad/buzz/root/extensions/remote/endpoint.sock targets=1
+        amq-squad                mailbox  live     idle     epoch=mailbox:attach caps=submit,cancel observed=2026-11-10T19:32:06.83044Z
+        relay ws://127.0.0.1:65049: 1 shared session(s)
+        relay share amq-squad: ingest d00ad522908109b74061e9f669111e2a78ab097a545af66b04fe20aeac979d08: edit waits for the clock to pass the previous edit's second
+        amq-remote up: shutting down
+        
+        
+        read_err=<nil>
+    enroll_test.go:199: failure-time /private/tmp/4e-3490626887/.amq-squad/buzz/doctor.json:
+        {
+          "body_keys": {
+            "amq-squad": {
+              "attestation": "enrolled",
+              "body_pubkey": "0ad0967e15ddf58913f422a56331de961d8ad817e3a5d82f3c92ad6e0ec7e0ac",
+              "kinds": {
+                "0": {
+                  "expires": "2026-12-10T19:31:48Z"
+                },
+                "10100": {
+                  "expires": "2026-12-10T19:31:48Z"
+                },
+                "1059": {
+                  "expires": "2026-12-10T19:31:48Z"
+                },
+                "20003": {
+                  "expires": "2026-12-10T19:31:48Z"
+                },
+                "24200": {
+                  "expires": "2026-12-10T19:31:48Z"
+                },
+                "40003": {
+                  "expires": "2026-12-10T19:31:48Z"
+                },
+                "44200": {
+                  "expires": "2026-12-10T19:31:48Z"
+                },
+                "9": {
+                  "expires": "2026-12-10T19:31:48Z"
+                }
+              }
+            }
+          },
+          "endpoint": "reachable",
+          "failing": [],
+          "notes": [
+            {
+              "boundary": "stale_harness",
+              "subject": "installed amq-acp",
+              "detail": "could not stat the installed amq-acp: lstat /Users/omri/go/bin/amq-acp: no such file or directory",
+              "remedy": "Reinstall amq so the amq-acp companion sits beside amq-remote, then re-run doctor"
+            }
+          ],
+          "records": {},
+          "relay": {
+            "url": "ws://127.0.0.1:65049",
+            "shares": [
+              {
+                "session": "amq-squad",
+                "target": "amq-squad",
+                "state": "authenticated",
+                "since": "2026-11-10T19:31:53Z",
+                "presence": "online",
+                "discovery": "policy_present"
+              }
+            ]
+          },
+          "root": "/private/tmp/4e-3490626887/.amq-squad/buzz/root",
+          "socket": "/private/tmp/4e-3490626887/.amq-squad/buzz/root/extensions/remote/endpoint.sock",
+          "state_dir": "/private/tmp/4e-3490626887/.amq-squad/buzz/root/extensions/remote",
+          "targets": 1
+        }
+        
+        read_err=<nil>
+    enroll_test.go:199: failure-time relay event trace:
+        4.438s conn=1 open
+        5.441s conn=1 auth ok=true author=a6041a7742d2
+        5.441s store kind=30177 id=b6b9c7b2d86b author=a6041a7742d2
+        5.441s conn=1 publish ok id=b6b9c7b2d86b kind=30177
+        5.443s conn=1 close
+        5.565s conn=2 open
+        5.565s conn=2 auth ok=true author=0ad0967e15dd
+        5.568s store kind=0 id=f38cd6a9bf5d author=0ad0967e15dd
+        5.568s conn=2 publish ok id=f38cd6a9bf5d kind=0
+        5.57s store kind=10100 id=c112a2001ce3 author=0ad0967e15dd
+        5.57s conn=2 publish ok id=c112a2001ce3 kind=10100
+        5.57s conn=2 req sub=policy-amq-squad-1794339113267275000 replay=1 live=installed
+        9.626s store kind=39000 id=606782d45517 author=b6935d4c508d
+        9.627s store kind=39002 id=5f2da9e7dfd0 author=b6935d4c508d
+        9.715s store kind=10100 id=069033af4ac0 author=0ad0967e15dd
+        9.715s conn=2 publish ok id=069033af4ac0 kind=10100
+        9.716s conn=2 close
+        15.862s conn=3 open
+        16.865s conn=3 auth ok=true author=a6041a7742d2
+        16.866s store kind=30177 id=eaa9d1137f37 author=a6041a7742d2
+        16.866s conn=3 publish ok id=eaa9d1137f37 kind=30177
+        16.868s conn=3 close
+        17.04s conn=4 open
+        17.042s conn=4 auth ok=true author=0ad0967e15dd
+        17.043s conn=4 req sub=dm-members-1794339124740122000 replay=2 live=installed
+        17.043s conn=4 req sub=dm-amq-squad replay=0 live=installed
+        17.043s conn=4 req sub=dm-react-amq-squad replay=0 live=installed
+        17.044s store kind=0 id=7dfea22e40b1 author=0ad0967e15dd
+        17.044s conn=4 publish ok id=7dfea22e40b1 kind=0
+        17.045s store kind=10100 id=3326b6e6f99d author=0ad0967e15dd
+        17.045s conn=4 publish ok id=3326b6e6f99d kind=10100
+        17.046s conn=4 req sub=policy-amq-squad-1794339124742885000 replay=1 live=installed
+        17.048s store kind=10100 id=f41220105dd2 author=0ad0967e15dd
+        17.048s conn=4 publish ok id=f41220105dd2 kind=10100
+        17.048s conn=4 close
+        17.058s conn=5 open
+        17.058s conn=5 auth ok=true author=0ad0967e15dd
+        17.096s store kind=9 id=f0080d29bfd3 author=0ad0967e15dd
+        17.096s conn=5 publish ok id=f0080d29bfd3 kind=9
+        17.103s conn=5 close
+        19.137s conn=6 open
+        19.14s conn=6 auth ok=true author=0ad0967e15dd
+        19.141s conn=6 req sub=dm-members-1794339126838210000 replay=2 live=installed
+        19.142s conn=6 req sub=dm-amq-squad replay=0 live=installed
+        19.142s conn=6 req sub=dm-react-amq-squad replay=0 live=installed
+        19.142s store kind=0 id=a2f2d757e6fa author=0ad0967e15dd
+        19.142s conn=6 publish ok id=a2f2d757e6fa kind=0
+        19.143s store kind=10100 id=eac6d2bcaa33 author=0ad0967e15dd
+        19.143s conn=6 publish ok id=eac6d2bcaa33 kind=10100
+        19.144s conn=6 req sub=policy-amq-squad-1794339126840819000 replay=1 live=installed
+        19.144s store kind=9 id=d00ad5229081 author=a6041a7742d2
+        19.144s conn=6 live sub=dm-amq-squad event=d00ad5229081
+        20.145s store kind=9 id=01c217284e52 author=0ad0967e15dd
+        20.145s conn=6 publish ok id=01c217284e52 kind=9
+        20.157s store kind=40003 id=76ecab15c816 author=0ad0967e15dd
+        20.157s conn=6 publish ok id=76ecab15c816 kind=40003
+        20.24s conn=7 open
+        20.241s conn=7 auth ok=true author=0ad0967e15dd
+        20.241s conn=7 req sub=gv-1794339127937934000 replay=1 live=installed
+        20.242s conn=7 req sub=gv-1794339127939646000 replay=0 live=installed
+        20.243s conn=7 req sub=gv-1794339127939892000 replay=0 live=installed
+        20.243s conn=7 req sub=gv-1794339127940089000 replay=0 live=installed
+        20.243s conn=7 req sub=gv-1794339127940268000 replay=0 live=installed
+        20.327s conn=7 close
+        21.145s store kind=40003 id=f856a7cbc1e5 author=0ad0967e15dd
+        21.145s conn=6 publish ok id=f856a7cbc1e5 kind=40003
+        21.147s store kind=9 id=0d210e0d2bda author=a6041a7742d2
+        21.147s conn=6 live sub=dm-amq-squad event=0d210e0d2bda
+        22.146s store kind=9 id=68efdb3748cd author=0ad0967e15dd
+        22.146s conn=6 publish ok id=68efdb3748cd kind=9
+        1m19.143s conn=6 req sub=dm-members-1794339186839498000 replay=2 live=installed
+        2m0.001s store kind=10100 id=492f7dc093c7 author=0ad0967e15dd
+        2m0.001s conn=6 publish ok id=492f7dc093c7 kind=10100
+        2m0.001s conn=6 close
+--- FAIL: TestOwnerScriptDryRun (120.39s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	120.661s
+FAIL

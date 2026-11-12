@@ -1,0 +1,6 @@
+2026-11-05T13:46:13Z stopped v31 attach pid 95237
+2026-11-05T13:46:13Z started v312 attach pid 10605
+2026-11-05T13:48:03Z stopped v312 attach pid 10605
+2026-11-05T13:48:03Z restored v31 attach pid 12715
+2026-11-05T13:48:58Z up --binary from the tag build (owner approved the restart)
+2026-11-05T13:50:12Z SIGTERM to the rc.1 lead pid 42373 (owner approved the restart; up never stops a live lead)

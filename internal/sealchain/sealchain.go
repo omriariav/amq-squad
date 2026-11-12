@@ -260,6 +260,7 @@ func headsExist(root string) bool {
 
 type head struct {
 	Schema  int       `json:"schema"`
+	Layout  string    `json:"layout,omitempty"`
 	Name    string    `json:"name"`
 	Seq     int       `json:"seq"`
 	Link    string    `json:"link_tag"`
@@ -298,15 +299,18 @@ func WriteHead(root, name string, s Seed, l *Link, now time.Time) error {
 // new link. A crash leaves the file at most one link ahead of its head,
 // which Check accepts; a head always exists once a sealed file does. A head
 // whose tag or seed identity fails is ErrTampered, and nothing is written.
-func Write(root, name string, s Seed, label string, body any, save func(*Link) error, now time.Time) (*Link, error) {
-	h, found, err := readHead(root, name, s)
-	if err != nil {
-		return nil, err
-	}
-	if !found {
+func Write(root, name string, s Seed, label string, headBytes []byte, body any, save func(*Link) error, now time.Time) (*Link, error) {
+	var h head
+	if len(headBytes) == 0 {
 		if err := WriteHead(root, name, s, &Link{}, now); err != nil {
 			return nil, err
 		}
+	} else {
+		parsed, err := parseHeadBytes(name, s, headBytes)
+		if err != nil {
+			return nil, err
+		}
+		h = parsed.head
 	}
 	l := Seal(s.Key, label, &Link{Seq: h.Seq, Tag: h.Link}, body)
 	if err := save(l); err != nil {
@@ -315,33 +319,17 @@ func Write(root, name string, s Seed, label string, body any, save func(*Link) e
 	return l, WriteHead(root, name, s, l, now)
 }
 
-// readHead reads and verifies a file's head (its tag and its seed
-// identity); found false when there is none.
-func readHead(root, name string, s Seed) (head, bool, error) {
-	var h head
-	raw, err := os.ReadFile(HeadPath(root, name))
-	if errors.Is(err, fs.ErrNotExist) {
-		return h, false, nil
-	}
-	if err != nil {
-		return h, false, err
-	}
-	if json.Unmarshal(raw, &h) != nil || h.Schema != 1 || h.Name != name || h.Tag == "" || !hmac.Equal([]byte(h.sign(s.Key).Tag), []byte(h.Tag)) {
-		return h, true, fmt.Errorf("%w: the head of %s does not decode or its tag fails", ErrTampered, name)
-	}
-	if err := CheckSeedIdentity(SeedPath(root), h.SeedDev, h.SeedIno, s.Dev, s.Ino); err != nil {
-		return h, true, fmt.Errorf("%w: the head of %s: %v", ErrTampered, name, err)
-	}
-	return h, true, nil
-}
-
 // Absent checks a sealed file that is missing: with a head past link 0 it
 // existed, so its removal is ErrTampered.
-func Absent(root, name string, s Seed) error {
-	h, found, err := readHead(root, name, s)
-	if err != nil || !found {
+func Absent(name string, s Seed, headBytes []byte) error {
+	if len(headBytes) == 0 {
+		return nil
+	}
+	parsed, err := parseHeadBytes(name, s, headBytes)
+	if err != nil {
 		return err
 	}
+	h := parsed.head
 	if h.Seq > 0 {
 		return fmt.Errorf("%w: %s is missing and its head records link %d", ErrTampered, name, h.Seq)
 	}
@@ -353,12 +341,16 @@ func Absent(root, name string, s Seed) error {
 // link must be the head's, or the one right after it (the file was written
 // and its head write was lost). A missing head, an unsealed file or any
 // other link is ErrTampered.
-func Check(root, name string, s Seed, label string, l *Link, body any) error {
-	h, found, err := readHead(root, name, s)
-	if err != nil {
-		return err
+func Check(name string, s Seed, label string, l *Link, body any, headBytes []byte) error {
+	headMissing := len(headBytes) == 0
+	var h head
+	if !headMissing {
+		parsed, err := parseHeadBytes(name, s, headBytes)
+		if err != nil {
+			return err
+		}
+		h = parsed.head
 	}
-	headMissing := !found
 	switch {
 	case l == nil:
 		return fmt.Errorf("%w: %s carries no seal", ErrTampered, name)

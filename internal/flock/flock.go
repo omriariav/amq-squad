@@ -1,7 +1,7 @@
-// Package flock provides a tiny advisory exclusive file lock for serializing
-// read-modify-write cycles on a shared on-disk file (e.g. squad.yaml) across
-// concurrent amq-squad processes. The lock is taken on a sidecar "<path>.lock"
-// file so it survives the atomic rename the writer does on the real file.
+// Package flock provides tiny advisory file locks for serializing shared
+// on-disk state across concurrent amq-squad processes. Atomic replacement
+// writers lock a sidecar so the lock survives rename; append-only JSONL
+// writers lock the log file itself.
 package flock
 
 import (

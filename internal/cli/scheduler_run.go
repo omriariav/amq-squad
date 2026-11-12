@@ -22,6 +22,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -35,6 +36,8 @@ Usage:
   amq-squad scheduler run --project DIR [--lead-pool r:m:e]... [--tick 2s] [--max-seats N] [--base-branch B] [--no-open-pr]
   amq-squad scheduler relaunch [--root DIR] [--reason TEXT] [--start STAMP] [--json]
   amq-squad scheduler clear --seat H --warning CODE --launch ID [--root DIR] [--json]
+  amq-squad scheduler recover --seat H --seq N [--slot K] [--carry TASK:COMMIT ...] --reason TEXT [--root DIR] [--json]
+  amq-squad scheduler recover --seat H --alarm ID --reason TEXT [--root DIR] [--json]
 
 scheduler run is one squad's scheduler process (plan 4.5, 16.5; started and
 supervised by the lead's team mode). It ticks the deterministic scheduler
@@ -120,6 +123,43 @@ seat now), clear_launch_stale (the seat's current launch is not the one
 named), clear_malformed; and the socket's: not_lead (the sender does not
 descend from the lead), origin_unknown (the sender's origin cannot be read
 or proved).
+
+scheduler recover is the lead's recovery of a seat whose commits ledger
+failed its check (3.2.0-0c-B). The refusing read quarantined the document
+under <root>/extensions/amq-squad/quarantine/commits.H.seqN[.K]/ and the
+task that reached the seat is blocked ledger_tampered for the lead; the
+seat is held out of every dispatch until this decision. It is sent over
+the same socket and proved the same way: the scheduler, never this verb,
+writes the new sealed chain with the session key. The chain continues at
+seq N+1 after the quarantined seq N and links to the quarantined head; the
+new body records the quarantined body's sha256 and the slot's path, the
+worktree and branch from the launch record, the base as the core observes
+the worktree now, and the owner's grant. --carry TASK:COMMIT (repeatable)
+carries a quarantined commit entry only when that commit is on origin's
+branch for the task and its tree equals the quarantined entry's; one entry
+that fails refuses the whole recovery and nothing is carried. --seq N is
+the seq in the slot's name (unknown for a slot whose head did not decode);
+--slot K is the slot's suffix (1 for the first). The quarantined copies are
+never read as a ledger, never sealed, never removed. The tasks blocked
+ledger_tampered on the seat return to pending at the next tick. The seat's
+stop line names its hold's alarm id; --alarm ID is the decision by alarm,
+for a hold no slot answers (a refusal that quarantined nothing, or a slot
+whose seq the chain has moved past): it is refused unless the seat is held
+by that alarm now and the ledger on disk verifies now, carries nothing,
+and seals the next link with a record naming the alarm, which releases
+exactly that hold. A clear
+(scheduler clear) is not the recovery: ledger_tampered is no warning, and
+no clear makes the seat grantable. Refusals: recover_slot_missing,
+recover_slot_invalid (the slot's copies and sidecar disagree, or it is
+another seat's), recover_not_tampered (the ledger on disk verifies),
+recover_slot_stale (the ledger on disk is not the slot's document; it is
+quarantined in a slot of its own, named in the reply), recover_seq_unknown,
+recover_base_unobserved (no staged launch record or worktree HEAD),
+recover_entry_unknown, recover_entry_unpushed, recover_entry_tree_mismatch,
+recover_write_failed, recover_malformed, recover_alarm_not_held (the seat
+is not held by that alarm now), recover_alarm_unverified (the ledger does
+not verify now: recover it from its slot); and the socket's not_lead and
+origin_unknown. Exit 15: refused.
 `
 
 func runScheduler(args []string) error {
@@ -136,8 +176,10 @@ func runScheduler(args []string) error {
 		return runSchedulerRelaunch(args[1:], os.Stdout)
 	case "clear":
 		return runSchedulerClear(args[1:], os.Stdout)
+	case "recover":
+		return runSchedulerRecover(args[1:], os.Stdout)
 	default:
-		return unknownSubcommandError("scheduler", args[0], "run", "relaunch", "clear")
+		return unknownSubcommandError("scheduler", args[0], "run", "relaunch", "clear", "recover")
 	}
 }
 
@@ -195,9 +237,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("scheduler run: %w", err)
 	}
 	lead := &leadHandle
-	if q.Wrapper, err = os.Executable(); err == nil {
-		q.Wrapper, err = filepath.EvalSymlinks(q.Wrapper)
-	}
+	q.Wrapper, err = seatexec.ResolveExecutable("")
 	if err != nil {
 		return fmt.Errorf("scheduler run: resolve the amq-squad executable: %w", err)
 	}
@@ -240,7 +280,8 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if terr != nil {
 		fmt.Fprintf(out, "scheduler run: the push target: %v; the commit step refuses a push that needs it\n", terr)
 	}
-	slots := &schedproc.Slots{Squad: q, BaseBranch: firstOf(*baseBranch, target.BaseBranch), Target: target}
+	slots := &schedproc.Slots{Squad: q, BaseBranch: firstOf(*baseBranch, target.BaseBranch), Target: target, Root: root,
+		LogDecision: func(d scheduler.Decision) { _ = schedproc.AppendDecision(root, taskNow(), d) }}
 	// The roster (3.0.1 t16): every seat that can start launches in one
 	// apply; a seat with no worktree of its own never started and is named.
 	roster, excluded := slots.Roster(*lead)
@@ -250,7 +291,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 	if len(roster) == 0 {
 		return fmt.Errorf("scheduler run: %s has no seat but the lead", team.SquadPath(q.ProjectRoot))
 	}
-	opts := seatlaunch.Options{Wait: 90 * time.Second, Target: &target, Start: launchStart()}
+	opts := seatlaunch.Options{Wait: 90 * time.Second, Target: &target, Start: launchStart(), CodexActivityAdmission: slots.AdmitCodexActivity}
 	var amqLauncher scheduler.SeatLauncher
 	var real *seatlaunch.Launcher
 	if schedulerAMQLauncher != nil {
@@ -322,6 +363,9 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Start:       launchStart(),
 		// R4: the lead's decisions over the scheduler's own socket.
 		Decisions: decisions,
+		// 3.2.0-0c-B: the lead's recovery of a quarantined ledger writes
+		// the chain here, with the launch's record of the grant.
+		Recover:   schedproc.NewRecovery(root, target).Apply,
 		LeadState: leadGone,
 		Exits:     committer,
 		// The per-tick liveness of every roster seat from the launch ledger
@@ -330,7 +374,7 @@ func runSchedulerRun(ctx context.Context, args []string, out io.Writer) error {
 		Launcher: &schedproc.Launcher{Slots: slots, ByRuntime: byRuntime},
 		// 3.0.2 t23: each task on its own branch from the base tip fetched at
 		// the grant; the doorbell moves the seat's worktree there first.
-		Doorbell:  schedproc.Doorbell{Sender: sender, Start: slots.TaskStart(root, taskNow)},
+		Doorbell:  schedproc.Doorbell{Sender: sender, Start: slots.TaskStart(root, taskNow), NeedsManualRenew: slots.NeedsManualRenew},
 		Lead:      schedproc.LeadNotice{Sender: sender, Lead: *lead},
 		Router:    router, // the process calls its Flush each tick
 		Verifiers: store.Verifiers,
@@ -557,8 +601,14 @@ var schedulerLeadParent = func() (int, string, bool) {
 // team-mode start (schedproc.SupervisingLead, 3.0.1 t16).
 func decisionOptions(sel storeSelection, projectRoot string) *schedproc.DecideOptions {
 	d := &schedproc.DecideOptions{Apply: func(lead string, req schedproc.WidenRequest) schedproc.DecideReply {
+		if _, ok := parseTaskExtendDecision(req); ok {
+			return extendBudgetDecision(sel, lead, req)
+		}
 		return widenDecision(sel, projectRoot, lead, req)
-	}, Warnings: status.CurrentSeatWarnings} // brief 31-2: a clear names a warning status shows
+	}, Warnings: status.CurrentSeatWarnings, // brief 31-2: a clear names a warning status shows
+		Rebind: func(lead string, req schedproc.RebindRequest) schedproc.DecideReply { // brief 3.2.0-3a item 6
+			return rebindDecision(sel, lead, req)
+		}}
 	if schedulerDecideSeams != nil {
 		schedulerDecideSeams(d)
 	}

@@ -81,7 +81,8 @@ func scrubAMQ(env []string) []string {
 // (task_branch_unprepared), so no seat works on the resting branch.
 type Doorbell struct {
 	Sender
-	Start func(handle string, t task.Task) error
+	Start            func(handle string, t task.Task) error
+	NeedsManualRenew func(handle string) bool
 }
 
 func (d Doorbell) Ring(handle string, t task.Task) error {
@@ -96,6 +97,10 @@ func (d Doorbell) Ring(handle string, t task.Task) error {
 func (d Doorbell) ring(handle string, t task.Task) error {
 	body := fmt.Sprintf("The scheduler leased you task %s (%s, class %s). Claim it with: amq-squad task claim %s --me %s. Declared files: %s.",
 		t.ID, t.Title, t.Class, t.ID, handle, orNone(strings.Join(t.DeclaredFiles, ", ")))
+	body += fmt.Sprintf(" A command that runs longer than the lease (%s) loses it: run long work in the background and poll it.", task.DefaultLeaseDuration.String())
+	if d.NeedsManualRenew != nil && d.NeedsManualRenew(handle) {
+		body += ` This Codex seat's activity hooks are not trusted, so run amq-squad task renew --me "$AM_ME" after every tool batch and at least every 5 minutes while you hold the task; stop and block if renewal is refused.`
+	}
 	return d.send(handle, "todo", "task "+t.ID+": "+t.Title, body)
 }
 

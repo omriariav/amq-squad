@@ -1,0 +1,4 @@
+{"at":"2026-11-11T18:13:56.693548Z","kind":"scheduler_started","reason":"incarnation fb4e3a687d0d"}
+{"at":"2026-11-11T18:13:56.805983Z","kind":"roster_launch_failed","reason":"the roster launch failed at stage prepare_refused, reason base_root_unauthorized: base_root_unauthorized"}
+{"at":"2026-11-11T18:13:56.811592Z","kind":"seat_launch_failed","seat":"dev","pool":"codex:gpt-5.6-terra:medium","reason":"base_root_unauthorized","stage":"prepare_refused","reason_code":"base_root_unauthorized"}
+{"at":"2026-11-11T18:13:56.815577Z","kind":"scheduler_stopped","reason":"the roster launch failed at stage prepare_refused, reason base_root_unauthorized: base_root_unauthorized"}

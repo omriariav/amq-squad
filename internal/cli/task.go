@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -11,7 +14,13 @@ import (
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/status"
 	"github.com/omriariav/amq-squad/v3/internal/task"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // taskNow is overridable in tests for deterministic timestamps.
@@ -20,17 +29,69 @@ var taskNow = func() time.Time { return time.Now().UTC() }
 // taskLeaseDuration is the lease length the task verbs grant and renew.
 var taskLeaseDuration = task.DefaultLeaseDuration
 
-var taskSubcommands = []string{"add", "list", "show", "claim", "renew", "done", "fail", "block", "release", "reset", "set", "cancel", "widen", "reconcile"}
+// taskSchedulerLive is the scheduler liveness proof used by task claim: the
+// admitted PID must still be alive with the launch record's start stamp.
+var taskSchedulerLive = func(root string) bool {
+	rec, err := schedproc.ReadLaunchRecord(root)
+	if err != nil || rec.PID <= 0 || rec.ProcessStart == "" || !procinfo.Alive(rec.PID) {
+		return false
+	}
+	stamp, ok := procinfo.StartToken(rec.PID)
+	return ok && stamp == rec.ProcessStart
+}
+
+var taskClaimSeatAlive = procinfo.Alive
+var taskClaimSeatStartToken = procinfo.StartToken
+
+func taskClaimSeatRecordLive(rec launch.Record) bool {
+	if rec.Exec == nil || rec.Exec.Outcome != "exec" || rec.Exec.PID <= 0 || rec.Exec.ProcessStart == "" || !taskClaimSeatAlive(rec.Exec.PID) {
+		return false
+	}
+	stamp, ok := taskClaimSeatStartToken(rec.Exec.PID)
+	return ok && stamp == rec.Exec.ProcessStart
+}
+
+func taskClaimSeatPool(root, holder string, flag *task.Pool) (*task.Pool, error) {
+	rec, err := launch.Read(filepath.Join(root, "agents", holder))
+	if err == nil && taskClaimSeatRecordLive(rec) && rec.Runtime != "" && (rec.Runtime == "pi" || rec.Model != "") {
+		p := task.Pool{Runtime: rec.Runtime, Model: rec.Model, Effort: rec.Effort}
+		if flag != nil && *flag != p {
+			return nil, taskClaimRefusal(task.RefusalClaimPoolMismatch,
+				fmt.Sprintf("%s is live on %s; --pool names %s", holder, p.Key(), flag.Key()),
+				fmt.Sprintf("the live launch record for %s serves %s, not %s", holder, p.Key(), flag.Key()))
+		}
+		return &p, nil
+	}
+	if flag != nil {
+		p := *flag
+		return &p, nil
+	}
+	return nil, nil
+}
+
+func taskClaimRefusal(code, plain, detail string) error {
+	return fmt.Errorf("%s\n\n----------\nrefused (%s): %s", plain, code, detail)
+}
+
+func taskPoolName(p *task.Pool) string {
+	if p == nil {
+		return "an unknown pool"
+	}
+	return p.Key()
+}
+
+var taskSubcommands = []string{"add", "list", "show", "claim", "renew", "extend", "done", "fail", "block", "release", "reset", "set", "cancel", "widen", "reconcile"}
 
 const taskUsage = `amq-squad task - the squad's task store (leases, pools, file locks)
 
 Usage:
   amq-squad task add --title T --class C [--desc D | --desc-file F] [--depends-on t1,t2]
-                     [--files GLOB,...] [--pool runtime:model:effort] [--priority N] [--project-path DIR]
+                     [--files GLOB,...] [--pool runtime:model:effort] [--priority N] [--budget DURATION] [--project-path DIR]
   amq-squad task list [--state S] [--json]
   amq-squad task show ID [--json]
   amq-squad task claim [ID] --me H [--pool runtime:model:effort]
   amq-squad task renew --me H
+  amq-squad task extend ID --by 30m   (the lead; no --me: the scheduler proves the lead from the process)
   amq-squad task done ID --me H [--evidence E] [--final-head SHA]
   amq-squad task fail ID --me H --reason R
   amq-squad task block ID --me H --reason CODE [--path PATH]... [--paths PATH,...] [--detail TEXT] [--route lead|owner]
@@ -45,9 +106,10 @@ Store flags (every verb): --root DIR (default AM_ROOT), or --project/--profile/-
 
 The store lives under <AMQ session root>/extensions/amq-squad/tasks/. Classes:
 extract, summarize, script, implement, plan, review. The scheduler grants
-leases; a seat claims its lease (or pulls the next eligible task) and renews
-it through evidence ingest. An unclaimed lease returns to the pool when it
-expires. A task with --files waits after done for the harness commit step.
+leases; a seat claims its lease (or pulls the next eligible task), and real
+runtime activity renews that attempt automatically until its task budget is
+spent. Manual task renew remains harmless. An unclaimed lease returns to the
+pool when it expires. A task with --files waits after done for the harness commit step.
 See docs/task-store-design.md.
 
 Examples:
@@ -59,6 +121,12 @@ Examples:
 type taskEnvelope struct {
 	Root string    `json:"root"`
 	Task task.Task `json:"task"`
+}
+
+type taskAddEnvelope struct {
+	Root     string    `json:"root"`
+	Task     task.Task `json:"task"`
+	WaitsFor []string  `json:"waits_for"`
 }
 
 type taskListEnvelope struct {
@@ -84,6 +152,8 @@ func runTask(args []string) error {
 		return runTaskList(rest)
 	case "widen":
 		return runTaskWiden(rest, os.Stdout)
+	case "extend":
+		return runTaskExtend(rest, os.Stdout)
 	case "reconcile":
 		return runTaskReconcile(rest)
 	case "show", "claim", "renew", "done", "complete", "fail", "block", "release", "reset", "set", "cancel":
@@ -234,6 +304,7 @@ func runTaskAdd(args []string) error {
 	files := f.fs.String("files", "", "comma-separated declared file globs, repo-relative")
 	poolFlag := f.fs.String("pool", "", "runtime:model:effort")
 	priority := f.fs.Int("priority", 0, "higher dispatches first")
+	budgetFlag := f.fs.String("budget", "", "time budget for one attempt (default squad.yaml task_budget, 90m)")
 	projectPath := f.fs.String("project-path", "", "repository root the task works in (default: cwd)")
 	if err := parseFlags(f.fs, args); err != nil {
 		return err
@@ -259,19 +330,43 @@ func runTaskAdd(args []string) error {
 	if path == "" {
 		path, _ = os.Getwd()
 	}
+	budget := team.DefaultTaskBudget
+	if strings.TrimSpace(*budgetFlag) != "" {
+		budget, err = time.ParseDuration(strings.TrimSpace(*budgetFlag))
+		if err != nil || budget <= 0 {
+			return usageErrorf("task add --budget needs a positive duration: %q", *budgetFlag)
+		}
+	} else if sq, loadErr := team.LoadSquad(path); loadErr == nil {
+		budget = sq.TaskBudget
+	} else if !os.IsNotExist(loadErr) {
+		return usageErrorf("task add: read squad task budget: %v", loadErr)
+	}
 	s, root, release, err := f.store(true)
 	if err != nil {
 		return err
 	}
 	defer release()
-	t, err := s.Add(task.AddInput{
+	t, waits, err := s.AddWithFileWaits(task.AddInput{
 		Title: *title, Description: description, Class: *class, DependsOn: splitList(*deps),
-		DeclaredFiles: splitList(*files), Pool: pool, Priority: *priority, ProjectPath: path, CreatedBy: me,
+		DeclaredFiles: splitList(*files), Pool: pool, Priority: *priority, ProjectPath: path, CreatedBy: me, Budget: budget,
 	}, taskNow())
 	if err != nil {
 		return usageErrorf("task add: %v", err)
 	}
-	return printTaskResult("task_add", root, t, *f.jsonOut, "Added")
+	lines := make([]string, 0, len(waits))
+	for _, wait := range waits {
+		lines = append(lines, fmt.Sprintf("%s will wait for %s: both declare %s", t.ID, wait.TaskID, wait.Path))
+	}
+	if *f.jsonOut {
+		return printJSONEnvelope("task_add", taskAddEnvelope{Root: root, Task: t, WaitsFor: lines})
+	}
+	if err := printTaskResult("task_add", root, t, false, "Added"); err != nil {
+		return err
+	}
+	for _, line := range lines {
+		fmt.Println(line)
+	}
+	return nil
 }
 
 func runTaskList(args []string) error {
@@ -315,7 +410,9 @@ func runTaskList(args []string) error {
 		if t.Pool != nil {
 			pool = t.Pool.Key()
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n", t.ID, t.State, t.Class, t.Priority, holder, pool, orDash(t.WaitReason+t.BlockReason), t.Title)
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
+			status.PlainText(t.ID, false), status.PlainText(t.State, false), status.PlainText(t.Class, false), t.Priority,
+			status.PlainText(holder, false), status.PlainText(pool, false), status.PlainText(orDash(t.WaitReason+t.BlockReason), false), status.PlainText(t.Title, false))
 	}
 	return w.Flush()
 }
@@ -349,6 +446,79 @@ func runTaskReconcile(args []string) error {
 		fmt.Printf("  %s held by %s expired %s\n", t.ID, t.Lease.Holder, t.Lease.ExpiresAt.Format(time.RFC3339))
 	}
 	return nil
+}
+
+const taskExtendDecisionPrefix = "amq-squad.task-budget.extend.v1:"
+
+// runTaskExtend sends the budget change through the existing decision socket.
+// The socket proves from the kernel process chain that the caller is the lead;
+// --me and message bodies carry no authority.
+func runTaskExtend(args []string, out io.Writer) error {
+	id, rest, _ := peelPositional(args)
+	f := newTaskFlags("extend")
+	by := f.fs.Duration("by", 0, "positive task-budget extension")
+	if err := parseFlags(f.fs, rest); err != nil {
+		return err
+	}
+	if id == "" || f.fs.NArg() > 0 || !flagWasSet(f.fs, "by") || *by <= 0 {
+		return usageErrorf("task extend requires ID and a positive --by DURATION")
+	}
+	if flagWasSet(f.fs, "me") {
+		return usageErrorf("task extend: takes no --me; the scheduler proves the lead from the process, never from a flag")
+	}
+	if err := task.ValidID(id); err != nil {
+		return usageErrorf("task extend: %v", err)
+	}
+	_, root, release, err := f.store(false)
+	if err != nil {
+		return err
+	}
+	release()
+	rec, err := schedproc.ReadLaunchRecord(root)
+	if err != nil {
+		return fmt.Errorf("task extend: no running scheduler for %s (the extension is the scheduler's to apply): %v", root, err)
+	}
+	req := schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: id, Reason: taskExtendDecisionPrefix + by.String()}
+	if rec.DecisionSocket == "" {
+		return &codedExitError{code: ExitCommitRefused, msg: "task extend: the scheduler is still starting; try again after its decision socket opens"}
+	}
+	reply, err := schedproc.SendDecision(root, rec.DecisionSocket, req)
+	if err != nil {
+		return fmt.Errorf("task extend: the scheduler's decision socket: %w", err)
+	}
+	if *f.jsonOut {
+		return writeJSONEnvelope(out, "task_extend", reply)
+	}
+	if !reply.OK {
+		return &codedExitError{code: ExitCommitRefused, msg: fmt.Sprintf("task extend %s: %s: %s", id, reply.Code, reply.Detail)}
+	}
+	fmt.Fprintf(out, "task extend %s: budget extended by %s by the scheduler\n", id, by.String())
+	return nil
+}
+
+func parseTaskExtendDecision(req schedproc.WidenRequest) (time.Duration, bool) {
+	if req.Kind != schedproc.WidenRequestKind || len(req.Files) != 0 || !strings.HasPrefix(req.Reason, taskExtendDecisionPrefix) {
+		return 0, false
+	}
+	by, err := time.ParseDuration(strings.TrimPrefix(req.Reason, taskExtendDecisionPrefix))
+	return by, err == nil && by > 0
+}
+
+func extendBudgetDecision(sel storeSelection, lead string, req schedproc.WidenRequest) schedproc.DecideReply {
+	by, ok := parseTaskExtendDecision(req)
+	if !ok {
+		return schedproc.DecideReply{Code: "budget_extension_malformed", Detail: "the task-budget extension is not a positive duration"}
+	}
+	now := taskNow()
+	t, err := sel.store.ExtendBudget(req.Task, lead, by, now)
+	if err != nil {
+		return schedproc.DecideReply{Code: "budget_extension_failed", Detail: err.Error()}
+	}
+	if err := schedproc.AppendDecision(sel.root, now, scheduler.Decision{Kind: "task_budget_extended", TaskID: req.Task, Seat: lead, Reason: fmt.Sprintf("extended by %s; budget is %s", by, t.Budget)}); err != nil {
+		return schedproc.DecideReply{Code: "budget_extension_record_failed", Detail: err.Error()}
+	}
+	raw, _ := json.Marshal(t)
+	return schedproc.DecideReply{OK: true, Data: raw}
 }
 
 func runTaskTransition(verb string, args []string) error {
@@ -395,14 +565,75 @@ func runTaskTransition(verb string, args []string) error {
 	case "show":
 		t, err = s.Get(id)
 	case "claim":
-		t, err = s.Claim(id, me, pool, taskLeaseDuration, now)
+		seatPool, poolErr := taskClaimSeatPool(root, me, pool)
+		if poolErr != nil {
+			err = poolErr
+			break
+		}
+		if taskSchedulerLive(root) {
+			if id == "" {
+				err = taskClaimRefusal(task.RefusalClaimOfferRequired,
+					"the scheduler hands out work; wait for its offer",
+					"task claim without an id is disabled while the scheduler is live")
+				break
+			}
+			current, getErr := s.Get(id)
+			if getErr != nil {
+				err = getErr
+				break
+			}
+			t, err = s.ClaimOffered(id, me, seatPool, taskLeaseDuration, now)
+			if errors.Is(err, task.ErrLeaseExpired) {
+				err = taskClaimRefusal(task.RefusalClaimOfferExpired,
+					fmt.Sprintf("%s's offer to %s has expired; wait for the scheduler to offer it again", id, me),
+					err.Error())
+			} else if errors.Is(err, task.ErrClaimOfferRequired) {
+				err = taskClaimRefusal(task.RefusalClaimOfferRequired,
+					fmt.Sprintf("%s is handed out by the scheduler; it is for %s and %s serves %s", id, taskPoolName(current.Pool), me, taskPoolName(seatPool)),
+					err.Error())
+			} else if errors.Is(err, task.ErrClaimPoolMismatch) {
+				err = taskClaimRefusal(task.RefusalClaimPoolMismatch,
+					fmt.Sprintf("%s is handed out by the scheduler; it is for %s and %s serves %s", id, taskPoolName(current.Pool), me, taskPoolName(seatPool)),
+					err.Error())
+			}
+			break
+		}
+		t, err = s.ClaimServing(id, me, seatPool, taskLeaseDuration, now)
+		if errors.Is(err, task.ErrClaimPoolUnknown) {
+			err = taskClaimRefusal(task.RefusalClaimPoolUnknown,
+				fmt.Sprintf("%s is pinned to %s; claim it with --pool, or let the scheduler hand it out", id, taskPoolName(t.Pool)),
+				err.Error())
+		} else if errors.Is(err, task.ErrClaimPoolMismatch) {
+			err = taskClaimRefusal(task.RefusalClaimPoolMismatch,
+				fmt.Sprintf("%s is for %s and %s serves %s", id, taskPoolName(t.Pool), me, taskPoolName(seatPool)),
+				err.Error())
+		}
 	case "renew":
-		t, _, err = s.Renew(me, taskLeaseDuration, 0, now)
+		var normalized []task.LeaseNormalization
+		if normalized, err = s.NormalizeLeases(now); err == nil {
+			for _, n := range normalized {
+				if appendErr := schedproc.AppendDecision(root, now, scheduler.Decision{Kind: "lease_normalised", TaskID: n.TaskID, Seat: me, Reason: fmt.Sprintf("lease of %s normalised: attempt %d, budget ends %s", n.TaskID, n.Attempt, n.BudgetEndsAt.UTC().Format(time.RFC3339))}); appendErr != nil {
+					return appendErr
+				}
+			}
+			var list []task.Task
+			if list, err = s.List(); err == nil {
+				held := task.HeldBy(me, list)
+				if held == nil || held.Lease == nil {
+					err = task.ErrNoLease
+				} else {
+					t, _, err = s.RenewAttempt(me, held.Attempt, taskLeaseDuration, 0, now)
+				}
+			}
+		}
 	case "done":
 		t, err = s.Done(id, me, *evidence, *finalHead, now)
 	case "fail":
 		t, err = s.Fail(id, me, *reason, now)
 	case "block":
+		if reservedTaskBlockReason(*reason) {
+			return fmt.Errorf("ledger_tampered is the scheduler's; a seat blocks with its own reason")
+		}
 		blockPaths := append(splitList(*paths), exactPaths...)
 		t, err = s.BlockWithPaths(id, me, *reason, *detail, *route, blockPaths, now)
 	case "release":
@@ -476,39 +707,71 @@ func printTaskResult(kind, root string, t task.Task, jsonOut bool, verbText stri
 }
 
 func printTaskDetails(t task.Task) {
-	fmt.Printf("%s  %s\n", t.ID, t.Title)
-	fmt.Printf("  state:    %s\n  class:    %s\n  priority: %d\n", t.State, t.Class, t.Priority)
+	plain := func(s string) string { return status.PlainText(s, false) }
+	fmt.Printf("%s  %s\n", plain(t.ID), plain(t.Title))
+	fmt.Printf("  state:    %s\n  class:    %s\n  priority: %d\n", plain(t.State), plain(t.Class), t.Priority)
+	fmt.Printf("  budget:   %s\n", t.Budget)
 	if t.Pool != nil {
-		fmt.Printf("  pool:     %s\n", t.Pool.Key())
+		fmt.Printf("  pool:     %s\n", plain(t.Pool.Key()))
 	}
 	if len(t.DependsOn) > 0 {
-		fmt.Printf("  depends:  %s\n", strings.Join(t.DependsOn, ", "))
+		deps := make([]string, len(t.DependsOn))
+		for i, id := range t.DependsOn {
+			deps[i] = plain(id)
+		}
+		fmt.Printf("  depends:  %s\n", strings.Join(deps, ", "))
 	}
 	if len(t.DeclaredFiles) > 0 {
-		fmt.Printf("  files:    %s\n", strings.Join(t.DeclaredFiles, ", "))
+		files := make([]string, len(t.DeclaredFiles))
+		for i, file := range t.DeclaredFiles {
+			files[i] = plain(file)
+		}
+		fmt.Printf("  files:    %s\n", strings.Join(files, ", "))
 	}
 	if t.Lease != nil {
 		claimed := "unclaimed"
 		if t.Lease.ClaimedAt != nil {
 			claimed = "claimed " + t.Lease.ClaimedAt.Format(time.RFC3339)
 		}
-		fmt.Printf("  lease:    %s, %s, expires %s, %d renewals\n", t.Lease.Holder, claimed, t.Lease.ExpiresAt.Format(time.RFC3339), t.Lease.Renewals)
+		budgetEnd := "not recorded"
+		if !t.Lease.BudgetEndsAt.IsZero() {
+			budgetEnd = t.Lease.BudgetEndsAt.Format(time.RFC3339)
+		}
+		unlabelled := t.Lease.Renewals - t.Lease.ActivityRenewals - t.Lease.ManualRenewals
+		if unlabelled < 0 {
+			unlabelled = 0
+		}
+		renewals := fmt.Sprintf("%d renewals (%d activity, %d manual", t.Lease.Renewals, t.Lease.ActivityRenewals, t.Lease.ManualRenewals)
+		if unlabelled > 0 {
+			renewals += fmt.Sprintf(", %d unlabelled", unlabelled)
+		}
+		renewals += ")"
+		fmt.Printf("  lease:    %s, %s, expires %s, budget ends %s, %s\n", plain(t.Lease.Holder), claimed, t.Lease.ExpiresAt.Format(time.RFC3339), budgetEnd, renewals)
 	}
 	fmt.Printf("  attempt:  %d\n", t.Attempt)
 	for _, a := range t.Attempts {
-		fmt.Printf("    #%d %s %s %s\n", a.N, a.Holder, a.Outcome, a.Detail)
+		fmt.Printf("    #%d %s %s %s\n", a.N, plain(a.Holder), plain(a.Outcome), plain(a.Detail))
 	}
 	for _, kv := range [][2]string{{"wait", t.WaitReason}, {"block", strings.TrimSpace(t.BlockReason + " " + t.BlockRoute + " " + t.BlockDetail)}, {"evidence", t.Evidence}, {"cancel", t.CancelReason}} {
 		if kv[1] != "" {
-			fmt.Printf("  %-9s %s\n", kv[0]+":", kv[1])
+			fmt.Printf("  %-9s %s\n", kv[0]+":", plain(kv[1]))
 		}
 	}
 	if t.Report != nil {
-		fmt.Printf("  report:   by %s at %s, awaiting the commit step\n", t.Report.By, t.Report.At.Format(time.RFC3339))
+		fmt.Printf("  report:   by %s at %s, awaiting the commit step\n", plain(t.Report.By), t.Report.At.Format(time.RFC3339))
 	}
 	if t.Description != "" {
-		fmt.Printf("\n%s\n", t.Description)
+		fmt.Printf("\n%s\n", status.PlainText(t.Description, true))
 	}
+}
+
+var reservedTaskBlockReasons = map[string]struct{}{
+	"ledger_tampered": {},
+}
+
+func reservedTaskBlockReason(reason string) bool {
+	_, reserved := reservedTaskBlockReasons[strings.TrimSpace(reason)]
+	return reserved
 }
 
 // validateTaskIDLeaf refuses anything but a canonical t<N> task id.

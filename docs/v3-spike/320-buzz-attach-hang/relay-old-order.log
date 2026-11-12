@@ -1,0 +1,6 @@
+=== RUN   TestRelayReplayAndLiveSubscriptionHaveNoLossWindow
+    relay_test.go:337: the stored replay and live subscription are not one critical section
+--- FAIL: TestRelayReplayAndLiveSubscriptionHaveNoLossWindow (0.01s)
+FAIL
+FAIL	github.com/omriariav/amq-squad/v3/internal/buzz	0.569s
+FAIL

@@ -120,6 +120,36 @@ func FilesOverlap(a, b []string) bool {
 	return false
 }
 
+// OverlapDeclaration returns one stable declaration covered by both sets.
+// Its boolean is decided by FilesOverlap, the same predicate Blocker uses.
+func OverlapDeclaration(a, b []string) (string, bool) {
+	if !FilesOverlap(a, b) {
+		return "", false
+	}
+	for _, x := range a {
+		for _, y := range b {
+			if !FilesOverlap([]string{x}, []string{y}) {
+				continue
+			}
+			switch {
+			case x == y:
+				return x, true
+			case declarationIsLiteral(x):
+				return x, true
+			case declarationIsLiteral(y):
+				return y, true
+			default:
+				return x, true
+			}
+		}
+	}
+	return "", false
+}
+
+func declarationIsLiteral(s string) bool {
+	return !strings.ContainsAny(s, "*?[") && !strings.HasSuffix(s, "/")
+}
+
 // splitGlob splits a glob into segments; tree is true when it covers
 // everything below its last segment.
 func splitGlob(g string) (segs []string, tree bool) {

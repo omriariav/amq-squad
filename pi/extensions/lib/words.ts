@@ -59,6 +59,7 @@ export type TaskWords = {
 	lease_holder?: string;
 	wait_reason?: string;
 	wait_holders?: string[];
+	waits_for?: { task_id: string; path: string }[];
 	wait_pool?: string;
 	block_reason?: string;
 	depends_on?: string[];
@@ -102,6 +103,9 @@ export const WAIT_WORDS: Record<string, (t: TaskWords, c: WaitContext) => string
 export function waitWords(t: TaskWords, c: WaitContext = {}): { line: string; record?: string } {
 	const r = t.wait_reason ?? "";
 	if (DEPENDENCY_MERGE.test(r)) return { line: `${t.id} ${r}` };
+	if (r === "file_lock" && (t.waits_for ?? []).length) {
+		return { line: (t.waits_for ?? []).map((w) => `${t.id} waits for ${clean(w.task_id, 40)}: both declare ${clean(w.path, 120)}`).join("; ") };
+	}
 	const f = own(WAIT_WORDS, r);
 	if (f) return { line: `${t.id} waiting: ${f(t, c)}` };
 	// a launch failure's code (internal/scheduler launchfail.go waitForSeat)
@@ -127,6 +131,32 @@ export function sizeCap(detail: string | undefined): string {
 	if (files) parts.push(`${files[1]} files over the cap of ${files[2]}`);
 	if (lines) parts.push(`${lines[1]} lines over the cap of ${lines[2]}`);
 	return parts.length ? parts.join(" and ") : "the diff is over the size cap";
+}
+
+// writerVersion reads only the authenticated refusal/decision record. The
+// Go error names either "a newer amq-squad (vX)" or "written by vX".
+function writerVersion(detail: string | undefined): string {
+	const m = /written by (?:a newer amq-squad \()?((?:v[0-9A-Za-z.+-]+)|(?:\(devel\)))/.exec(detail ?? "");
+	return clean(m?.[1] ?? "the build named in the record", 80);
+}
+
+// pinUnresolved keeps the pinned entry at the start, then shortens only the
+// class chain from its end. A long chain must never erase the fact the lead
+// needs in order to choose a new pin.
+export function pinUnresolved(detail: string | undefined, max = 240): string {
+	const whole = clean(detail, 4096);
+	if (!whole) return "the pool it is pinned to cannot run its class";
+	const match = /^(the pin .+?; class \S+ runs on )(.+)$/.exec(whole);
+	if (!match || whole.length <= max) return whole;
+	const chain = match[2].split(/,\s*/).filter(Boolean);
+	let keep = chain.length;
+	while (keep > 0) {
+		const hidden = chain.length - keep;
+		const suffix = hidden ? `${chain.slice(0, keep).join(", ")}, +${hidden} more` : chain.join(", ");
+		if ((match[1] + suffix).length <= max) return match[1] + suffix;
+		keep--;
+	}
+	return `${match[1]}+${chain.length} more`;
 }
 
 const COMMIT = "the commit step refused it";
@@ -161,8 +191,22 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	pr_pending: () => ["the commit step is waiting for its PR to open", "wait, or /reset it if it stays"],
 	widen_snapshot_missing: () => ["the widening found no snapshot of the stopped attempt", RESET],
 	widen_snapshot_attempt_mismatch: () => ["the widening's snapshot is of another attempt", RESET],
+	seat_head_detached_unmerged: () => ["the seat worktree holds a local commit the harness did not record", "push, merge or branch the commit before cleaning"],
+	seat_identity_unproven: () => ["the seat may still be writing to its worktree", "the lead runs seat clean after it stops"],
 	push_target_unacknowledged: () => ["the push target is not the one the owner's grant names now", "ask the owner to acknowledge the push target in the grant"],
-	ledger_tampered: () => ["the commits ledger does not verify", "ask the owner to inspect the commits ledger before anything commits"],
+	// 3.2.0-0c-B rule 7: the tamper alarm's typed block (the scheduler's
+	// prepare, the commit step's write-time refusal), with the seat and the
+	// quarantine path on the record line below the rule (blockWords); the
+	// prepare's hold names its alarm id, and the words name the decision by
+	// alarm that releases it.
+	ledger_tampered: (d) => {
+		const a = tamperAlarm(d.block_detail);
+		return a
+			? [`seat ${a.seat}'s commit record failed its check (alarm ${a.alarm})`, `after investigating, the lead runs amq-squad scheduler recover --seat ${a.seat} --alarm ${a.alarm} --reason "REASON"`]
+			: ["the seat's commit record failed its check", "the lead investigates before the seat works again"];
+	},
+	newer_writer: (d) => [`the commits ledger was written by ${writerVersion(d.block_detail)}`, "ask the owner to run amq-squad up --binary <that build>"],
+	schema_mismatch: () => ["the commits ledger does not match the schema its writer claimed", "ask the lead to investigate the writer"],
 	tool_pin_mismatch: () => ["a pinned tool is not the pinned version", "ask the owner to check the pin"],
 	verifier_timeout: () => ["its verifier ran past its time limit", `${RESET}, or ask the owner to raise the limit`],
 	verifier_output_exceeded: () => ["its verifier printed more than the limit", `${RESET}, or ask the owner to raise the limit`],
@@ -183,7 +227,7 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	retries_exhausted: () => ["every retry failed", "/reset it onto another pool"],
 	class_unknown: () => ["its class is not in the routing table", "add it again with a known class"],
 	declared_tree_unchecked: () => ["its declared files could not be checked", RESET],
-	pin_unresolved: () => ["the pool it is pinned to cannot run its class", "/reset it onto another pool"],
+	pin_unresolved: (d) => [pinUnresolved(d.block_detail), "/reset it onto another pool"],
 	history_tampered: () => ["the routing history does not verify", "ask the owner to inspect it"],
 };
 
@@ -219,6 +263,14 @@ export const LAUNCH_WORDS: Record<string, string> = {
 	// the scheduler's roster codes
 	seat_replacement_resource_present: "a gone seat's pane is still open, so no seat can replace it",
 	binding_present_without_resumable_conversation: "it could not resume its conversation",
+	base_fetch_unauthenticated: "its base branch could not be fetched with the recorded credentials",
+	base_tip_moved: "its base branch moved while the launch fetched it",
+	seat_branch_unmerged: "its remote seat branch has commits outside the base branch",
+	seat_branch_unpushed: "its local seat branch has commits outside the base branch",
+	seat_gitdir_foreign: "its worktree points at another repository's Git directory",
+	seat_head_unreadable: "its worktree has no readable commit at HEAD",
+	seat_worktree_dirty: "its worktree has local changes",
+	seat_worktree_check_failed: "its worktree cleanliness could not be checked",
 	// seat-exec's refusals
 	argv_missing: "its command line is missing",
 	codex_approval_missing: "its Codex approval mode is missing",
@@ -291,7 +343,11 @@ export function blockWords(t: TaskWords, d: BlockDetail = {}, c: WaitContext = {
 	const f = own(BLOCK_WORDS, r);
 	if (f) {
 		const [happened, todo] = f(d);
-		return { line: `${t.id} blocked: ${happened}; ${todo}` };
+		// the tamper alarm's record (3.2.0-0c-B): the seat and the
+		// quarantine path, from the block's own detail (tamper.go's
+		// "seat H: quarantined at PATH (seq N): ...")
+		const record = r === "ledger_tampered" && d.block_detail ? `${t.id}: ${tamperRecord(d.block_detail)}` : undefined;
+		return { line: `${t.id} blocked: ${happened}; ${todo}`, record };
 	}
 	// the task's own record marks a launch failure's block: Go's
 	// blockOnLaunchFailure writes "the launch of seat ... failed N times in a
@@ -321,10 +377,38 @@ export function launchBlock(detail: string | undefined, reason: string): { stage
 }
 
 // blockNeedsRecord reports whether a block's words read the task's own
-// record (task show's block_detail): the size cap's numbers, and a reason
-// no table maps, which may be a launch failure's AMQ code.
+// record (task show's block_detail): the size cap's numbers, the tamper
+// alarm's seat and quarantine path, and a reason no table maps, which may
+// be a launch failure's AMQ code.
 export function blockNeedsRecord(reason: string): boolean {
-	return reason === "size_cap_exceeded" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
+	return reason === "size_cap_exceeded" || reason === "ledger_tampered" || reason === "pin_unresolved" || (reason !== HOLD && !own(BLOCK_WORDS, reason) && !own(LAUNCH_WORDS, reason));
+}
+
+// TAMPER_DETAIL is the tamper alarm's detail, in both forms Go writes:
+// the prepare's (internal/scheduler tamper.go tamperDetail, "seat H:
+// quarantined at PATH (seq N): ...") and the commit step's write-time
+// refusal (internal/seatcommit commit.go writeOutcome, "the commits ledger
+// refused the write: commit ledger H: ...; the refused document is
+// quarantined at PATH; ..."): the seat and the slot.
+const TAMPER_DETAIL = /(?:seat|commit ledger) (\S+):.*?quarantined at ([^\s;]+)/;
+
+// TAMPER_ALARM is the hold's alarm id in the prepare's detail (tamper.go
+// tamperDetail, "seat H: ... (seq N; alarm ID): ..."), with its seat.
+const TAMPER_ALARM = /^seat (\S+): .*?\(seq \S+; alarm ([0-9a-f]{8})\)/;
+
+// tamperAlarm is the seat and the alarm id a tamper block's detail names
+// (the prepare's hold), or undefined (the commit step's write-time
+// refusal names none).
+export function tamperAlarm(detail: string | undefined): { seat: string; alarm: string } | undefined {
+	const m = TAMPER_ALARM.exec(detail ?? "");
+	return m ? { seat: m[1], alarm: m[2] } : undefined;
+}
+
+// tamperRecord is the record line of a tamper block: the seat and the
+// quarantine path when the detail names them, else the detail itself.
+export function tamperRecord(detail: string): string {
+	const m = TAMPER_DETAIL.exec(detail ?? "");
+	return m ? `seat ${m[1]}, quarantined at ${m[2]}` : clean(detail, 200);
 }
 
 // blockHappened is a block's first half alone (a dialog label).
@@ -369,7 +453,7 @@ export function seatDoing(s: SeatWords, t: TaskWords | undefined): { text: strin
 // reason has no words of its own, what to do.
 // DecisionWho is the fields a decision records who it is about: the seat
 // (Seat) and the task (TaskID), each as Go writes it for the kind.
-export type DecisionWho = { seat?: string; task_id?: string };
+export type DecisionWho = { seat?: string; task_id?: string; reason?: string; reason_code?: string };
 
 // seatOf names a decision's seat, "a seat" when it records none: never the
 // task's id in a seat's place (Codex on #866).
@@ -377,17 +461,40 @@ function seatOf(d: DecisionWho): string {
 	return d.seat ? `seat ${d.seat}` : "a seat";
 }
 
+const DURATION = String.raw`[0-9.]+(?:ns|µs|us|ms|s|m|h)(?:[0-9.]+(?:ns|µs|us|ms|s|m|h))*`;
+const BUDGET_ENDS = new RegExp(`^budget ends in ${DURATION}$`);
+const BUDGET_SPENT = new RegExp(`^task budget of ${DURATION} spent$`);
+
+function safeBudgetReason(reason: string | undefined, pattern: RegExp, fallback: string): string {
+	return reason && pattern.test(reason) ? reason : fallback;
+}
+
 export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]> = {
 	roster_launch_failed: () => ["the roster launch failed", "ask the lead to relaunch the roster"],
 	seat_not_up: (d) => [`${seatOf(d)} did not come up`, "ask the lead to relaunch the roster"],
 	seat_launch_failed: (d) => [`${seatOf(d)}'s launch failed${d.task_id ? ` for ${d.task_id}` : ""}`, "ask the lead to relaunch the roster"],
 	seat_prepare_failed: (d) => [`${seatOf(d)} could not be prepared${d.task_id ? ` for ${d.task_id}` : ""}`, "ask the lead to relaunch the roster"],
+	seat_excluded: (d) => d.reason_code === "schema_mismatch"
+		? [`${seatOf(d)} cannot take work because its commits ledger does not match the schema its writer claimed`, "ask the lead to investigate the writer"]
+		: [`${seatOf(d)} cannot take work because its commits ledger was written by ${writerVersion(d.reason)}`, "ask the owner to run amq-squad up --binary <that build>"],
+	seat_exclusion_cleared: (d) => [`${seatOf(d)}'s ledger compatibility hold cleared`, "nothing to do"],
+	// 3.2.0-0c-B rule 2: the count line after a prepare failure repeats
+	seat_prepare_suppressed: (d) => [`${seatOf(d)}'s prepare failure${d.task_id ? ` for ${d.task_id}` : ""} repeats`, "further repeats are counted, not shown, until the task, the seat or the reason changes"],
+	// Codex on c9826c31: the release after the lead's recovery could not
+	// read or return a task; the hold stays and the next tick tries again
+	// 3.2.0-0c-B: a line of a seat's hold release file that does not
+	// verify (a torn tail, an edited or forged line); it releases nothing
+	hold_release_line_skipped: (d) => [`${seatOf(d)}'s hold release file has a line that does not verify`, "that line releases nothing and the others still count; the record is below the line"],
+	ledger_release_failed: (d) => [`${seatOf(d)}'s release after the lead's recovery could not update ${d.task_id || "its task"}`, "the hold stays and the next tick tries again; the error is below the line"],
+	ledger_release_suppressed: (d) => [`${seatOf(d)}'s release keeps failing for ${d.task_id || "its task"}`, "further repeats are counted, not shown, until the reason changes; the error is below the line"],
 	// Go records the task and no seat (scheduler.go): the sentence names it
 	seat_request_failed: (d) => [`a seat could not be requested${d.task_id ? ` for ${d.task_id}` : ""}`, "check the task's pool, or /reset it onto another"],
 	seat_refused: (d) => [`${seatOf(d)} was refused`, "ask the lead why; the record is below the line"],
 	exit_refused: (d) => [`${seatOf(d)} did not stop cleanly${d.task_id ? ` after ${d.task_id}` : ""}`, "ask the owner to inspect it before the seat is relaunched"],
 	seat_close_failed: (d) => [`${seatOf(d)} could not be closed`, "close its pane by hand"],
-	ledger_tampered: () => ["the ledger does not verify", "ask the owner to inspect it"],
+	ledger_tampered: () => ["the exits ledger failed its check", "ask the lead to investigate it"],
+	newer_writer: (d) => [`the exits ledger was written by ${writerVersion(d.reason)}`, "ask the owner to run amq-squad up --binary <that build>"],
+	schema_mismatch: () => ["the exits ledger does not match the schema its writer claimed", "ask the lead to investigate the writer"],
 	scheduler_stopped: () => ["the scheduler stopped", "start the team again with amq-squad up"],
 	// the stops the plan reviewer's ruling on Codex's last finding on #863
 	// added: every decision kind Go writes is a stop (here) or routine
@@ -399,6 +506,9 @@ export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]
 	roster_incomplete: (d) => [`the roster came up without ${d.seat ? `seat ${d.seat}` : "every seat"}`, "ask the lead to relaunch the roster"],
 	seat_gone: (d) => [`${seatOf(d)}'s process is gone`, "ask the lead to relaunch the roster"],
 	seat_liveness_unknown: (d) => [`${seatOf(d)}'s liveness cannot be read`, "look at its pane"],
+	// a cancelled attempt's clean waits: the seat's launch identity is not
+	// seen gone (exits.go, the plan reviewer's identity rule on #909)
+	seat_may_be_writing: (d) => [`${seatOf(d)} may still be writing to its worktree${d.task_id ? ` after ${d.task_id}` : ""}`, "the lead runs seat clean after it stops"],
 	// Go records the task and no seat (scheduler.go seat_request_expired)
 	seat_request_expired: (d) => [`the seat request for ${d.task_id || "a task"} expired before a seat came up`, "ask the lead to relaunch the roster"],
 	seat_replacement_needs_relaunch: (d) => [`every seat of ${d.task_id ? `${d.task_id}'s pool` : "a pool"} is gone${d.seat ? ` (${d.seat})` : ""}`, "ask the lead to relaunch the roster"],
@@ -412,6 +522,13 @@ export const DECISION_WORDS: Record<string, (d: DecisionWho) => [string, string]
 	tick_error: () => ["a scheduler tick failed", "nothing to do unless it repeats; the next tick retries"],
 	up_stopped_lead: () => ["amq-squad up stopped a lead", "read the record below the line"],
 	up_stopped_scheduler: () => ["amq-squad up stopped a scheduler", "read the record below the line"],
+	task_budget_warning: (d) => [`${d.task_id || "a task"}'s ${safeBudgetReason(d.reason, BUDGET_ENDS, "budget ends soon")} on ${seatOf(d)}`, "extend it or let it expire"],
+	task_budget_spent: (d) => [`${seatOf(d)}'s lease is no longer renewed${d.task_id ? ` for ${d.task_id}` : ""}`, `its ${safeBudgetReason(d.reason, BUDGET_SPENT, "task budget is spent")}`],
+	// 3.2.0-3a: the lead's merge-train re-bind the train refused on its
+	// proof (cli merge_train_rebind.go rebindDecision; Go records the lead
+	// as the seat and the code)
+	merge_train_rebind_refused: (d) => [`${seatOf(d)}'s merge-train re-bind was refused`, "read the proof's failing part below the line"],
+	seat_clean_deferred: (d) => [`${seatOf(d)} could not be cleaned yet${d.task_id ? ` after ${d.task_id}` : ""}`, "inspect its worktree and retry the clean"],
 };
 
 // ROUTINE_DECISIONS are the decision kinds that need no look from the lead
@@ -424,10 +541,14 @@ export const ROUTINE_DECISIONS: Record<string, true> = Object.fromEntries(
 	[
 		"blocked", "commit_adopted", "commit_cancelled", "commit_cancelling", "commit_deferred", "commit_refused", "commit_running", "completed",
 		"decision_socket_open", "discovery_stale", "dispatch_held", "dispatched", "exit_check_deferred", "exit_check_duplicate", "launch_failures_restored",
-		"lease_expired", "lease_renewed", "legacy_merge_head_missing", "pr_bound", "roster_adopted", "roster_launched", "roster_over_cap", "roster_relaunch_requested",
-		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing",
+		"lease_expired", "lease_normalised", "lease_renewed", "ledger_layout_migrated", "legacy_merge_head_missing", "pr_bound", "roster_adopted", "roster_launched", "roster_over_cap", "roster_relaunch_requested",
+		"roster_reloaded", "scheduler_started", "seat_adopted", "seat_adopted_closing", "seat_cleaned", "seat_close_requested", "seat_closed", "seat_closing", "seat_index_refreshed", "cleaner_marker_taken_over", "seat_clean_superseded", "seat_clean_replay_dropped",
 		"seat_first_message", "seat_launch_retry", "seat_request_cancel_pending", "seat_request_cancelled", "seat_requested", "seat_up", "session_created",
-		"task_reset", "usage_limit", "warning_cleared",
+		"merge_train_rebound", "task_budget_extended", "task_reset", "usage_limit", "wait_changed", "warning_cleared",
+		// 3.2.0-0c-B: the lead's recovery of a quarantined ledger (its own
+		// decision; the task's return to pending is a task_reset) and the
+		// restart's restore of held seats
+		"ledger_recovered", "ledger_tampers_restored", "ledger_hold_released",
 	].map((k) => [k, true]),
 ) as Record<string, true>;
 
@@ -457,6 +578,10 @@ export const RESOLVED_BY: Record<string, { kinds: readonly string[]; match: "sea
 	seat_not_up: SEAT_RESOLVED,
 	seat_launch_failed: SEAT_RESOLVED,
 	seat_prepare_failed: SEAT_RESOLVED,
+	seat_prepare_suppressed: SEAT_RESOLVED,
+	hold_release_line_skipped: { kinds: ["ledger_hold_released", "seat_up", "roster_launched"], match: "seat" },
+	ledger_release_failed: { kinds: ["ledger_hold_released", "seat_up", "roster_launched"], match: "seat" },
+	ledger_release_suppressed: { kinds: ["ledger_hold_released", "seat_up", "roster_launched"], match: "seat" },
 	seat_refused: SEAT_RESOLVED,
 	seat_gone: SEAT_RESOLVED,
 	seat_liveness_unknown: SEAT_RESOLVED,
@@ -469,6 +594,8 @@ export const RESOLVED_BY: Record<string, { kinds: readonly string[]; match: "sea
 	scheduler_stopped: SCHEDULER_RESOLVED,
 	lead_unknown: SCHEDULER_RESOLVED,
 	up_stopped_scheduler: SCHEDULER_RESOLVED,
+	task_budget_warning: { kinds: ["task_budget_extended", "completed"], match: "task" },
+	task_budget_spent: { kinds: ["task_budget_extended", "task_reset", "completed"], match: "task" },
 };
 
 // resolved reports whether a later decision resolves the stop at index i:
@@ -500,13 +627,18 @@ export function decisionWords(d: { kind: string; seat?: string; task_id?: string
 	// a kind no table knows: said, never hidden, its kind below the rule
 	if (!words) return UNKNOWN_STOP.test(d.kind) ? "the scheduler stopped something; its kind is below the line" : "the scheduler recorded something; its kind is below the line";
 	const [happened, todo] = words(d);
+	// seat_excluded uses reason_code to choose its own complete compatibility
+	// sentence. Do not layer the task-block wording over that sentence.
+	if (d.kind === "seat_excluded") return `${happened}; ${todo}`;
 	const code = d.reason_code || (d.reason ?? "").trim().split(/[\s:]+/)[0] || "";
 	const f = own(BLOCK_WORDS, code);
 	// a launch decision: its reason code, else its stage, in the launch table
 	const l = own(LAUNCH_WORDS, code) ?? own(LAUNCH_WORDS, d.stage);
 	if (!f && l) return `${happened}: ${l}; ${todo}`;
 	if (!f) return `${happened}; ${todo}`;
-	const [why, then] = f({});
+	// the tamper alarm's decision carries its detail (the alarm id) as its
+	// reason: the words read it as the block's own record
+	const [why, then] = f(code === "ledger_tampered" ? { block_detail: d.reason } : {});
 	return `${happened}: ${why}; ${then}`;
 }
 
@@ -592,12 +724,17 @@ export const TRAIN_RULE_WORDS: Record<string, [string, string]> = {
 	// #871: the branch protection's strict up-to-date rule (mergetrain
 	// train.go applyStrict). A seat branch is never rebased by hand: the
 	// remedy is the lead's (the plan reviewer on #873)
-	strict_required_status_checks_policy: ["its branch is behind its base", "the train brings it up to date and waits for its checks; if the train cannot, reset the task so a seat redoes it on the current base"],
+	strict_required_status_checks_policy: ["GitHub requires the branch to be up to date before merging, and the train could not bring it up to date", "No gate overrides GitHub's rule. Run the train again; if it repeats, the lead closes the PR and redoes the task on the current base"],
+	update_conflict: ["The branch conflicts with the base, so the train cannot update it", "No gate overrides GitHub's rule. The lead closes the PR and redoes the task on the current base (a seat never merges the base by hand)"],
 	// #874: the seat's patch changed during the train's update (git
 	// patch-id over the seat's range before and after differs; mergetrain
 	// train.go refusePatchProof). A seat branch is never rebased by hand:
 	// the remedy is the lead's
 	rebase_patch_changed: ["its change moved during the update", "reset the task so a seat redoes it on the current base"],
+	// 3.2.0-3a: GitHub updates a branch asynchronously; the train waits
+	// 120 s for the head to move and refuses when it does not (mergetrain
+	// train.go land, RuleUpdateUnconfirmed)
+	branch_update_unconfirmed: ["GitHub did not update the branch in time", "run the train again; if it repeats, ask the owner whether the update conflicts"],
 };
 
 // TRAIN_KIND_WORDS maps each entry kind the merge train journals
@@ -609,17 +746,33 @@ export const TRAIN_KIND_WORDS: Record<string, string> = {
 	refusal: "refused a PR",
 	rebase: "rebased a PR",
 	rebind: "bound a rebased PR to its task again",
+	// 3.2.0-3a: journaled before updatePullRequestBranch (mergetrain
+	// train.go land)
+	update_requested: "asked GitHub to bring a PR up to date",
+	// 3.2.0-3a (the plan reviewer's split on #903): the update GitHub
+	// refused outright, and the one that failed on this side without a
+	// refusal (the request stays live for the recovery)
+	update_failed: "asked GitHub to bring a PR up to date and was refused",
+	update_ambiguous: "asked GitHub to bring a PR up to date and got no answer",
+	// 3.2.0-3a: the lead's re-bind proved but not bound, the binding had moved
+	rebind_superseded: "proved a re-bind whose binding had moved on; bound nothing",
+	// 3.2.0-3a: the lead's re-bind applied; the head is the train's own again
+	rebind_readmitted: "re-bound a task by the lead's decision",
 	batch: "planned a batch",
 	plan: "finished a dry run",
 	protection: "read the branch protection",
 	alert: "raised an alert",
 	alert_cleared: "cleared an alert",
+	// 320-train-escape-legacy: the one line of a legacy gate record the
+	// drift reader skipped (mergetrain train.go, beside a run's alerts)
+	note: "noted a skipped legacy gate record",
 	stop: "stopped",
 	// a merge not recorded because the task's binding no longer matches:
 	// its head, its repository or PR binding with the same SHA, or a merge
 	// the server reported (mergetrain train.go reconcileBinding; Codex on
 	// #873: not only a head mismatch)
 	reconcile: "skipped recording a merge because its task binding no longer matches",
+	reconcile_read_failed: "could not read one PR while reconciling it and continued with the others",
 };
 
 // trainRunWords is what a run did last, in words; an unmapped kind says
@@ -635,7 +788,18 @@ export function trainRunWords(kind: string): string {
 export function trainStop(refusal: string): string {
 	const m = /^refusal PR #(\d+) ([a-z_,]+):/.exec(refusal ?? "");
 	if (!m) return "the merge train stopped; its refusal is below the line";
-	const w = own(TRAIN_RULE_WORDS, m[2].split(",")[0]);
+	const rules = m[2].split(",");
+	const detail = refusal.slice(m[0].length).trim();
+	const priority = ["update_conflict", "strict_required_status_checks_policy"];
+	if (/already merged at another head/.test(detail)) priority.push("pr_state");
+	const rule = priority.find((candidate) => rules.includes(candidate)) ?? rules[0];
+	if (rule === "strict_required_status_checks_policy") return `#${m[1]}: GitHub's up-to-date rule refused it; no gate overrides it. Run the train again; if it repeats, the lead redoes the task.`;
+	if (rule === "update_conflict") return `#${m[1]} conflicts with the base; no gate overrides it. The lead redoes the task (a seat never merges the base by hand).`;
+	if (rule === "pr_state") {
+		const task = /already merged at another head[\s\S]*?lead checks task ([^'\s]+)'s record/.exec(detail)?.[1];
+		if (task) return `#${m[1]} was already merged at another head; nothing to land. The lead checks task ${task}'s record.`;
+	}
+	const w = own(TRAIN_RULE_WORDS, rule);
 	if (!w) return `the merge train stopped at PR #${m[1]}; its rule is below the line`;
 	return `the merge train stopped at PR #${m[1]}: ${w[0]}; ${w[1]}`;
 }
@@ -678,7 +842,7 @@ export function plainDetail(text: string): string {
 }
 
 // The verb names a refusal starts with ("task reset: ...").
-const VERB_HEADS = new Set(["task add", "task reset", "task widen", "task show", "scheduler clear", "scheduler relaunch", "gate status", "gate post", "team propose", "team apply", "error"]);
+const VERB_HEADS = new Set(["task add", "task reset", "task widen", "task show", "scheduler clear", "scheduler relaunch", "scheduler recover", "gate status", "gate post", "team propose", "team apply", "error"]);
 
 // sentence is "<what happened>: <detail>." or "<what happened>." when the
 // detail has nothing plain to add.

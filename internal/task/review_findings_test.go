@@ -110,20 +110,21 @@ func TestFinding4SnapshotNeverMixesTransactions(t *testing.T) {
 func TestFinding5RenewalRechecksTheIntervalUnderTheLock(t *testing.T) {
 	s := newStore(t)
 	mustAdd(t, s, AddInput{Title: "a"})
-	if _, err := s.Claim("t1", "h", nil, 10*time.Minute, t0); err != nil {
+	claimed, err := s.Claim("t1", "h", nil, 10*time.Minute, t0)
+	if err != nil {
 		t.Fatal(err)
 	}
 	aAt := t0.Add(70 * time.Second)
 	renewAfterPrecheck = func() {
 		renewAfterPrecheck = nil
-		if _, renewed, err := s.Renew("h", 10*time.Minute, time.Minute, aAt); err != nil || !renewed {
+		if _, renewed, err := s.RenewAttempt("h", claimed.Attempt, 10*time.Minute, time.Minute, aAt); err != nil || !renewed {
 			t.Errorf("process A renewal: %v %v", renewed, err)
 		}
 	}
 	defer func() { renewAfterPrecheck = nil }()
 	// Process B read the same due renewal (precheck at T+65 s against the
 	// claim at T) and takes the lock after A committed.
-	_, renewed, err := s.Renew("h", 10*time.Minute, time.Minute, t0.Add(65*time.Second))
+	_, renewed, err := s.RenewAttempt("h", claimed.Attempt, 10*time.Minute, time.Minute, t0.Add(65*time.Second))
 	if err != nil || renewed {
 		t.Fatalf("B renewed inside the interval after A: renewed %v err %v", renewed, err)
 	}

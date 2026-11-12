@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "kind": "doctor",
+  "data": {
+    "team_home": "/Users/omri/code/amq-squad",
+    "checks": [
+      {
+        "name": "amq version",
+        "status": "ok",
+        "detail": "amq 0.116.2 (min 0.116.2)"
+      },
+      {
+        "name": "launchapi compatibility",
+        "status": "ok",
+        "detail": "contract 0.61.1 (13 negotiable feature(s))"
+      },
+      {
+        "name": "amq vs launchapi adoption floor",
+        "status": "ok",
+        "detail": "amq 0.116.2 meets the launchapi adoption floor v0.74.1"
+      },
+      {
+        "name": "amq identity pin",
+        "status": "ok",
+        "detail": "no injected AMQ agent-shell identity"
+      },
+      {
+        "name": "amq ops",
+        "status": "ok",
+        "detail": "amq doctor --ops ok"
+      },
+      {
+        "name": "amq-squad on PATH",
+        "status": "ok",
+        "detail": "matches this build (v3.2.0-rc.1) at /Users/omri/go/bin/amq-squad"
+      },
+      {
+        "name": "amq installed floor",
+        "status": "ok",
+        "detail": "/Users/omri/go/bin/amq 0.116.2 (floor 0.116.2)"
+      },
+      {
+        "name": "amq-remote installed floor",
+        "status": "ok",
+        "detail": "/Users/omri/go/bin/amq-remote 0.116.2 (floor 0.116.2)"
+      },
+      {
+        "name": "amq-owner-sign installed floor",
+        "status": "ok",
+        "detail": "/Users/omri/go/bin/amq-owner-sign 0.116.2 (floor 0.116.2)"
+      },
+      {
+        "name": "tool/claude",
+        "status": "ok",
+        "detail": "2.1.316 at /Users/omri/.local/bin/claude; launch API verified 2.1.233 (newer); logged in (keychain)"
+      },
+      {
+        "name": "tool/codex",
+        "status": "ok",
+        "detail": "0.166.0 at /opt/homebrew/bin/codex; launch API verified 0.163.0 (newer); logged in (file)"
+      },
+      {
+        "name": "tool/pi",
+        "status": "ok",
+        "detail": "pi-1.3.0-node-22.21.1-darwin-arm64 at /Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-075de902aec6"
+      },
+      {
+        "name": "tool/grok",
+        "status": "ok",
+        "detail": "1.0.25 at /Users/omri/.grok/bin/grok; launch API verified 1.0.5 (newer); login state unknown"
+      },
+      {
+        "name": "tool/cursor-agent",
+        "status": "ok",
+        "detail": "not on PATH (optional)"
+      },
+      {
+        "name": "tool/ollama",
+        "status": "ok",
+        "detail": "0.40.13 at /usr/local/bin/ollama"
+      },
+      {
+        "name": "tool/amq",
+        "status": "ok",
+        "detail": "0.116.2 at /Users/omri/go/bin/amq; launch API verified 0.116.2 (match)"
+      },
+      {
+        "name": "tool/amq-remote",
+        "status": "ok",
+        "detail": "0.116.2 at /Users/omri/go/bin/amq-remote"
+      },
+      {
+        "name": "tool/tmux",
+        "status": "ok",
+        "detail": "3.7 at /opt/homebrew/bin/tmux"
+      },
+      {
+        "name": "tool/gh",
+        "status": "ok",
+        "detail": "2.100.0 at /opt/homebrew/bin/gh; logged in (file)"
+      },
+      {
+        "name": "host",
+        "status": "ok",
+        "detail": "RAM 64 GB, GPU Apple M5 Max (unified memory)"
+      },
+      {
+        "name": "ollama models",
+        "status": "ok",
+        "detail": "5 model(s)"
+      },
+      {
+        "name": "registry",
+        "status": "warn",
+        "detail": "75 entries, 60 verified (the lead proposes seats from these only); /Users/omri/.amq-squad/registry.yaml is out of date (run 'amq-squad doctor --write-registry')"
+      },
+      {
+        "name": "registry/pi",
+        "status": "warn",
+        "detail": "unverified: ollama/gemma3:4b no_tool_calls: Ollama refuses tools for this model; never implement or script work; ollama/llama3.2-vision:latest probe_failed: R12 probe: 0 of 1 passes, unverified; ollama/qwen2.5:32b unprobed: R12 probe: 1 of 1 passes; 5 needed before the entry ships; ollama/qwen2.5vl:7b no_tool_calls: Ollama refuses tools for this model; never implement or script work; ollama/qwen3.6:27b unprobed: R12 probe: 1 of 1 passes; 5 needed before the entry ships"
+      },
+      {
+        "name": "pi runtime",
+        "status": "ok",
+        "detail": "pi 1.3.0, node 22.21.1: 6447 files re-hashed in 132 ms"
+      },
+      {
+        "name": "sleep",
+        "status": "ok",
+        "detail": "system sleep after 1 min, currently sleep prevented by caffeinate, coreaudiod"
+      },
+      {
+        "name": "amq-remote login service",
+        "status": "warn",
+        "detail": "no launchd agent for amq-remote under ~/Library/LaunchAgents; remote access stops at logout or reboot"
+      },
+      {
+        "name": "amq-remote login service state",
+        "status": "warn",
+        "detail": "amq-remote login service is absent for root /Users/omri/.amq/remote/root: nothing restarts the endpoint after a reboot; run amq-remote service install --root /Users/omri/.amq/remote/root"
+      },
+      {
+        "name": "buzz share grants",
+        "status": "ok",
+        "detail": "8 grants verify locally (owner 232322028fbe), expire 2026-11-28T20:31:45Z"
+      },
+      {
+        "name": "codex trust",
+        "status": "ok",
+        "detail": "/Users/omri/code/amq-squad is trusted in /Users/omri/.codex/config.toml"
+      },
+      {
+        "name": "codex notify fan-out",
+        "status": "ok",
+        "detail": "absent (candidate, plan 16.8; 'amq-squad trust' prints the line)"
+      },
+      {
+        "name": "codex wake dialog hook",
+        "status": "ok",
+        "detail": "AMQ's Codex dialog hook is in /Users/omri/.codex/hooks.json for all 6 events, so Codex seats launch with an AMQ wake; 'amq doctor --ops' reads whether Codex trusts it"
+      },
+      {
+        "name": "codex activity hook trust",
+        "status": "ok",
+        "detail": "Codex trusts all 3 exact amq-squad activity commands in /Users/omri/.codex/config.toml"
+      },
+      {
+        "name": "shell profile",
+        "status": "ok",
+        "detail": "no exported *_API_KEY, *_TOKEN or *_SECRET names"
+      },
+      {
+        "name": "grants",
+        "status": "ok",
+        "detail": "/Users/omri/.amq-squad/grants.yaml+/Users/omri/code/amq-squad/squad.yaml (owner file /Users/omri/.amq-squad/grants.yaml, mode 0600); mode auto; seat cap 12 per session"
+      },
+      {
+        "name": "routing",
+        "status": "ok",
+        "detail": "default table: 6 classes, 11 chain entries, exploration_share 0.05"
+      },
+      {
+        "name": "gh pin",
+        "status": "ok",
+        "detail": "/opt/homebrew/Cellar/gh/2.100.0/bin/gh sha256 1179745d43ea43dff3fa1f0e34bfb204e8f99232204f106c71ca8c2e0f6cb41a"
+      },
+      {
+        "name": "claude seat token",
+        "status": "ok",
+        "detail": "/Users/omri/.amq-squad/claude-token present, 0600, owner-only, 8 days old"
+      },
+      {
+        "name": "status contract",
+        "status": "ok",
+        "detail": "schema 1: the golden fixture round-trips through this build and a produced document is additive against it"
+      },
+      {
+        "name": "squad.yaml golden",
+        "status": "ok",
+        "detail": "schema 1: the golden fixture parses to the expected structure"
+      },
+      {
+        "name": "pi runtime versions",
+        "status": "warn",
+        "detail": "10 older than the last 2: pi-1.3.0-node-22.21.1-darwin-arm64-0a8a721e40df, pi-1.3.0-node-22.21.1-darwin-arm64-8bc4074d1464, pi-1.3.0-node-22.21.1-darwin-arm64-09e814e5cf40, pi-1.3.0-node-22.21.1-darwin-arm64-48abf89aa6a3, pi-1.3.0-node-22.21.1-darwin-arm64-303ffe836150, pi-1.3.0-node-22.21.1-darwin-arm64-1a4bd2eeec38, pi-1.3.0-node-22.21.1-darwin-arm64-eda3b0eb1641, pi-1.3.0-bun-1.4.2-darwin-arm64-da4cb3a18aa3, pi-1.3.0-node-22.21.1-darwin-arm64-2e174231d741, pi-1.3.0-upstream-bun-darwin-arm64-b7ff642cb109 (doctor --fix removes them)",
+        "kind": "pi_runtime_old"
+      }
+    ]
+  }
+}

@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { installScreen, renderScreen, type ScreenStatus } from "../extensions/lib/screen.ts";
+import { truncateToWidth } from "../extensions/lib/width.ts";
 import { installCommands } from "../extensions/lib/commands.ts";
 import { Keys, refusal, WIDEN_REASON } from "../extensions/lib/keys.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
@@ -371,7 +372,8 @@ test("an unknown key, an old /squad subcommand, or a key without the interactive
 	const r = rig(() => res(0, ""), []);
 	await r.screen.poll();
 	const lines = await r.press("squad", "clear");
-	assert.equal(keyLine(lines), "  /squad: There is no /squad clear any more: each action is its own command. The commands you can use now: /add /reset /dismiss /answer /widen /team hide (/squad goes in 3.2)");
+	const oldCommandLine = "  /squad: There is no /squad clear any more: each action is its own command. The commands you can use now: /add /reset /dismiss /answer /widen /team hide (/squad goes in 3.2)";
+	assert.equal(keyLine(lines), truncateToWidth(oldCommandLine, 160));
 	assert.equal(r.calls.length, 0);
 	const keys = new Keys(cfg(), async () => res(0, ""));
 	const unknown = await keys.press("foo", fakeCtx({ hasUI: true }), fixture);

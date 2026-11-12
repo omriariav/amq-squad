@@ -17,6 +17,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Config, Runner } from "./hooks.ts";
 import { commandsLine } from "./commands.ts";
 import { gateLabel, Keys, typedPrefix, type KeyOutcome } from "./keys.ts";
+import { truncateToWidth } from "./width.ts";
 import { blockNeedsRecord, blockWords, clean, decisionKind, decisionWords, resolved, RULE, requestWords, seatDoing, trainRunWords, trainStop, waitWords, warningWords, type BlockDetail } from "./words.ts";
 import { run } from "./verbs.ts";
 
@@ -47,7 +48,7 @@ type SeatRow = {
 };
 // wait_pool: for a task waiting no_roster_seat, the pool its route names
 // and no roster seat serves (brief 3.1.1-2)
-type TaskRow = { id: string; title?: string; task_state: string; lease_holder: string; block_reason: string; wait_reason: string; wait_holders?: string[]; wait_pool?: string; depends_on?: string[]; pr_number: number; updated_at: string };
+export type TaskRow = { id: string; title?: string; task_state: string; lease_holder: string; lease_expires_at?: string | null; budget?: number; budget_ends_at?: string | null; block_reason: string; wait_reason: string; wait_holders?: string[]; waits_for?: { task_id: string; path: string }[]; wait_pool?: string; depends_on?: string[]; pr_number: number; updated_at: string };
 // question is the gate question's plain lines, the text above its rule, as
 // the owner reads it on the phone (brief 3.1.1-1); "" for a gate raised
 // before 3.1.1.
@@ -90,6 +91,12 @@ function sec(ms: number | null | undefined): string {
 	return typeof ms === "number" ? `${(ms / 1000).toFixed(1)}s` : "-";
 }
 
+// Status text can contain values a seat wrote, including a path in an error,
+// a handle, or a file name. The screen and words.ts emit no escape sequences
+// of their own, so replace controls at both exits where a line reaches the
+// terminal.
+const controlChars = /[\u0000-\u001f\u007f-\u009f]/g;
+
 function short(s: string, n = 120): string {
 	const one = (s ?? "").replace(/\s+/g, " ").trim();
 	return one.length > n ? one.slice(0, n - 3) + "..." : one;
@@ -102,6 +109,33 @@ function age(since: string, now: Date): string {
 	if (s < 120) return `${s}s`;
 	if (s < 7200) return `${Math.floor(s / 60)}m`;
 	return `${Math.floor(s / 3600)}h`;
+}
+
+function timeLeft(until: string | null | undefined, now: Date): string {
+	const left = msLeft(until, now);
+	if (left === null) return "";
+	const s = Math.max(0, Math.ceil(left / 1000));
+	if (s < 120) return `${s}s`;
+	if (s < 7200) return `${Math.ceil(s / 60)}m`;
+	return `${Math.ceil(s / 3600)}h`;
+}
+
+function msLeft(until: string | null | undefined, now: Date): number | null {
+	const t = Date.parse(until ?? "");
+	return Number.isFinite(t) ? Math.max(0, t - now.getTime()) : null;
+}
+
+function taskClock(t: TaskRow, now: Date): string {
+	if (t.task_state !== "in_progress") return "";
+	const leaseMs = msLeft(t.lease_expires_at, now);
+	const budgetMs = msLeft(t.budget_ends_at, now);
+	// A normal ten-minute lease and a distant budget add noise. Once the
+	// lease has two minutes left, or the budget is one lease away, show both
+	// recorded clocks so the lead can decide whether to act.
+	if ((leaseMs === null || leaseMs > 2 * 60_000) && (budgetMs === null || budgetMs > 10 * 60_000)) return "";
+	const lease = timeLeft(t.lease_expires_at, now);
+	const budget = timeLeft(t.budget_ends_at, now);
+	return [lease && `its lease has ${lease} left`, budget && `its budget has ${budget} left`].filter(Boolean).join("; ");
 }
 
 // split is a Go text's plain part (above its rule) and the rest.
@@ -155,12 +189,12 @@ function launchCodes(st: ScreenStatus): Set<string> {
 	return out;
 }
 
-function taskLine(t: TaskRow, st: ScreenStatus, d: BlockDetail | undefined): { line: string; record?: string } {
+function taskLine(t: TaskRow, st: ScreenStatus, d: BlockDetail | undefined, now: Date): { line: string; record?: string } {
 	const pr = t.pr_number ? `  PR #${t.pr_number}` : "";
 	const title = clean(t.title);
 	switch (t.task_state) {
 		case "in_progress":
-			return { line: `${t.id} in progress on ${t.lease_holder || "a seat"}${title ? `: ${title}` : ""}${pr}` };
+			return { line: `${t.id} in progress on ${t.lease_holder || "a seat"}${title ? `: ${title}` : ""}${pr}${taskClock(t, now) ? `  · ${taskClock(t, now)}` : ""}` };
 		case "pending":
 			return waitWords(t, { max_seats: st.scheduler?.max_seats, usage_limit_until: st.scheduler?.usage_limit_until ?? null, launch: launchCodes(st) });
 		case "blocked":
@@ -173,12 +207,45 @@ function taskLine(t: TaskRow, st: ScreenStatus, d: BlockDetail | undefined): { l
 	return { line: `${t.id}: its state cannot be read`, record: `${t.id}: task_state ${clean(t.task_state, 40) || "empty"}` };
 }
 
+function taskRank(t: TaskRow): number {
+	switch (t.task_state) {
+		case "blocked": return 0;
+		case "in_progress": return 1;
+		case "pending": return 2;
+		case "completed":
+		case "cancelled": return 4;
+		default: return 3;
+	}
+}
+
+// taskRows orders actionable work before history and applies the task-area
+// height. Closed work is folded only after every open row has a place; it
+// can therefore never displace a blocked, running or pending task.
+function taskRows(tasks: TaskRow[], maxRows?: number): { tasks: TaskRow[]; tail?: string } {
+	const ordered = tasks.map((task, index) => ({ task, index }))
+		.sort((a, b) => taskRank(a.task) - taskRank(b.task) || a.index - b.index)
+		.map(({ task }) => task);
+	if (maxRows === undefined || !Number.isFinite(maxRows)) return { tasks: ordered };
+	const cap = Math.max(0, Math.floor(maxRows));
+	if (cap === 0) return { tasks: [] };
+	const open = ordered.filter((t) => t.task_state !== "completed" && t.task_state !== "cancelled");
+	const closed = ordered.filter((t) => t.task_state === "completed" || t.task_state === "cancelled");
+	if (open.length > cap) {
+		const shown = open.slice(0, Math.max(0, cap - 1)); // an open overflow always names how much is hidden
+		return { tasks: shown, tail: `+${tasks.length - shown.length} more (/team for all)` };
+	}
+	const room = cap - open.length;
+	if (closed.length <= room) return { tasks: [...open, ...closed] };
+	if (room > 0) return { tasks: open, tail: `${closed.length} closed` };
+	return { tasks: open, tail: `${closed.length} closed` };
+}
+
 // renderScreen is the screen's lines: the lead handle and the root, then the
 // blocks (seats, tasks, train, waiting on you, phone requests), each with
 // one plain line when empty; then the last action's outcome line; then the
 // rule and, below it, the codes, ids and digests for the record; and last,
 // the commands available now (brief 3.1.1-3 item 2).
-export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: KeyOutcome, details: Record<string, BlockDetail> = {}): string[] {
+export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: KeyOutcome, details: Record<string, BlockDetail> = {}, maxTaskRows?: number): string[] {
 	const lead = st.lead_handle ?? st.lead?.handle ?? "-";
 	const leadProc = st.lead ? ` (pid ${st.lead.pid}${st.lead.pane ? `, pane ${st.lead.pane}` : ""}${st.lead.live ? "" : ", not live"})` : "";
 	const out: string[] = [`amq-squad: lead ${lead}${leadProc} · root ${st.root}`];
@@ -194,7 +261,8 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 		const held = s.task_id ? st.tasks.find((t) => t.id === s.task_id) : undefined;
 		const doing = seatDoing(s, held);
 		rec(doing.record);
-		out.push(`  ${s.handle}  ${rt}  ${doing.text}${launchTiming(s.launch)}`);
+		const clock = held ? taskClock(held, now) : "";
+		out.push(`  ${s.handle}  ${rt}  ${doing.text}${clock ? `  · ${clock}` : ""}${launchTiming(s.launch)}`);
 		// brief 3.1.1-3 (the plan reviewer): each warning in words above the
 		// rule, its code and detail verbatim below it
 		for (const w of s.warnings ?? []) {
@@ -217,11 +285,13 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 
 	out.push(`tasks (${st.tasks.length})`);
 	if (!st.tasks.length) out.push("  No tasks yet; add one with /add.");
-	for (const t of st.tasks) {
-		const l = taskLine(t, st, details[t.id]);
+	const visibleTasks = taskRows(st.tasks, maxTaskRows);
+	for (const t of visibleTasks.tasks) {
+		const l = taskLine(t, st, details[t.id], now);
 		out.push(`  ${l.line}`);
 		rec(l.record);
 	}
+	if (visibleTasks.tail) out.push(`  ${visibleTasks.tail}`);
 
 	const runs = st.train?.runs ?? [];
 	const current = runs.find((r) => !r.done);
@@ -263,13 +333,19 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 		rec(`${g.id}  ${g.action_class}  ${typedPrefix(g.target_digest)}  age ${age(since, now)}  waiting on Buzz`);
 	}
 	const gateAlert = [...st.attention].reverse().find((a) => a.gate_id && a.kind !== "gate");
+	// Status names these two facts with gateStoreReadWarningPrefix and
+	// gateStoreLegacyWarningPrefix; keep the matches as two separate forms.
 	const gateWarn = st.warnings.find((w) => w.startsWith("gate store:"));
+	const legacyGateWarnings = st.warnings.filter((w) => w.startsWith("gate store legacy:"));
 	if (gateAlert) {
 		out.push("  ! a gate needs a look; its alert is below the line");
 		rec(`${gateAlert.kind}: ${short(gateAlert.subject)}`);
 	} else if (gateWarn) {
 		out.push("  ! the gate store could not be read; its error is below the line");
 		rec(short(gateWarn, 200));
+	}
+	if (legacyGateWarnings.length) {
+		rec(`${legacyGateWarnings.length} legacy gate record${legacyGateWarnings.length === 1 ? "" : "s"} skipped`);
 	}
 	// brief 31-4: the phone requests, newest first, each marked relayed (the
 	// lead's answer reached the owner's DM) or refused by the relay
@@ -341,14 +417,16 @@ export class Screen {
 	error = "";
 	keys: Keys;
 	lastKey: KeyOutcome | undefined;
+	drawScreen: typeof renderScreen;
 	// details are the blocked tasks' own records the words read (the size
 	// cap's numbers), by id, kept while the task's updated_at is unchanged
 	details: Record<string, BlockDetail & { at: string }> = {};
 
-	constructor(cfg: Config, runner: Runner = run, stat: Stat = defaultStat) {
+	constructor(cfg: Config, runner: Runner = run, stat: Stat = defaultStat, drawScreen: typeof renderScreen = renderScreen) {
 		this.cfg = cfg;
 		this.runner = runner;
 		this.stat = stat;
+		this.drawScreen = drawScreen;
 		this.keys = new Keys(cfg, runner);
 	}
 
@@ -425,13 +503,35 @@ export class Screen {
 		if (!ui) return;
 		try {
 			if (!this.last) {
-				ui.setWidget(SCREEN_KEY, this.expanded ? [`amq-squad: ${this.error || "reading the team's status"}`, commandsLine("team")] : undefined, { placement: "belowEditor" });
+				ui.setWidget(SCREEN_KEY, this.expanded ? [`amq-squad: ${this.error.replace(controlChars, " ") || "reading the team's status"}`, commandsLine("team")] : undefined, { placement: "belowEditor" });
 				return;
 			}
 			if (this.expanded) {
-				const lines = renderScreen(this.last, new Date(), this.lastKey, this.details);
-				if (this.error) lines.splice(lines.length - 1, 0, `  (the screen may be stale: ${this.error})`);
-				ui.setWidget(SCREEN_KEY, lines, { placement: "belowEditor" });
+				const status = this.last;
+				ui.setWidget(SCREEN_KEY, (tui) => ({
+					render: (width: number) => {
+						const now = new Date();
+						const rows = Math.max(0, Math.floor(tui.terminal.rows));
+						const fitWidth = (lines: string[]): string[] => lines.map((line) => truncateToWidth(line.replace(controlChars, " "), width));
+						const draw = (cap: number): string[] => {
+							const lines = this.drawScreen(status, now, this.lastKey, this.details, cap);
+							if (this.error) lines.splice(lines.length - 1, 0, `  (the screen may be stale: ${this.error})`);
+							return fitWidth(lines);
+						};
+						const fixed = draw(0);
+						if (fixed.length > rows) {
+							if (rows === 0) return [];
+							return fitWidth([...fixed.slice(0, rows - 1), `… ${fixed.length - rows + 1} more lines; enlarge the pane`]);
+						}
+						// Rendering is cheap and is the only source of truth for height: try
+						// every task cap from largest to smallest and keep the first fit.
+						for (let cap = Math.min(status.tasks.length, rows); cap >= 0; cap--) {
+							const lines = draw(cap);
+							if (lines.length <= rows) return lines;
+						}
+						return fixed;
+					},
+				}), { placement: "belowEditor" });
 				ui.setStatus(SCREEN_KEY, undefined);
 			} else {
 				ui.setWidget(SCREEN_KEY, undefined);

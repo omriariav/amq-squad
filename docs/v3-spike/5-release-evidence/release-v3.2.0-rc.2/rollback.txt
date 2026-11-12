@@ -1,0 +1,5 @@
+Rollback line for the rc.2 restart (written 2026-11-11 before the restart, from the notes' "Upgrading" and "Rolling back" sections, rows P1-P4).
+Before this build has written a commit or exits ledger in session v31, the earlier behaviour holds: stop the rc.2 lead and run
+  /Users/omri/scratch-v320rc1/build/pi/amq-squad up --binary /Users/omri/scratch-v320rc1/build/pi/amq-squad
+which prints amq-squad v3.2.0-rc.1 (checked 2026-11-11T13:13:58Z).
+After a raw-layout head or an authenticated interrupted migration exists, `up --binary` refuses every target before v3.2.0-rc.2 with ledger_layout_downgrade: roll forward or start a new session.

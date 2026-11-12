@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
@@ -46,6 +48,13 @@ type AttemptArchiver interface {
 	ArchiveAttempt(handle string, t task.Task, attempt task.Attempt) error
 }
 
+// AttemptCleaner archives and cleans a stopped cancelled attempt after the
+// seat process is confirmed gone. The caller holds the seat's reservation
+// (task.Store.ReserveCancel) for the round; the clean takes none of its own.
+type AttemptCleaner interface {
+	CleanAttempt(handle, taskID string, attempt int, outcome string) error
+}
+
 // SeatExitRefusedNotifier is a LeadNotifier that also tells the lead about
 // a refusal at a seat exit (a hint; the decisions log is the record).
 type SeatExitRefusedNotifier interface {
@@ -63,8 +72,9 @@ type AsyncCloser interface {
 // closeExpired is the closing reason of a seat whose claimed lease expired;
 // closeRestart is a seat a previous incarnation left running.
 const (
-	closeExpired = "lease_expired"
-	closeRestart = "scheduler_restart"
+	closeExpired   = "lease_expired"
+	closeRestart   = "scheduler_restart"
+	closeCancelled = "task_cancelled"
 )
 
 // exitItem is one queued exit check. Gone marks a check queued at a
@@ -81,7 +91,15 @@ type exitItem struct {
 	Deferrals int `json:"deferrals,omitempty"`
 	// Attempt is the launch attempt a gone check is for: the request id the
 	// seat joined on (3.0.1 t17). One attempt's gone is checked once.
-	Attempt string `json:"attempt,omitempty"`
+	Attempt     string `json:"attempt,omitempty"`
+	TaskAttempt int    `json:"task_attempt,omitempty"`
+	// Close marks a cancelled attempt that was its seat's last lease
+	// (3.2.0-2b-1, the occupant match; Codex's P1 on #909): the seat may
+	// still be working on it, so a seat the scheduler counts up is closed
+	// and its termination confirmed before the check and the clean.
+	// Persisted, so a restart finishes the close; cleared once the close is
+	// confirmed (holdForExit).
+	Close bool `json:"close,omitempty"`
 }
 
 // SeatGoneObserver is a SeatLauncher told when a gone seat may be forgotten
@@ -168,7 +186,7 @@ type exitsLedger struct {
 	// Seal: with Config.SealRoot the queue is a sealed file (the ruling of
 	// the phase 5 re-pass): an HMAC tag keyed by the session seed and a
 	// signed head, so a same-UID edit of the queue, an older copy or its
-	// removal is ledger_tampered (dispatch stops, routed to the owner).
+	// removal is ledger_tampered (dispatch stops, routed to the lead).
 	Seal *sealchain.Link `json:"seal,omitempty"`
 }
 
@@ -197,23 +215,55 @@ func (s *Scheduler) writeExits() error {
 	if !s.exitsLoaded {
 		return errExitsNotLoaded
 	}
-	l := exitsLedger{Schema: 1, Queue: append([]exitItem{}, s.exitQueue...)}
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
 	if root := s.Config.SealRoot; root != "" {
+		current, err := verifyExitsLedger(root, p)
+		if err != nil {
+			return err
+		}
 		key, err := sealchain.SessionKey(root)
 		if err != nil {
 			return err
 		}
-		_, err = sealchain.Write(root, exitsHeadName, key, exitsLabel, l, func(link *sealchain.Link) error {
-			sealed := l
-			sealed.Seal = link
-			raw, _ := json.MarshalIndent(sealed, "", "  ")
+		headBytes := current.head
+		if current.migration != nil {
+			if err := recordExitsLayoutMigration(root, current.migration.Seq); err != nil {
+				return err
+			}
+			if afterExitsMigrationDecision != nil {
+				if err := afterExitsMigrationDecision(root, current.migration.Seq); err != nil {
+					return err
+				}
+			}
+			headBytes, err = sealchain.CompleteRawHead(root, exitsHeadName, key, *current.migration, time.Now())
+			if err != nil {
+				return err
+			}
+		}
+		l := exitsLedger{Schema: 1, Queue: append([]exitItem{}, s.exitQueue...)}
+		body, err := json.MarshalIndent(l, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = sealchain.WriteRawBeforeHead(root, exitsHeadName, key, exitsLabel, headBytes, body, sealchain.BinaryVersion, 1, func(raw []byte) error {
 			return atomicfile.Write(p, raw, 0o600)
+		}, func(seal sealchain.RawSeal) error {
+			if !current.legacy {
+				return nil
+			}
+			if err := recordExitsLayoutMigration(root, seal.Seq); err != nil {
+				return err
+			}
+			if afterExitsMigrationDecision != nil {
+				return afterExitsMigrationDecision(root, seal.Seq)
+			}
+			return nil
 		}, time.Now())
 		return err
 	}
+	l := exitsLedger{Schema: 1, Queue: append([]exitItem{}, s.exitQueue...)}
 	raw, _ := json.MarshalIndent(l, "", "  ")
 	// The one durable writer (P2-4 of the phase 5 re-pass): an exclusive
 	// temp file, fsync, rename, then the directory fsync, so a deferred
@@ -221,25 +271,133 @@ func (s *Scheduler) writeExits() error {
 	return atomicfile.Write(p, raw, 0o600)
 }
 
-// checkExitsSeal checks the sealed exits queue against its head: a tag or
-// chain that fails, a removed queue whose head says it existed, or a
-// missing seed is ledger_tampered.
-func (s *Scheduler) checkExitsSeal(root string, l exitsLedger, present bool) error {
+type exitsRead struct {
+	ledger    exitsLedger
+	document  []byte
+	head      []byte
+	present   bool
+	legacy    bool
+	migration *sealchain.RawSeal
+}
+
+// InterruptedExitsMigrationWriter reports the writer version only when
+// document is the authenticated exact raw successor of the captured legacy
+// exits head. It is intentionally read-only and does not turn malformed or
+// missing preflight inputs into a scheduler tamper alarm.
+func InterruptedExitsMigrationWriter(root string, document, head []byte) (string, bool) {
+	if _, _, err := sealchain.SplitRaw(document); err != nil {
+		return "", false
+	}
+	key, ok, err := sealchain.ReadKey(root)
+	if err != nil || !ok {
+		return "", false
+	}
+	var ledger exitsLedger
+	seal, err := sealchain.CheckRawMigration(exitsHeadName, key, exitsLabel, "the exits ledger", document, head, 1, &ledger)
+	if err != nil || ledger.Schema != 1 {
+		return "", false
+	}
+	return seal.Version, true
+}
+
+// verifyExitsLedger is the read-only exits verifier. It accepts an authenticated
+// exact-successor raw document beside a legacy head but never completes that
+// head. Only writeExits, under the scheduler process lock, may do so.
+func verifyExitsLedger(root, path string) (exitsRead, error) {
+	var out exitsRead
+	document, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return out, fmt.Errorf("the exits ledger %s cannot be read: %v", path, err)
+	}
+	out.document, out.present = document, err == nil
+	if root == "" {
+		if !out.present {
+			return out, nil
+		}
+		if err := json.Unmarshal(document, &out.ledger); err != nil {
+			return out, fmt.Errorf("the exits ledger %s cannot be parsed: %v", path, err)
+		}
+		if out.ledger.Schema != 1 {
+			return out, fmt.Errorf("the exits ledger %s cannot be parsed: schema %d", path, out.ledger.Schema)
+		}
+		return out, nil
+	}
 	key, ok, err := sealchain.ReadKey(root)
 	switch {
 	case err != nil:
-		return fmt.Errorf("%w: the exits ledger's session seed: %v", sealchain.ErrTampered, err)
-	case !ok && present:
-		return fmt.Errorf("%w: the session seed that seals the exits ledger is gone", sealchain.ErrTampered)
+		return out, fmt.Errorf("%w: the exits ledger's session seed: %v", sealchain.ErrTampered, err)
+	case !ok && out.present:
+		return out, fmt.Errorf("%w: the session seed that seals the exits ledger is gone", sealchain.ErrTampered)
 	case !ok:
-		return nil // no seed, no queue yet: the first write seals it
-	case !present:
-		return sealchain.Absent(root, exitsHeadName, key)
+		return out, nil // no seed, no queue yet: the first write seals it
 	}
-	body := l
+	headBytes, herr := os.ReadFile(sealchain.HeadPath(root, exitsHeadName))
+	if errors.Is(herr, os.ErrNotExist) {
+		headBytes = nil
+	} else if herr != nil {
+		return out, fmt.Errorf("%w: the exits ledger head: %v", sealchain.ErrTampered, herr)
+	}
+	out.head = headBytes
+	if !out.present {
+		return out, sealchain.AbsentBytes(exitsHeadName, key, headBytes)
+	}
+	layout, err := sealchain.HeadLayout(exitsHeadName, key, headBytes)
+	if err != nil {
+		return out, err
+	}
+	if layout == sealchain.RawLayout {
+		seal, err := sealchain.CheckRaw(exitsHeadName, key, exitsLabel, "the exits ledger", document, headBytes, 1, &out.ledger)
+		if err != nil {
+			return out, err
+		}
+		if out.ledger.Schema != 1 {
+			return out, sealchain.SchemaError("the exits ledger", seal, 1, out.ledger.Schema)
+		}
+		return out, nil
+	}
+	// A crash may leave the authenticated next raw document beside its
+	// verified legacy head. Admit only that exact successor without writing.
+	// The locked writer rechecks it and durably records the migration before
+	// it completes the head.
+	if _, _, splitErr := sealchain.SplitRaw(document); splitErr == nil {
+		seal, err := sealchain.CheckRawMigration(exitsHeadName, key, exitsLabel, "the exits ledger", document, headBytes, 1, &out.ledger)
+		if err != nil {
+			return out, err
+		}
+		if out.ledger.Schema != 1 {
+			return out, sealchain.SchemaError("the exits ledger", seal, 1, out.ledger.Schema)
+		}
+		out.migration = &seal
+		return out, nil
+	}
+	if err := json.Unmarshal(document, &out.ledger); err != nil {
+		return out, sealchain.Tampered("the exits ledger", err)
+	}
+	if out.ledger.Schema != 1 {
+		return out, sealchain.Tampered("the exits ledger", fmt.Errorf("schema %d", out.ledger.Schema))
+	}
+	body := out.ledger
 	body.Seal = nil
-	return sealchain.Check(root, exitsHeadName, key, exitsLabel, l.Seal, body)
+	if err := sealchain.CheckLegacy(exitsHeadName, key, exitsLabel, out.ledger.Seal, body, headBytes); err != nil {
+		return out, err
+	}
+	out.legacy = true
+	return out, nil
 }
+
+func recordExitsLayoutMigration(root string, seq int) error {
+	_, err := sealchain.RecordLayoutMigration(
+		filepath.Join(root, "extensions", "amq-squad", "scheduler", "decisions.jsonl"),
+		"exits", "", seq,
+		fmt.Sprintf("legacy exits ledger migrated to %s at link %d", sealchain.RawLayout, seq),
+		time.Now(),
+	)
+	return err
+}
+
+// afterExitsMigrationDecision is the crash seam after the durable decision
+// and before head completion. Production leaves it nil.
+var afterExitsMigrationDecision func(root string, seq int) error
 
 // loadExits rebuilds the queue once (before adoption, else at the first
 // tick): every pending check is queued again, and a gone seat's check holds
@@ -254,35 +412,12 @@ func (s *Scheduler) loadExits() {
 		s.exitsLoaded = true
 		return
 	}
-	raw, err := os.ReadFile(p)
-	if err != nil && !os.IsNotExist(err) {
-		s.exitsErr = fmt.Errorf("the exits ledger %s cannot be read: %v", p, err)
+	read, err := verifyExitsLedger(s.Config.SealRoot, p)
+	if err != nil {
+		s.exitsErr = err
 		return
 	}
-	var l exitsLedger
-	if err == nil {
-		uerr := json.Unmarshal(raw, &l)
-		if uerr == nil && l.Schema != 1 {
-			uerr = fmt.Errorf("schema %d", l.Schema)
-		}
-		switch {
-		case uerr != nil && s.Config.SealRoot != "":
-			// A sealed record that does not decode, or carries another
-			// schema, is ledger_tampered for the owner (the fix round's
-			// item 25).
-			s.exitsErr = sealchain.Tampered("the exits ledger "+p, uerr)
-			return
-		case uerr != nil:
-			s.exitsErr = fmt.Errorf("the exits ledger %s cannot be parsed: %v", p, uerr)
-			return
-		}
-	}
-	if root := s.Config.SealRoot; root != "" {
-		if serr := s.checkExitsSeal(root, l, err == nil); serr != nil {
-			s.exitsErr = serr
-			return
-		}
-	}
+	l := read.ledger
 	s.exitsLoaded = true
 	for _, it := range l.Queue {
 		if s.exitPendingItem(it) {
@@ -293,12 +428,16 @@ func (s *Scheduler) loadExits() {
 		}
 		s.exitQueue = append(s.exitQueue, it)
 	}
-	s.saveExits()
+	if err := s.saveExits(); err != nil {
+		// The next tick re-reads and retries the locked writer. This is required
+		// when the durable migration decision landed but head completion did not.
+		s.exitsLoaded = false
+	}
 }
 
 func (s *Scheduler) exitPendingItem(it exitItem) bool {
 	for _, q := range s.exitQueue {
-		if q.Handle == it.Handle && q.TaskID == it.TaskID && q.Why == it.Why {
+		if q.Handle == it.Handle && q.TaskID == it.TaskID && q.Why == it.Why && q.TaskAttempt == it.TaskAttempt {
 			return true
 		}
 	}
@@ -309,9 +448,14 @@ func (s *Scheduler) exitPendingItem(it exitItem) bool {
 // expired or unclaimed and was not checked yet by this scheduler (a restart
 // checks the store's history once).
 func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) error {
+	return s.scanAttemptsLog(list, now, func(Decision) {})
+}
+
+func (s *Scheduler) scanAttemptsLog(list []task.Task, now time.Time, log func(Decision)) error {
 	if s.exitSeen == nil {
 		s.exitSeen = map[string]bool{}
 	}
+	s.dropRecordedCleans(list, log)
 	for _, t := range list {
 		for _, a := range t.Attempts {
 			key := fmt.Sprintf("%s#%d#%s", t.ID, a.N, a.Holder)
@@ -332,6 +476,26 @@ func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) error {
 			}
 			switch a.Outcome {
 			case task.OutcomeFailed, task.OutcomeExpired, task.OutcomeUnclaimed:
+			case task.OutcomeCancelled:
+				// The cancel's clean (3.2.0-2b-1 item 1) runs once per
+				// cancelled attempt and is recorded on the attempt
+				// (CleanedAt, Codex's P1 on #898 and the plan reviewer's
+				// note 1): a restart reads the record, never a memory.
+				if a.CleanedAt != nil || s.exitSeen[key] {
+					continue
+				}
+				if _, ok := s.Preparer.(AttemptCleaner); !ok {
+					continue
+				}
+				// The occupant match: a cancellation the seat has worked
+				// past (a later lease of the seat, ended or current) is not
+				// its unresolved cancellation. It is judged in one place,
+				// the cancel round's reservation (ReserveCancel reads the
+				// leases under the store's lock, Codex's P1 on the #909
+				// re-pass): the item queued here is dropped there before
+				// anything acts on it, with one seat_clean_superseded line,
+				// so the seat, which may be on another task, is neither
+				// closed nor cleaned for it.
 			default:
 				continue
 			}
@@ -339,13 +503,76 @@ func (s *Scheduler) scanAttempts(list []task.Task, now time.Time) error {
 				continue
 			}
 			s.exitSeen[key] = true
-			it := exitItem{Handle: a.Holder, TaskID: t.ID, Why: a.Outcome, At: now}
+			it := exitItem{Handle: a.Holder, TaskID: t.ID, Why: a.Outcome, At: now, TaskAttempt: a.N}
+			// A cancelled attempt with no exit item yet is close-required
+			// (one whose seat holds a later lease is dropped by the cancel
+			// round's reservation before its Close is acted on)
+			// (Codex's P1 on #909): nothing the scheduler holds proves the
+			// seat stopped working on it. A restart has seen no lease held
+			// (a cancel that landed before the previous incarnation queued
+			// its item leaves no Close on disk), and the lead's dispatch
+			// grants a lease outside the tick. runExits closes a seat the
+			// scheduler counts up, and the check and the clean wait for the
+			// confirmed close; a seat it does not count (no live process
+			// adopted at the restart, none joined since) has nothing to
+			// close. An item already queued keeps its own persisted flag.
+			if a.Outcome == task.OutcomeCancelled {
+				it.Close = true
+			}
 			if !s.exitPendingItem(it) {
 				s.queueExit(it)
 			}
 		}
 	}
 	return nil
+}
+
+// laterLease names a lease of the seat granted at or after the attempt
+// ended (an ended attempt, or the seat's current lease), "" when there is
+// none: the attempt is then the seat's last.
+func laterLease(list []task.Task, holder, taskID string, a task.Attempt) string {
+	return task.LaterLease(list, holder, taskID, a)
+}
+
+// dropRecordedCleans reconciles the exits queue with the store before
+// anything acts on it (Codex's P2 on #909): a cancelled attempt's item
+// whose attempt is recorded cleaned (cleaned_at) is a clean that finished
+// before a crash lost the queue's write (MarkAttemptCleaned, then the
+// deferred saveExits). The item is dropped with one line, never run again,
+// and the slot it held is released once the queue without it is written.
+func (s *Scheduler) dropRecordedCleans(list []task.Task, log func(Decision)) {
+	cleaned := map[string]bool{}
+	for _, t := range list {
+		for _, a := range t.Attempts {
+			if a.Outcome == task.OutcomeCancelled && a.CleanedAt != nil {
+				cleaned[fmt.Sprintf("%s#%d", t.ID, a.N)] = true
+			}
+		}
+	}
+	if len(cleaned) == 0 {
+		return
+	}
+	kept, dropped := s.exitQueue[:0], false
+	for _, it := range s.exitQueue {
+		if it.Why != task.OutcomeCancelled || !cleaned[fmt.Sprintf("%s#%d", it.TaskID, it.TaskAttempt)] {
+			kept = append(kept, it)
+			continue
+		}
+		dropped = true
+		delete(s.cleanDeferred, cleanDeferredKey(it))
+		delete(s.exitRefused, cleanDeferredKey(it))
+		if it.Gone {
+			if s.toRelease == nil {
+				s.toRelease = map[string]bool{}
+			}
+			s.toRelease[it.Handle] = true
+		}
+		log(Decision{Kind: "seat_clean_replay_dropped", TaskID: it.TaskID, Seat: it.Handle, Reason: fmt.Sprintf("seat %s's clean of %s attempt %d is recorded on the attempt; its queued exit item is dropped, not run again", it.Handle, it.TaskID, it.TaskAttempt)})
+	}
+	s.exitQueue = kept
+	if dropped && s.saveExits() == nil {
+		s.releaseDecided()
+	}
 }
 
 // runExits runs the queued exit checks; a deferred one stays queued (and
@@ -371,6 +598,15 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 		if s.commitPending(it.Handle) {
 			s.exitQueue = append(s.exitQueue, it)
 			log(Decision{Kind: "exit_check_deferred", TaskID: it.TaskID, Seat: it.Handle, Reason: "a commit step of the seat is pending"})
+			continue
+		}
+		// A cancelled attempt is one round per tick (cancelRound): the
+		// seat reserved under the store's lock, the close or the check and
+		// the clean outside it, the reservation released on the way out.
+		if it.Why == task.OutcomeCancelled {
+			if s.cancelRound(&it, now, log) {
+				s.exitQueue = append(s.exitQueue, it)
+			}
 			continue
 		}
 		// P1-9: a seat being closed (an expired claimed lease, a restart) is
@@ -404,6 +640,270 @@ func (s *Scheduler) runExits(now time.Time, log func(Decision)) error {
 		}
 	}
 	return nil
+}
+
+// ReasonSeatIdentityUnproven is the stop of a cancelled attempt whose
+// seat's launch identity is not seen gone: its clean waits for the lead.
+const ReasonSeatIdentityUnproven = "seat_identity_unproven"
+
+// seatIdentityGone reports whether the seat's launch identity is seen gone
+// (Liveness: the accepted proof's pid and start stamp; a pid alone is not
+// an identity, since pids are reused). No liveness hook, or an identity it
+// cannot read, is not gone (fail closed).
+func (s *Scheduler) seatIdentityGone(handle string) (bool, string) {
+	if s.Liveness == nil {
+		return false, "the scheduler has no process identity check"
+	}
+	gone, detail, err := s.Liveness.SeatProcess(handle, "")
+	switch {
+	case err != nil:
+		return false, err.Error()
+	case !gone:
+		return false, "its launch identity (pid and start stamp) is still live"
+	}
+	return true, detail
+}
+
+// logIdentityUnproven is the one lead stop for a cancelled attempt whose
+// seat is not seen gone, once per (code, seat, task, attempt).
+func (s *Scheduler) logIdentityUnproven(it exitItem, why string, log func(Decision)) {
+	if s.cleanDeferred == nil {
+		s.cleanDeferred = map[string]string{}
+	}
+	key := cleanDeferredKey(it)
+	if s.cleanDeferred[key] == ReasonSeatIdentityUnproven {
+		return
+	}
+	s.cleanDeferred[key] = ReasonSeatIdentityUnproven
+	log(Decision{Kind: "seat_may_be_writing", TaskID: it.TaskID, Seat: it.Handle, ReasonCode: ReasonSeatIdentityUnproven,
+		Reason: fmt.Sprintf("seat %s may still be writing to its worktree; the lead runs seat clean after it stops (%s)", it.Handle, why)})
+}
+
+func cleanDeferredKey(it exitItem) string {
+	return fmt.Sprintf("%s#%s#%d", it.Handle, it.TaskID, it.TaskAttempt)
+}
+
+// logCleanDeferred logs a cancelled attempt's deferred clean once per
+// (seat, task, attempt, reason): the same reason on the next tick is
+// silent; a changed reason, or a clean that then ran, starts over. The
+// reason is compared by its refusal code (refusalCode), never its whole
+// text, which can carry an advancing age (Codex's P2 on #909).
+func (s *Scheduler) logCleanDeferred(it exitItem, reason string, log func(Decision)) {
+	if s.cleanDeferred == nil {
+		s.cleanDeferred = map[string]string{}
+	}
+	key, id := cleanDeferredKey(it), refusalCode(reason)
+	if s.cleanDeferred[key] == id {
+		return
+	}
+	s.cleanDeferred[key] = id
+	log(Decision{Kind: "seat_clean_deferred", TaskID: it.TaskID, Seat: it.Handle, Reason: reason})
+}
+
+// reasonCode is a refusal code: a snake_case word with at least one
+// underscore (seat_cleaning, seat_worktree_dirty, ledger_tampered).
+var reasonCode = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)+$`)
+
+// refusalCode is a refusal's stable identity for once-per-reason
+// logging (Codex's P2 on #909): its code, the first ": "-separated segment
+// of the text that is one (the store's sentinels and the clean's and the
+// prepare's refusals all lead with theirs), so a text that carries an
+// advancing age ("seat_cleaning: seat s1 is being cleaned by pid 42 for
+// 12s") is one reason on every tick. A text with no code is its own
+// identity.
+func refusalCode(text string) string {
+	for _, seg := range strings.Split(text, ": ") {
+		if reasonCode.MatchString(seg) {
+			return seg
+		}
+	}
+	return text
+}
+
+// noteExitRefused records a cancelled attempt's refused check and reports
+// whether it is new for its (seat, task, attempt, reason).
+func (s *Scheduler) noteExitRefused(it exitItem, reason string) bool {
+	if s.exitRefused == nil {
+		s.exitRefused = map[string]string{}
+	}
+	key := cleanDeferredKey(it)
+	if s.exitRefused[key] == reason {
+		return false
+	}
+	s.exitRefused[key] = reason
+	return true
+}
+
+// cancelRound is one tick's round on a cancelled attempt's item: it
+// reports whether the item stays queued. The plan reviewer's ruling on
+// #909: the store's lock is never held through a launcher close. Under the
+// lock, ReserveCancel reads the seat's leases (a seat on a later lease is
+// never closed, checked or cleaned for the attempt: the item is dropped)
+// and takes the seat's reservation, the 2b-1 marker with this process's
+// pid and start stamp, which every grant refuses ("seat H is being closed
+// and cleaned; dispatch again after it finishes"). The lock is released;
+// the close, or the check and the clean, run outside it; the reservation
+// is released on every path out of the round. Between rounds the seat is
+// held by its queued item (the scheduler grants nothing to it) and by the
+// attempt being uncleaned (the lead's dispatch refuses it).
+func (s *Scheduler) cancelRound(it *exitItem, now time.Time, log func(Decision)) bool {
+	st := s.seats[it.Handle]
+	// a seat closing for another reason (a restart, an expiry), or a
+	// close sent and waiting for its seat_gone: nothing acts on the item
+	// until that is confirmed (P1-9)
+	if st != nil && (st.awaitGone || (st.closing != "" && st.closing != closeCancelled)) {
+		return true
+	}
+	if cancelCloseHook != nil {
+		cancelCloseHook(it.Handle)
+	}
+	later, nonce, decision, err := s.Store.ReserveCancel(it.Handle, it.TaskID, it.TaskAttempt, now)
+	if decision != "" {
+		log(Decision{Kind: "cleaner_marker_taken_over", TaskID: it.TaskID, Seat: it.Handle, Reason: decision})
+	}
+	switch {
+	case err != nil:
+		s.logCleanDeferred(*it, "reserve the seat: "+err.Error(), log)
+		return true
+	case later != "":
+		return !s.dropSuperseded(*it, later, now, log)
+	}
+	defer func() {
+		if err := s.Store.ReleaseSeat(it.Handle, nonce); err != nil {
+			log(Decision{Kind: "seat_clean_deferred", TaskID: it.TaskID, Seat: it.Handle, Reason: "release the seat's reservation: " + err.Error()})
+		}
+	}()
+	// A close-required attempt on a seat the scheduler counts up: the
+	// seat is closed first, the same order as a gone seat; the check and
+	// the clean wait for the confirmed close, on a later round (3.2.0-2b-1
+	// item 1).
+	if it.Close && st != nil {
+		if st.closing == "" {
+			st.closing = closeCancelled
+			log(Decision{Kind: "seat_closing", TaskID: it.TaskID, Seat: it.Handle, Reason: closeCancelled})
+		}
+		if s.Launcher == nil {
+			s.forgetClosed(it, log)
+			return true
+		}
+		if err := s.Launcher.CloseSeat(it.Handle, closeCancelled); err != nil {
+			log(Decision{Kind: "seat_close_failed", Seat: it.Handle, Reason: err.Error()})
+			return true
+		}
+		if s.closeUnconfirmed(it.Handle) {
+			st.awaitGone = true
+			log(Decision{Kind: "seat_close_requested", Seat: it.Handle, Reason: closeCancelled + "; waiting for its seat_gone"})
+			return true
+		}
+		s.forgetClosed(it, log)
+		return true
+	}
+	r := s.Exits.CheckExit(it.Handle, it.TaskID, it.Why)
+	switch {
+	case r.Deferred:
+		log(Decision{Kind: "exit_check_deferred", TaskID: it.TaskID, Seat: it.Handle, Reason: r.Detail})
+		return true
+	case r.Refused:
+		// Codex's P2 (D) on #898: the hold is the seat's unresolved
+		// cancellation, not one queue item. The refused item stays queued
+		// (and persisted): the seat's slot is held and no grant reaches it,
+		// whatever other item for the seat is decided, until the check
+		// passes and the clean runs. The lead is told once per reason; the
+		// next tick re-checks silently.
+		if s.noteExitRefused(*it, r.ReasonCode+" at "+it.Why) {
+			log(Decision{Kind: "exit_refused", TaskID: it.TaskID, Seat: it.Handle, Reason: r.ReasonCode + " at " + it.Why})
+			if n, ok := s.Lead.(SeatExitRefusedNotifier); ok && s.Lead != nil {
+				if err := n.SeatExitRefused(it.Handle, it.TaskID, r.ReasonCode, r.Detail); err != nil {
+					log(Decision{Kind: "lead_notice_failed", TaskID: it.TaskID, Reason: err.Error()})
+				}
+			}
+		}
+		return true
+	}
+	// The archive and the clean, after the confirmed close and the passed
+	// check; a clean that cannot run yet keeps the item (and the hold) and
+	// says why once per reason (Codex's C on #898).
+	cleaner, ok := s.Preparer.(AttemptCleaner)
+	if !ok {
+		s.logCleanDeferred(*it, "the scheduler has no attempt cleaner", log)
+		return true
+	}
+	// The plan reviewer's identity rule on #909: the clean runs only once
+	// the seat's launch identity (pid and start stamp) is seen gone,
+	// whatever the launcher confirmed. An identity that is missing,
+	// unreadable or still live fails closed: nothing is cleaned, the item
+	// (and the seat's hold) stays, the lead is told once, the attempt stays
+	// uncleaned, and the reservation is released like on any other path.
+	if gone, why := s.seatIdentityGone(it.Handle); !gone {
+		s.logIdentityUnproven(*it, why, log)
+		return true
+	}
+	if err := cleaner.CleanAttempt(it.Handle, it.TaskID, it.TaskAttempt, it.Why); err != nil {
+		s.logCleanDeferred(*it, err.Error(), log)
+		return true
+	}
+	// The durable record (the plan reviewer's note 1): a restart reads it
+	// before acting, and never redoes a finished clean.
+	if _, err := s.Store.MarkAttemptCleaned(it.TaskID, it.TaskAttempt, now); err != nil {
+		s.logCleanDeferred(*it, "record the completed clean: "+err.Error(), log)
+		return true
+	}
+	delete(s.cleanDeferred, cleanDeferredKey(*it))
+	delete(s.exitRefused, cleanDeferredKey(*it))
+	log(Decision{Kind: "seat_cleaned", TaskID: it.TaskID, Seat: it.Handle, Reason: fmt.Sprintf("seat %s's work on %s attempt %d was archived and its worktree cleaned", it.Handle, it.TaskID, it.TaskAttempt)})
+	if it.Gone {
+		if s.toRelease == nil {
+			s.toRelease = map[string]bool{}
+		}
+		s.toRelease[it.Handle] = true
+	}
+	return false
+}
+
+// cancelCloseHook is a test seam: it runs after the tick's snapshot of the
+// store and before the round's locked read and reservation (a grant landing
+// in that window is the row's case). Nil in production.
+var cancelCloseHook func(handle string)
+
+// forgetClosed is a confirmed cancel close: the seat is forgotten, its slot
+// held for the pending check, and the item's Close cleared.
+func (s *Scheduler) forgetClosed(it *exitItem, log func(Decision)) {
+	delete(s.seats, it.Handle)
+	s.holdForExit(it.Handle) // the other queued items of the seat
+	s.reserve(it.Handle)
+	it.Gone = true
+	it.Close = false // the close is confirmed; a restart never repeats it
+	log(Decision{Kind: "seat_closed", Seat: it.Handle, Reason: closeCancelled})
+}
+
+// dropSuperseded drops a queued cancelled item whose seat holds a later
+// lease: the attempt is recorded cleaned (the boundary before that lease
+// is the clean), a cancel close of the seat not yet requested is called
+// off, a gone item's slot is released, and one line says so. It reports
+// false when the record could not be written (the item stays queued and
+// is never acted on).
+func (s *Scheduler) dropSuperseded(it exitItem, later string, now time.Time, log func(Decision)) bool {
+	if _, err := s.Store.MarkAttemptCleaned(it.TaskID, it.TaskAttempt, now); err != nil {
+		s.logCleanDeferred(it, "record the superseded clean: "+err.Error(), log)
+		return false
+	}
+	if st := s.seats[it.Handle]; st != nil && st.closing == closeCancelled && !st.awaitGone {
+		st.closing = ""
+	}
+	if it.Gone {
+		if s.toRelease == nil {
+			s.toRelease = map[string]bool{}
+		}
+		s.toRelease[it.Handle] = true
+	}
+	delete(s.cleanDeferred, cleanDeferredKey(it))
+	delete(s.exitRefused, cleanDeferredKey(it))
+	if s.exitSeen == nil {
+		s.exitSeen = map[string]bool{}
+	}
+	s.exitSeen[fmt.Sprintf("%s#%d#%s", it.TaskID, it.TaskAttempt, it.Handle)] = true
+	log(Decision{Kind: "seat_clean_superseded", TaskID: it.TaskID, Seat: it.Handle, Reason: fmt.Sprintf("seat %s holds a later lease (%s); the queued item for %s attempt %d is dropped, and nothing is closed or cleaned for it", it.Handle, later, it.TaskID, it.TaskAttempt)})
+	return true
 }
 
 // releaseDecided releases the slot of every gone seat whose checks are all
@@ -450,6 +950,7 @@ func (s *Scheduler) holdForExit(h string) {
 	for i := range s.exitQueue {
 		if s.exitQueue[i].Handle == h {
 			s.exitQueue[i].Gone = true
+			s.exitQueue[i].Close = false // the close is confirmed; a restart never repeats it
 		}
 	}
 	s.saveExits()

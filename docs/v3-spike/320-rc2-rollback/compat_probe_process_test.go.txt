@@ -1,0 +1,106 @@
+package schedproc
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/task"
+)
+
+type rollbackProcessExits struct{}
+
+func (rollbackProcessExits) CheckExit(string, string, string) scheduler.ExitResult {
+	return scheduler.ExitResult{Deferred: true, Detail: "rollback process probe"}
+}
+
+type rollbackProcessLauncher struct{ scheduler *scheduler.Scheduler }
+
+func (*rollbackProcessLauncher) RequestSeat(scheduler.SeatRequest) error       { return nil }
+func (*rollbackProcessLauncher) CancelSeatRequest(scheduler.SeatRequest) error { return nil }
+func (*rollbackProcessLauncher) CloseSeat(string, string) error                { return nil }
+func (l *rollbackProcessLauncher) LaunchRoster(requests []scheduler.SeatRequest) scheduler.RosterOutcome {
+	out := scheduler.RosterOutcome{Stage: scheduler.RosterApplied}
+	for _, request := range requests {
+		l.scheduler.Post(scheduler.Event{Kind: scheduler.SeatUp, At: time.Unix(89, 0), Handle: request.Handle, Pool: request.Pool, RequestID: request.ID})
+		out.Seats = append(out.Seats, scheduler.RosterSeatState{Handle: request.Handle, Up: true})
+	}
+	return out
+}
+
+func rollbackProbeBytes(path string) string {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return "<absent>"
+	}
+	if err != nil {
+		return "<read error: " + err.Error() + ">"
+	}
+	return string(raw)
+}
+
+// This file is copied unchanged into v3.1.2 and v3.2.0-rc.1 tag trees. It
+// drives the tag's actual schedproc.Run loop for exactly three ticks, so the
+// tag owns the decision appends and state writes being measured.
+func TestRollbackProcessProbe(t *testing.T) {
+	root := os.Getenv("AMQSQ_ROLLBACK_ROOT")
+	if root == "" {
+		t.Skip("set AMQSQ_ROLLBACK_ROOT")
+	}
+	store, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := task.Pool{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "high"}
+	if len(list) == 0 {
+		if _, err := store.Add(task.AddInput{Title: "rollback process queued task", Class: "plan", Pool: &pool}, time.Unix(80, 0)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	statePath := scheduler.StatePathFor(root)
+	t.Logf("state before: %s", rollbackProbeBytes(statePath))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ticks := 0
+	wake := make(chan struct{}, 1)
+	launcher := &rollbackProcessLauncher{}
+	err = Run(ctx, Options{
+		Root: root, Session: "rollback", ProjectRoot: root,
+		Launcher: launcher, Exits: rollbackProcessExits{}, Preparer: &CleanSeats{Root: root, Git: "git"}, Tick: time.Hour, Wake: wake,
+		Config: scheduler.Config{MaxSeats: 1, Roster: []scheduler.RosterSeat{{Handle: "qa", Pool: pool}}},
+		Now: func() time.Time { return time.Unix(90+int64(ticks), 0).UTC() },
+		Started: func(s *scheduler.Scheduler) {
+			launcher.scheduler = s
+		},
+		OnTick: func(decisions []scheduler.Decision) {
+			ticks++
+			raw, _ := json.Marshal(decisions)
+			t.Logf("tick %d decisions: %s", ticks, raw)
+			if ticks == 3 {
+				cancel()
+			} else {
+				wake <- struct{}{}
+			}
+		},
+	})
+	t.Logf("process error: %v", err)
+	t.Logf("state after: %s", rollbackProbeBytes(statePath))
+	t.Logf("decisions file: %s", rollbackProbeBytes(filepath.Join(root, "extensions", "amq-squad", "scheduler", "decisions.jsonl")))
+	list, err = store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range list {
+		raw, _ := json.Marshal(item)
+		t.Logf("task after: %s", raw)
+	}
+}

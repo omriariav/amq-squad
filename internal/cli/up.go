@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -27,6 +28,9 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
+	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/status"
 )
@@ -253,9 +257,12 @@ func (u *upRun) run() error {
 
 // tagPattern is a version that names a tag exactly: vX.Y.Z with an optional
 // prerelease, never `git describe`'s -N-g<sha> or -dirty.
-var tagPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$`)
+var tagPattern = regexp.MustCompile(`^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`)
+var gitDescribePattern = regexp.MustCompile(`-\d+-g[0-9a-f]+(?:-dirty)?$`)
 
-func isTag(v string) bool { return tagPattern.MatchString(v) && !strings.HasSuffix(v, "-dirty") }
+func isTag(v string) bool {
+	return tagPattern.MatchString(v) && !strings.HasSuffix(v, "-dirty") && !gitDescribePattern.MatchString(v)
+}
 
 // checkPiBuild refuses a binary that is not a tagged pi build: its version
 // must name a tag (R54: a build of the working tree never runs a squad),
@@ -307,11 +314,22 @@ func (u *upRun) install() (string, error) {
 		if target == "" {
 			return "", refuse("install_target_unknown", "no amq-squad on PATH to keep; install one (or pass --to PATH)")
 		}
+		if !filepath.IsAbs(target) {
+			var err error
+			if target, err = filepath.Abs(target); err != nil {
+				return "", err
+			}
+		}
+		if err := u.checkLedgerTarget(target); err != nil {
+			return "", err
+		}
 		v, err := u.checkPiBuild(target)
 		if err != nil {
 			return "", err
 		}
-		u.installed, u.report.Binary = target, target
+		if err := u.useInstalled(target); err != nil {
+			return "", err
+		}
 		return "skipped: " + target + " already reports " + v, nil
 	}
 	src := u.binary
@@ -320,6 +338,9 @@ func (u *upRun) install() (string, error) {
 	}
 	if st, err := os.Stat(src); err != nil || !st.Mode().IsRegular() {
 		return "", refuse("pi_binary_missing", "%s is not a built binary; build it at a tag with scripts/build-pi-runtime.sh, or pass --binary PATH", src)
+	}
+	if err := u.checkLedgerTarget(src); err != nil {
+		return "", err
 	}
 	v, err := u.checkPiBuild(src)
 	if err != nil {
@@ -335,15 +356,219 @@ func (u *upRun) install() (string, error) {
 	}
 	if a, aerr := os.Stat(src); aerr == nil {
 		if b, berr := os.Stat(target); berr == nil && os.SameFile(a, b) {
-			u.installed, u.report.Binary = target, target
+			if err := u.useInstalled(target); err != nil {
+				return "", err
+			}
 			return fmt.Sprintf("%s %s is already the installed binary", target, v), nil
 		}
 	}
 	if err := installByRename(src, target); err != nil {
 		return "", refuse("install_failed", "%v", err)
 	}
-	u.installed, u.report.Binary = target, target
+	if err := u.useInstalled(target); err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("installed %s (%s) at %s by temp name and rename", src, v, target), nil
+}
+
+// checkLedgerTarget runs before the ordinary tagged-pi checks. Once a session
+// carries raw-layout heads, even an untagged or otherwise malformed target must
+// be refused in layout-specific words rather than falling through to the
+// generic pi_binary_untagged refusal.
+func (u *upRun) checkLedgerTarget(bin string) error {
+	_, raw, err := sessionRawLayout(u.q.SessionRoot())
+	if err != nil {
+		return refuse("ledger_layout_unreadable", "the session's sealed heads could not be checked before install: %v", err)
+	}
+	if !raw {
+		return nil
+	}
+	out, _ := squadRun(u.ctx, u.report.Project, os.Environ(), bin, "version")
+	return u.checkLedgerDowngrade(parseAmqSquadVersion(string(out)))
+}
+
+func (u *upRun) checkLedgerDowngrade(targetVersion string) error {
+	writer, raw, err := sessionRawLayout(u.q.SessionRoot())
+	if err != nil {
+		return refuse("ledger_layout_unreadable", "the session's sealed heads could not be checked before install: %v", err)
+	}
+	if !raw {
+		return nil
+	}
+	cmp, ok := compareReleaseVersions(targetVersion, sealchain.FirstRawLayoutVersion)
+	if !ok {
+		return refuse("ledger_layout_downgrade", "the session's ledgers were written by amq-squad %s in the raw-bytes seal layout; %q could not be read as a released version, so its layout support cannot be known; install a released build", writer, targetVersion)
+	}
+	if cmp < 0 {
+		return refuse("ledger_layout_downgrade", "the session's ledgers were written by amq-squad %s in the raw-bytes seal layout; %s predates that layout and cannot read them; roll forward or start a new session", writer, targetVersion)
+	}
+	return nil
+}
+
+// sessionRawLayout captures every head byte in the caller and then asks
+// sealchain to verify only those bytes. The verification package never opens a
+// head path internally, so one check cannot silently observe two head states.
+func sessionRawLayout(root string) (string, bool, error) {
+	dir := filepath.Join(sealchain.Dir(root), "heads")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	heads := make(map[string][]byte, len(entries))
+	var interruptedWriter string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(dir, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil {
+			return "", false, err
+		}
+		if !info.Mode().IsRegular() {
+			return "", false, fmt.Errorf("sealed head %s is not a regular file", path)
+		}
+		head, err := os.ReadFile(path)
+		if err != nil {
+			return "", false, err
+		}
+		name := strings.TrimSuffix(entry.Name(), ".json")
+		heads[name] = head
+
+		var documentPath string
+		switch {
+		case strings.HasPrefix(name, "commits."):
+			handle := strings.TrimPrefix(name, "commits.")
+			documentPath = filepath.Join(seatcommit.LedgerDir(root), handle+".json")
+			document, readErr := os.ReadFile(documentPath)
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				return "", false, readErr
+			}
+			if writer, ok := seatcommit.InterruptedMigrationWriter(root, handle, document, head); ok && interruptedWriter == "" {
+				interruptedWriter = writer
+			}
+		case name == "exits":
+			documentPath = filepath.Join(schedproc.Dir(root), "exits.json")
+			document, readErr := os.ReadFile(documentPath)
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				return "", false, readErr
+			}
+			if writer, ok := scheduler.InterruptedExitsMigrationWriter(root, document, head); ok && interruptedWriter == "" {
+				interruptedWriter = writer
+			}
+		}
+	}
+	writer, raw, err := sealchain.SessionRawLayout(root, heads)
+	if err != nil || raw {
+		return writer, raw, err
+	}
+	return interruptedWriter, interruptedWriter != "", nil
+}
+
+type releaseVersion struct {
+	major, minor, patch int
+	pre                 []string
+}
+
+var releaseVersionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
+var numericReleaseIdentifier = regexp.MustCompile(`^[0-9]+$`)
+
+// compareReleaseVersions returns the semver precedence of a and b. The
+// implementation is deliberately local: up needs only released tags and
+// must also reject devel and pseudo versions in words.
+func compareReleaseVersions(a, b string) (int, bool) {
+	parse := func(v string) (releaseVersion, bool) {
+		m := releaseVersionPattern.FindStringSubmatch(v)
+		if len(m) != 5 {
+			return releaseVersion{}, false
+		}
+		major, e1 := strconv.Atoi(m[1])
+		minor, e2 := strconv.Atoi(m[2])
+		patch, e3 := strconv.Atoi(m[3])
+		if e1 != nil || e2 != nil || e3 != nil {
+			return releaseVersion{}, false
+		}
+		out := releaseVersion{major: major, minor: minor, patch: patch}
+		if m[4] != "" {
+			out.pre = strings.Split(m[4], ".")
+			for _, id := range out.pre {
+				if numericReleaseIdentifier.MatchString(id) && len(id) > 1 && id[0] == '0' {
+					return releaseVersion{}, false
+				}
+			}
+		}
+		return out, true
+	}
+	left, ok := parse(a)
+	if !ok {
+		return 0, false
+	}
+	right, ok := parse(b)
+	if !ok {
+		return 0, false
+	}
+	for _, pair := range [][2]int{{left.major, right.major}, {left.minor, right.minor}, {left.patch, right.patch}} {
+		if pair[0] < pair[1] {
+			return -1, true
+		}
+		if pair[0] > pair[1] {
+			return 1, true
+		}
+	}
+	if len(left.pre) == 0 || len(right.pre) == 0 {
+		switch {
+		case len(left.pre) == len(right.pre):
+			return 0, true
+		case len(left.pre) == 0:
+			return 1, true
+		default:
+			return -1, true
+		}
+	}
+	for i := 0; i < len(left.pre) && i < len(right.pre); i++ {
+		if left.pre[i] == right.pre[i] {
+			continue
+		}
+		li, le := strconv.Atoi(left.pre[i])
+		ri, re := strconv.Atoi(right.pre[i])
+		switch {
+		case le == nil && re == nil:
+			if li < ri {
+				return -1, true
+			}
+			return 1, true
+		case le == nil:
+			return -1, true
+		case re == nil:
+			return 1, true
+		case left.pre[i] < right.pre[i]:
+			return -1, true
+		default:
+			return 1, true
+		}
+	}
+	if len(left.pre) < len(right.pre) {
+		return -1, true
+	}
+	if len(left.pre) > len(right.pre) {
+		return 1, true
+	}
+	return 0, true
+}
+
+// useInstalled resolves only the executable that now exists and will launch
+// the lead and seats. The --to target is not resolved during compile because a
+// normal first install creates it.
+func (u *upRun) useInstalled(target string) error {
+	resolved, err := seatexec.ResolveExecutable(target)
+	if err != nil {
+		return refuse("install_failed", "resolve the installed amq-squad executable: %v", err)
+	}
+	u.installed, u.report.Binary, u.q.Wrapper = resolved, target, resolved
+	return nil
 }
 
 // installByRename copies src to a temporary name in target's directory and
@@ -495,10 +720,11 @@ func ensureSquadSession(ctx context.Context, amq string, q seatlaunch.Squad, han
 }
 
 // compile is the first step: squad.yaml as scheduler run reads it, before
-// anything is installed or created. The wrapper is the binary the install
-// step will put in place (its target), else this one.
+// anything is installed or created. It validates against the executable that
+// exists now; install later replaces q.Wrapper with the resolved executable it
+// actually created. The possibly absent --to target is never resolved here.
 func (u *upRun) compile() (string, error) {
-	q, lead, err := UpCompile(u.report.Project, u.to)
+	q, lead, err := UpCompile(u.report.Project, "")
 	if err != nil {
 		return "", err
 	}
@@ -527,6 +753,9 @@ func UpCompile(project, wrapper string) (seatlaunch.Squad, string, error) {
 	}
 	if q.Wrapper, err = filepath.Abs(q.Wrapper); err != nil {
 		return q, "", refuse("squad_invalid", "%v", err)
+	}
+	if q.Wrapper, err = seatexec.ResolveExecutable(q.Wrapper); err != nil {
+		return q, "", refuse("squad_invalid", "resolve the amq-squad executable: %v", err)
 	}
 	if q.AMQPath, err = upLookPath("amq"); err != nil {
 		return q, "", refuse("amq_missing", "the installed amq is required on PATH (R51): %v", err)

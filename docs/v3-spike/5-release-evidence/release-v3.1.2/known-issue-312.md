@@ -1,0 +1,2 @@
+> **Known issue (2026-11-05):** on this release the lead does not start. `amq-squad lead` exits at once with `Failed to load extension ... Identifier 'HostFacts' has already been declared` (pi's loader refuses `pi/extensions/lib/firstturn.ts`, which declared a type and a class of one name; from #837). Fixed in [v3.1.2](https://github.com/omriariav/amq-squad/releases/tag/v3.1.2) (#883). Until you install 3.1.2, run the squad on 3.1.0-rc.1 with `up --binary`; the 3.1.2 notes have the steps.
+

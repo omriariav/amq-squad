@@ -123,7 +123,7 @@ export type ContextData = {
 	role?: { path?: string; sha256?: string };
 	role_text?: string;
 	rules?: { path?: string; sha256?: string };
-	task?: { id: string; title: string; status: string; class: string; declared_files?: string[]; lease_expires_at?: string; lease_claimed?: boolean; block_reason?: string } | null;
+	task?: { id: string; title: string; status: string; class: string; declared_files?: string[]; lease_expires_at?: string; lease_claimed?: boolean; budget?: number; budget_ends_at?: string; attempt?: number; block_reason?: string } | null;
 	open_gates?: { gate_id: string; class: string; digest: string; state: string }[];
 	warnings?: string[];
 	worktree?: string;
@@ -166,7 +166,10 @@ export function contextSection(cfg: Config, d: ContextData): string {
 		const files = t.declared_files?.length ? ` Declared files: ${t.declared_files.join(", ")}; touch nothing else.` : "";
 		if (t.status === "blocked") lines.push(`Current task ${t.id} "${t.title}" is blocked (${t.block_reason ?? ""}); wait for the lead.`);
 		else if (t.lease_claimed === false) lines.push(`Task ${t.id} "${t.title}" (${t.class}) is leased to you: claim it with amq_task_claim before ${t.lease_expires_at ?? "the lease ends"}.${files}`);
-		else lines.push(`Current task ${t.id} "${t.title}" (${t.class}, ${t.status}).${files} Finish with amq_task_done and the evidence.`);
+		else {
+			const budget = t.budget_ends_at ? ` Runtime activity renews this attempt's lease automatically, but never past its task budget ending ${t.budget_ends_at}.` : " Runtime activity renews this attempt's lease automatically within its task budget.";
+			lines.push(`Current task ${t.id} "${t.title}" (${t.class}, ${t.status}${t.attempt ? `, attempt ${t.attempt}` : ""}).${files}${budget} Finish with amq_task_done and the evidence.`);
+		}
 	} else {
 		lines.push("Current task: none.");
 	}

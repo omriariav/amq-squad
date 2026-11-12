@@ -1,0 +1,5 @@
+run	exit	seconds	hang_point	tombstones
+1	1	131	the routed message	3
+2	1	121	the routed message	1
+3	0	39	-	0
+4	0	31	-	0

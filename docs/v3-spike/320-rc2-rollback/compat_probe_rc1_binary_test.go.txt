@@ -1,0 +1,72 @@
+package cli
+
+import (
+	"os"
+	"os/exec"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
+	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
+)
+
+// TestRollbackRealRC1RewriteLeavesUnlabelledRenewals is copied into the
+// current CLI package. AMQSQ_RC1_BIN names an offline executable built from
+// the exact v3.2.0-rc.1 archive.
+func TestRollbackRealRC1RewriteLeavesUnlabelledRenewals(t *testing.T) {
+	bin := os.Getenv("AMQSQ_RC1_BIN")
+	if bin == "" {
+		t.Skip("set AMQSQ_RC1_BIN to the offline v3.2.0-rc.1 amq-squad binary")
+	}
+	f := newHookFixture(t)
+	current := time.Now().UTC().Truncate(time.Second)
+	hookNow = func() time.Time { return current }
+	store, err := taskstore.Open(f.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Add(taskstore.AddInput{Title: "real rc.1 rollback renewal", Class: "script"}, current.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t1", "cto", nil, 10*time.Minute, current.Add(-5*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if !ingestToolResult(t, "cto") {
+		t.Fatal("base activity renewal did not run")
+	}
+	version, err := exec.Command(bin, "version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("rc.1 version: %v: %s", err, version)
+	}
+	renew := exec.Command(bin, "task", "renew", "--me", "cto", "--root", f.root)
+	renew.Env = os.Environ()
+	renewOut, err := renew.CombinedOutput()
+	if err != nil {
+		t.Fatalf("real rc.1 task renew: %v: %s", err, renewOut)
+	}
+	afterRC1, err := store.Get("t1")
+	if err != nil || afterRC1.Lease == nil || afterRC1.Lease.Renewals != 2 || afterRC1.Lease.ActivityRenewals != 0 || afterRC1.Lease.ManualRenewals != 0 || afterRC1.Lease.LastRenewal != "" {
+		t.Fatalf("real rc.1 rewrite = %+v err=%v output=%s", afterRC1.Lease, err, renewOut)
+	}
+	shown, err := taskCLI(t, "show", "t1")
+	expires := afterRC1.Lease.ExpiresAt.UTC().Format(time.RFC3339)
+	if err != nil || !strings.Contains(shown, "2 renewals (0 activity, 0 manual, 2 unlabelled)") || !strings.Contains(shown, "expires "+expires) {
+		t.Fatalf("task show after real rc.1 rewrite = %q err=%v", shown, err)
+	}
+	current = afterRC1.Lease.RenewedAt.UTC().Add(ingestLeaseRenewInterval + time.Second)
+	if !ingestToolResult(t, "cto") {
+		t.Fatal("first activity after real rc.1 rewrite did not renew")
+	}
+	decisions, err := schedproc.ReadDecisionsTail(f.root)
+	if err != nil || len(decisions) != 2 || decisions[1].Reason != "first activity renewal of attempt 1 after 2 unlabelled renewals" {
+		t.Fatalf("real rc.1 post-rewrite decisions = %+v err=%v", decisions, err)
+	}
+	if ingestToolResult(t, "cto") {
+		t.Fatal("second activity inside the interval renewed again")
+	}
+	t.Logf("rc.1 version: %s", strings.TrimSpace(string(version)))
+	t.Logf("rc.1 renew: %s", strings.TrimSpace(string(renewOut)))
+	t.Logf("current task show: %s", strings.TrimSpace(shown))
+	t.Logf("current decision: %s", decisions[1].Reason)
+}

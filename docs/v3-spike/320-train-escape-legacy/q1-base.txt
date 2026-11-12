@@ -1,0 +1,25 @@
+gate-lock: trainfix holds the lock after 1305s
+=== RUN   TestQ1ProbeAStoreAlertAfterItsRecordIsNoLongerFlagged
+    q1_probe_test.go:72: a torn record, then removed: run 1, the record in place: err=<nil> returned=[gate_store_unreadable gate-store-unreadable-9e329fc52afb] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-9e329fc52afb]
+    q1_probe_test.go:74: a torn record, then removed: run 1, the alert's last line: d4120966658/001/v310/extensions/amq-squad/gates/rel-x.json could not be read (gate rel-x: unexpected EOF)
+    q1_probe_test.go:72: a torn record, then removed: run 2, the record in place: err=<nil> returned=[gate_store_unreadable gate-store-unreadable-9e329fc52afb] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-9e329fc52afb]
+    q1_probe_test.go:74: a torn record, then removed: run 2, the alert's last line: d4120966658/001/v310/extensions/amq-squad/gates/rel-x.json could not be read (gate rel-x: unexpected EOF)
+    q1_probe_test.go:85: a torn record, then removed: run 3, the record no longer flagged: err=<nil> returned=[] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-9e329fc52afb]
+    q1_probe_test.go:85: a torn record, then removed: run 4, the record no longer flagged: err=<nil> returned=[] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-9e329fc52afb]
+    q1_probe_test.go:72: a torn record, then replaced by one that loads: run 1, the record in place: err=<nil> returned=[gate_store_unreadable gate-store-unreadable-492e2b801a4b] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-492e2b801a4b]
+    q1_probe_test.go:74: a torn record, then replaced by one that loads: run 1, the alert's last line: d4120966658/002/v310/extensions/amq-squad/gates/rel-x.json could not be read (gate rel-x: unexpected EOF)
+    q1_probe_test.go:72: a torn record, then replaced by one that loads: run 2, the record in place: err=<nil> returned=[gate_store_unreadable gate-store-unreadable-492e2b801a4b] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-492e2b801a4b]
+    q1_probe_test.go:74: a torn record, then replaced by one that loads: run 2, the alert's last line: d4120966658/002/v310/extensions/amq-squad/gates/rel-x.json could not be read (gate rel-x: unexpected EOF)
+    q1_probe_test.go:85: a torn record, then replaced by one that loads: run 3, the record no longer flagged: err=<nil> returned=[] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-492e2b801a4b]
+    q1_probe_test.go:85: a torn record, then replaced by one that loads: run 4, the record no longer flagged: err=<nil> returned=[] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-492e2b801a4b]
+    q1_probe_test.go:72: a quarantine_clear record, then removed: run 1, the record in place: err=<nil> returned=[gate_store_unreadable gate-store-unreadable-ddba9a352002] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-ddba9a352002]
+    q1_probe_test.go:74: a quarantine_clear record, then removed: run 1, the alert's last line: d4120966658/003/v310/extensions/amq-squad/gates/clear-0a227ca8d88dc97c65c540a4d0fa18a7.json could not be read (gate record is malformed)
+    q1_probe_test.go:72: a quarantine_clear record, then removed: run 2, the record in place: err=<nil> returned=[gate_store_unreadable gate-store-unreadable-ddba9a352002] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-ddba9a352002]
+    q1_probe_test.go:74: a quarantine_clear record, then removed: run 2, the alert's last line: d4120966658/003/v310/extensions/amq-squad/gates/clear-0a227ca8d88dc97c65c540a4d0fa18a7.json could not be read (gate record is malformed)
+    q1_probe_test.go:85: a quarantine_clear record, then removed: run 3, the record no longer flagged: err=<nil> returned=[] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-ddba9a352002]
+    q1_probe_test.go:85: a quarantine_clear record, then removed: run 4, the record no longer flagged: err=<nil> returned=[] resolved=[] on disk=[gate_store_unreadable gate-store-unreadable-ddba9a352002]
+--- PASS: TestQ1ProbeAStoreAlertAfterItsRecordIsNoLongerFlagged (0.05s)
+PASS
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	0.406s
+
+[exited with code 0]

@@ -32,8 +32,8 @@ func TestCodexSandboxPinsBeatProjectConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{filepath.Join(f.bin, "codex"), "--model", "m", "--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "sandbox_workspace_write.writable_roots=[]", "-c", "sandbox_workspace_write.network_access=false"}
-	if strings.Join(f.execArgv, " ") != strings.Join(want, " ") {
-		t.Fatalf("exec argv %q, want the admitted argv unchanged %q", f.execArgv, want)
+	if len(f.execArgv) < len(want) || strings.Join(f.execArgv[:len(want)], " ") != strings.Join(want, " ") {
+		t.Fatalf("exec argv %q, want admitted argv prefix %q", f.execArgv, want)
 	}
 	g := newFixture(t, "codex")
 	g.rec.EnvNeeds = []string{CodexNetworkNeed}

@@ -7,12 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
-
-	"github.com/omriariav/amq-squad/v3/internal/nostr"
 )
 
 // syncBuffer is a process output a test reads while it runs; when bell is
@@ -33,6 +33,8 @@ func (s *syncBuffer) Write(p []byte) (int, error) {
 	return n, err
 }
 func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+func (s *syncBuffer) Len() int       { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Len() }
+func (s *syncBuffer) Truncate(n int) { s.mu.Lock(); defer s.mu.Unlock(); s.b.Truncate(n) }
 
 // rehearseOwnerRun runs the commands of docs/v3-buzz/owner-run.md steps 0.3
 // to 7 through the amq-squad binary, after the dry-run enrollment, with the
@@ -120,12 +122,44 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	if r := sh("0.3 fleet add", amqSquad, "fleet", "add", "--name", "app", "--root", root, "--project-path", p, "--repository", "owner/app", "--lead", "cto", "--session", "owner45"); r.rc != 0 {
 		t.Fatalf("fleet add: rc %d", r.rc)
 	}
-	presence := func(state string) {
+	presence := func(state string) error {
 		raw, _ := json.Marshal(map[string]any{"status": state, "last_seen": time.Now().UTC()})
-		writeFile(t, filepath.Join(opRoot, "agents", "user", "presence.json"), string(raw))
+		return os.WriteFile(filepath.Join(opRoot, "agents", "user", "presence.json"), raw, 0o600)
 	}
 	// 4.1, 4.2 the operator session runs, attach (no --lead: the operator)
-	presence("active")
+	if err := presence("active"); err != nil {
+		t.Fatal(err)
+	}
+	refreshStop := make(chan struct{})
+	refreshDone := make(chan error, 1)
+	go func() {
+		ticker := time.NewTicker(20 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := presence("active"); err != nil {
+					refreshDone <- err
+					return
+				}
+			case <-refreshStop:
+				refreshDone <- nil
+				return
+			}
+		}
+	}()
+	refreshStopped := false
+	stopRefresh := func() {
+		if refreshStopped {
+			return
+		}
+		refreshStopped = true
+		close(refreshStop)
+		if err := <-refreshDone; err != nil {
+			t.Fatalf("operator presence refresh: %v", err)
+		}
+	}
+	t.Cleanup(stopRefresh)
 	attach := exec.CommandContext(ctx, amqSquad, "remote", // exec: not amq (the amq-squad binary)
 		"attach", "--project", p, "--session", "owner45", "--me", "cto", "--interval", "1s", "--json")
 	attach.Env, attach.Dir = env, home
@@ -142,9 +176,16 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 		}
 		stopped = true
 		attachTree.record(attach.Process.Pid) // attach and the endpoint it started, while attach links them
-		_ = attach.Process.Signal(os.Interrupt)
 		done := make(chan error, 1)
 		go func() { done <- attach.Wait() }()
+		if t.Failed() {
+			// A hung external attachment otherwise leaves only its last JSON
+			// row. SIGQUIT makes the Go binary print every goroutine before it
+			// exits, naming the exact operation that stopped the tick loop.
+			_ = attach.Process.Signal(syscall.SIGQUIT)
+		} else {
+			_ = attach.Process.Signal(os.Interrupt)
+		}
 		select {
 		case <-done:
 		case <-time.After(20 * time.Second):
@@ -159,6 +200,20 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	await(ctx, t, &relay.bell, "attach starts the endpoint and the agent is online", func() bool {
 		return strings.Contains(aout.String(), `"action":"started"`) && lastStatus(relay, body) == "online"
 	})
+	if evidencePresenceWait() {
+		t.Log("presence evidence: waiting 2m before gate raise")
+		select {
+		case <-time.After(2 * time.Minute):
+		case <-ctx.Done():
+			t.Fatalf("presence evidence wait: %v", context.Cause(ctx))
+		}
+		// Redundant while the refresher works. On the controlled revert it
+		// restarts the stale endpoint so the flow reaches the always-on
+		// pre-stop assertion with the earlier stopped row still visible.
+		if err := presence("active"); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// 5.1 the gate
 	r = sh("5.1 gate raise", amqSquad, "gate", "raise", "--project", p, "--session", "owner45", "--me", "cto", "--gate", "g45-owner-01", "--action", "tag", "--target", "git tag v3.0.0-owner45", "--json")
 	var raised struct {
@@ -175,19 +230,35 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	}
 	tRaise := time.Now()
 	// 5.2 the owner's thread reply (the throwaway key stands in for the phone)
-	dm := func(content, thread string) string {
-		tags := [][]string{{"h", "dm-4-5-dryrun"}, {"p", body}}
-		if thread != "" {
-			tags = append(tags, []string{"e", thread, "", "reply"})
+	ownerSender := ownerDMSender{owner: owner, relay: relay, channel: "dm-4-5-dryrun", body: body}
+	dm := func(content, thread string) string { return ownerSender.send(ctx, t, content, thread) }
+	shareRoot := filepath.Join(home, ".amq-squad", "buzz", "root")
+	buzzDir := filepath.Join(home, ".amq-squad", "buzz")
+	failOwnerSend := func(message string) {
+		if strings.HasPrefix(message, "hung: no signal") {
+			captureOwnerHang(t, "owner send hang", shareRoot, buzzDir, relay, attach.Process.Pid)
 		}
-		e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Tags: tags, Content: content}
-		_ = owner.sk.Sign(&e)
-		_ = relay.mem.Publish(t.Context(), e.Marshal())
-		return e.ID
+		t.Fatal(message)
 	}
+	rejected := func(id string) ownerReject {
+		if event, ok := serveRejectedEvent(relay, body, id); ok {
+			if os.Getenv(evidencePollIntervalEnv) != "" {
+				t.Logf("real rejected row: kind=%d tags=%v", event.Kind, event.Tags)
+			}
+			return ownerRejectedForReal
+		}
+		return ownerNotRejected
+	}
+	realResends := 0
 	prefix := strings.TrimPrefix(raised.Data.Gate.Digest, "sha256:")[:16]
-	dm("approve g45-owner-01 release "+prefix, raised.Data.QuestionEventID)
-	await(ctx, t, &relay.bell, "the attach verifies the thread answer", func() bool { return strings.Contains(aout.String(), `"outcome":"approved"`) })
+	approved := func() bool { return strings.Contains(aout.String(), `"outcome":"approved"`) }
+	_, answerResends := sendOwnerUntilDone(ctx, &relay.bell, "answer", "the attach verifies the thread answer",
+		func() string { return dm("approve g45-owner-01 release "+prefix, raised.Data.QuestionEventID) },
+		func(string) bool { return approved() }, rejected, failOwnerSend, func(line string) { t.Log(line) })
+	realResends += answerResends
+	if outcomes := strings.Count(aout.String(), `"outcome":"approved"`); outcomes != 1 {
+		t.Fatalf("rehearsal recorded %d approved outcomes, want exactly one", outcomes)
+	}
 	t.Logf("MEASURED (rehearsal, local relay): raise to verified through remote attach %s (tick 1 s)", time.Since(tRaise).Round(time.Millisecond))
 	// 5.3
 	if r := sh("5.3 gate status", amqSquad, "gate", "status", "--project", p, "--session", "owner45", "--gate", "g45-owner-01", "--json"); r.rc != 0 || !strings.Contains(r.out, "accepted") {
@@ -205,8 +276,10 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	statusID := dm("/status", "")
 	await(ctx, t, &relay.bell, "serve's reply to /status", func() bool { return serveAnswered(relay, body, statusID) })
 	// 6.2
-	pingID := dm("@cto owner45 ping from the phone", "")
-	await(ctx, t, &relay.bell, "the routed message", func() bool { return strings.Contains(aout.String(), `"lead":"app/cto"`) })
+	pingID, pingResends := sendOwnerUntilDone(ctx, &relay.bell, "route", "the routed message",
+		func() string { return dm("@cto owner45 ping from the phone", "") },
+		func(string) bool { return strings.Contains(aout.String(), `"lead":"app/cto"`) }, rejected, failOwnerSend, func(line string) { t.Log(line) })
+	realResends += pingResends
 	await(ctx, t, &relay.bell, "serve's routed result row", func() bool { return bodyPosted(relay, body, "routed app/cto") })
 	r = sh("6.2 amq list (operator mailbox)", "amq", "list", "--root", opRoot, "--me", "user", "--new", "--json")
 	if r.rc != 0 || !strings.Contains(r.out, "nostr:"+pingID) {
@@ -216,8 +289,30 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	if r.rc != 0 || !strings.Contains(r.out, "nostr:"+pingID) || !strings.Contains(r.out, "routed by user") {
 		t.Fatalf("the lead's inbox: rc %d\n%s", r.rc, r.out)
 	}
+	t.Logf("real resends: %d", realResends)
+	approvedOutcomes := strings.Count(aout.String(), `"outcome":"approved"`)
+	checkApprovedOutcomes("rehearsal", approvedOutcomes, func(message string) { t.Fatal(message) })
+	t.Logf("approved outcomes: %d", approvedOutcomes)
+	// The ruling's plant writes where this end-of-flow count reads: the
+	// test-owned attach output buffer, after the route. Restore it immediately
+	// so the rest of the full-flow assertions inspect only process output.
+	beforePlant := aout.Len()
+	_, _ = aout.Write([]byte("{\"outcome\":\"approved\"}\n"))
+	var countFailures []string
+	plantedOutcomes := strings.Count(aout.String(), `"outcome":"approved"`)
+	checkApprovedOutcomes("rehearsal", plantedOutcomes, func(message string) { countFailures = append(countFailures, message) })
+	aout.Truncate(beforePlant)
+	if !slices.Equal(countFailures, []string{"rehearsal recorded 2 approved outcomes, want exactly one"}) {
+		t.Fatalf("planted end-of-flow count = %d, failures=%v", plantedOutcomes, countFailures)
+	}
 	// 7 presence off
-	presence("stopped")
+	stopRefresh()
+	if strings.Contains(aout.String(), `"action":"stopped"`) {
+		t.Fatalf("attach stopped before the operator deliberately stopped presence:\n%s", aout.String())
+	}
+	if err := presence("stopped"); err != nil {
+		t.Fatal(err)
+	}
 	await(ctx, t, &relay.bell, "offline after the operator session stops", func() bool {
 		return strings.Contains(aout.String(), `"action":"stopped"`) && lastStatus(relay, body) == "offline"
 	})

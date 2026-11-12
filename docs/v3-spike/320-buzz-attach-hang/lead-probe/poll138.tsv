@@ -1,0 +1,6 @@
+run	exit	seconds	hang_point	tombstones
+1	0	31	-	0
+2	0	32	-	0
+3	0	31	-	0
+4	0	30	-	0
+5	1	121	serve delivers the answer into the attach inbox	1

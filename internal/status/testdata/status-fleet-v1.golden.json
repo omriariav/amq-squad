@@ -209,6 +209,8 @@
           },
           "lease_holder": "impl-1",
           "lease_expires_at": "2026-10-24T12:09:30Z",
+          "budget": 0,
+          "budget_ends_at": null,
           "lease_claimed": true,
           "attempt": 1,
           "wait_reason": "",
@@ -224,6 +226,7 @@
           "pr_number": 0,
           "pr_head": "",
           "wait_holders": [],
+          "waits_for": [],
           "wait_pool": ""
         },
         {
@@ -238,6 +241,8 @@
           "pool": null,
           "lease_holder": "",
           "lease_expires_at": null,
+          "budget": 0,
+          "budget_ends_at": null,
           "lease_claimed": false,
           "attempt": 1,
           "wait_reason": "",
@@ -251,6 +256,7 @@
           "pr_number": 42,
           "pr_head": "4f1c2a9",
           "wait_holders": [],
+          "waits_for": [],
           "wait_pool": ""
         }
       ],

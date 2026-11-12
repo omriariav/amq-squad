@@ -18,6 +18,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/state"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -504,11 +505,15 @@ func pushURLMissing(root string) []string {
 		if err != nil {
 			continue
 		}
+		body := raw
+		if split, _, splitErr := sealchain.SplitRaw(raw); splitErr == nil {
+			body = split
+		}
 		var l struct {
 			Handle  string `json:"handle"`
 			PushURL string `json:"push_url"`
 		}
-		if json.Unmarshal(raw, &l) == nil && l.Handle == name && l.PushURL == "" {
+		if json.Unmarshal(body, &l) == nil && l.Handle == name && l.PushURL == "" {
 			out = append(out, name)
 		}
 	}

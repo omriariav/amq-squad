@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
@@ -29,6 +31,32 @@ func taskCLI(t *testing.T, args ...string) (string, error) {
 	return out, err
 }
 
+func writeTaskCLISeatPool(t *testing.T, root, handle string, pool task.Pool) {
+	t.Helper()
+	start, ok := procinfo.StartToken(os.Getpid())
+	if !ok {
+		t.Fatal("current process start stamp is unavailable")
+	}
+	writeTaskCLISeatRecord(t, root, handle, pool, &launch.Exec{Outcome: "exec", PID: os.Getpid(), ProcessStart: start})
+}
+
+func writeTaskCLISeatRecord(t *testing.T, root, handle string, pool task.Pool, exec *launch.Exec) {
+	t.Helper()
+	agentDir := filepath.Join(root, "agents", handle)
+	if err := launch.WithRecordLock(agentDir, func() error {
+		return launch.WriteUnderRecordLock(agentDir, launch.Record{Handle: handle, Root: root, Runtime: pool.Runtime, Model: pool.Model, Effort: pool.Effort, StartedAt: time.Now().UTC(), Exec: exec})
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeTaskCLIScheduler(t *testing.T, root, processStart string) {
+	t.Helper()
+	if err := schedproc.WriteLaunchRecord(root, schedproc.LaunchRecord{Lead: "lead", Root: root, PID: os.Getpid(), ProcessStart: processStart, StartedAt: time.Now().UTC()}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestTaskCLIFlowAtTheSessionRoot(t *testing.T) {
 	root := t.TempDir()
 	chdir(t, root)
@@ -44,7 +72,7 @@ func TestTaskCLIFlowAtTheSessionRoot(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, "extensions", "amq-squad", "tasks", "t1.json")); err != nil {
 		t.Fatalf("the store is not under the session root: %v", err)
 	}
-	out, err := taskCLI(t, "claim", "--me", "impl-1", "--json")
+	out, err := taskCLI(t, "claim", "--me", "impl-1", "--pool", "claude:sonnet:medium", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +110,346 @@ func TestTaskCLIFlowAtTheSessionRoot(t *testing.T) {
 	}
 }
 
+func TestTaskCLIClaimThroughLiveSchedulerRequiresAndAcceptsOffer(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	now := withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	sol := task.Pool{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "high"}
+	writeTaskCLISeatPool(t, root, "seat-a", sol)
+	start, ok := procinfo.StartToken(os.Getpid())
+	if !ok {
+		t.Fatal("current process start stamp is unavailable")
+	}
+	writeTaskCLIScheduler(t, root, start)
+	if _, err := taskCLI(t, "add", "--title", "offered", "--class", "script", "--pool", sol.Key()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "seat-a"); err == nil || !strings.Contains(err.Error(), "t1 is handed out by the scheduler") || !strings.Contains(err.Error(), "refused (claim_offer_required)") {
+		t.Fatalf("live scheduler accepted an unoffered claim: %v", err)
+	}
+	s, _ := task.Open(root)
+	if _, err := s.Grant("t1", "seat-a", &sol, time.Minute, now); err != nil {
+		t.Fatal(err)
+	}
+	out, err := taskCLI(t, "claim", "t1", "--me", "seat-a", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decodeJSONEnvelope[taskEnvelope](t, out).Data.Task
+	if got.Lease == nil || got.Lease.ClaimedAt == nil || got.Lease.Holder != "seat-a" {
+		t.Fatalf("offered claim = %+v", got)
+	}
+}
+
+func TestTaskCLIClaimTreatsAStaleSchedulerAsTheCompatibilityPath(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	sol := task.Pool{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "high"}
+	writeTaskCLISeatPool(t, root, "seat-a", sol)
+	start, ok := procinfo.StartToken(os.Getpid())
+	if !ok {
+		t.Fatal("current process start stamp is unavailable")
+	}
+	writeTaskCLIScheduler(t, root, start+"-reused")
+	if _, err := taskCLI(t, "add", "--title", "stale scheduler", "--class", "script", "--pool", sol.Key()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "seat-a"); err != nil {
+		t.Fatalf("stale scheduler record did not take the compatibility path: %v", err)
+	}
+}
+
+func TestTaskCLIClaimWithoutSchedulerFailsClosedOnlyForAnUnknownPinnedPool(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	if _, err := taskCLI(t, "add", "--title", "pinned", "--class", "script", "--pool", "codex:gpt-5.6-sol:high"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "seat-a"); err == nil || !strings.Contains(err.Error(), "t1 is pinned to codex:gpt-5.6-sol:high; claim it with --pool, or let the scheduler hand it out") || !strings.Contains(err.Error(), "refused (claim_pool_unknown)") {
+		t.Fatalf("unknown pool claim of pinned task: %v", err)
+	}
+	if _, err := taskCLI(t, "add", "--title", "unpinned", "--class", "script"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t2", "--me", "seat-a"); err != nil {
+		t.Fatalf("unknown pool could not claim unpinned task: %v", err)
+	}
+}
+
+func TestTaskCLIPullRefusesALiveSchedulerAndOtherwiseFiltersByServingPool(t *testing.T) {
+	t.Run("live scheduler", func(t *testing.T) {
+		root := t.TempDir()
+		chdir(t, root)
+		withFixedTaskNow(t)
+		t.Setenv("AM_ROOT", root)
+		t.Setenv("AM_ME", "")
+		start, ok := procinfo.StartToken(os.Getpid())
+		if !ok {
+			t.Fatal("current process start stamp is unavailable")
+		}
+		writeTaskCLIScheduler(t, root, start)
+		if _, err := taskCLI(t, "add", "--title", "pending", "--class", "script"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := taskCLI(t, "claim", "--me", "seat-a"); err == nil || !strings.Contains(err.Error(), "the scheduler hands out work; wait for its offer") || !strings.Contains(err.Error(), "refused (claim_offer_required)") {
+			t.Fatalf("pull under live scheduler: %v", err)
+		}
+	})
+
+	t.Run("no scheduler", func(t *testing.T) {
+		root := t.TempDir()
+		chdir(t, root)
+		withFixedTaskNow(t)
+		t.Setenv("AM_ROOT", root)
+		t.Setenv("AM_ME", "")
+		sol := task.Pool{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "high"}
+		writeTaskCLISeatPool(t, root, "seat-a", sol)
+		if _, err := taskCLI(t, "add", "--title", "other", "--class", "script", "--priority", "2", "--pool", "codex:gpt-5.6-terra:medium"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := taskCLI(t, "add", "--title", "served", "--class", "script", "--priority", "1", "--pool", sol.Key()); err != nil {
+			t.Fatal(err)
+		}
+		out, err := taskCLI(t, "claim", "--me", "seat-a", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := decodeJSONEnvelope[taskEnvelope](t, out).Data.Task
+		if got.ID != "t2" || got.Lease == nil || got.Lease.ClaimedAt == nil {
+			t.Fatalf("pool-filtered pull = %+v", got)
+		}
+	})
+}
+
+func TestTaskCLIClaimIgnoresNonLiveSeatRecordsAndUsesExplicitPool(t *testing.T) {
+	sol := task.Pool{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "high"}
+	terra := task.Pool{Runtime: "codex", Model: "gpt-5.6-terra", Effort: "medium"}
+	tests := []struct {
+		name string
+		seed func(*testing.T, string)
+	}{
+		{"no record", func(*testing.T, string) {}},
+		{"gone pid", func(t *testing.T, root string) {
+			writeTaskCLISeatRecord(t, root, "seat-a", terra, &launch.Exec{Outcome: "exec", PID: 999999, ProcessStart: "gone"})
+		}},
+		{"pid with no stamp", func(t *testing.T, root string) {
+			writeTaskCLISeatRecord(t, root, "seat-a", terra, &launch.Exec{Outcome: "exec", PID: os.Getpid()})
+		}},
+		{"live pid with a different stamp", func(t *testing.T, root string) {
+			start, ok := procinfo.StartToken(os.Getpid())
+			if !ok {
+				t.Fatal("current process start stamp is unavailable")
+			}
+			writeTaskCLISeatRecord(t, root, "seat-a", terra, &launch.Exec{Outcome: "exec", PID: os.Getpid(), ProcessStart: start + "-different"})
+		}},
+		{"unreadable current stamp", func(t *testing.T, root string) {
+			const recorded = "recorded-but-unreadable"
+			prev := taskClaimSeatStartToken
+			taskClaimSeatStartToken = func(int) (string, bool) { return recorded, false }
+			t.Cleanup(func() { taskClaimSeatStartToken = prev })
+			writeTaskCLISeatRecord(t, root, "seat-a", terra, &launch.Exec{Outcome: "exec", PID: os.Getpid(), ProcessStart: recorded})
+		}},
+		{"non-exec outcome", func(t *testing.T, root string) {
+			start, ok := procinfo.StartToken(os.Getpid())
+			if !ok {
+				t.Fatal("current process start stamp is unavailable")
+			}
+			writeTaskCLISeatRecord(t, root, "seat-a", terra, &launch.Exec{Outcome: "refused", PID: os.Getpid(), ProcessStart: start})
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			chdir(t, root)
+			withFixedTaskNow(t)
+			t.Setenv("AM_ROOT", root)
+			t.Setenv("AM_ME", "")
+			if _, err := taskCLI(t, "add", "--title", "pinned", "--class", "script", "--pool", sol.Key()); err != nil {
+				t.Fatal(err)
+			}
+			tt.seed(t, root)
+			if _, err := taskCLI(t, "claim", "t1", "--me", "seat-a", "--pool", sol.Key()); err != nil {
+				t.Fatalf("explicit pool was overridden by a non-live record: %v", err)
+			}
+		})
+	}
+}
+
+func TestTaskCLIClaimUsesAModelLessPiSeatRecordForAdmission(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	want := task.Pool{Runtime: "pi", Model: "qwen3.6:27b", Effort: "low"}
+	writeTaskCLISeatPool(t, root, "seat-pi", task.Pool{Runtime: "pi"})
+	if _, err := taskCLI(t, "add", "--title", "local", "--class", "script", "--pool", want.Key()); err != nil {
+		t.Fatal(err)
+	}
+	out, err := taskCLI(t, "claim", "t1", "--me", "seat-pi", "--json")
+	if err != nil {
+		t.Fatalf("model-less pi seat record did not supply its admission pool: %v", err)
+	}
+	got := decodeJSONEnvelope[taskEnvelope](t, out).Data.Task
+	if got.Lease == nil || got.Lease.ClaimedAt == nil || got.Pool == nil || *got.Pool != want {
+		t.Fatalf("model-less pi claim = %+v", got)
+	}
+}
+
+func TestTaskCLIClaimRefusesExplicitPoolAgainstALiveSeatRecord(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	sol := task.Pool{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "high"}
+	terra := task.Pool{Runtime: "codex", Model: "gpt-5.6-terra", Effort: "medium"}
+	writeTaskCLISeatPool(t, root, "seat-a", sol)
+	if _, err := taskCLI(t, "add", "--title", "pinned", "--class", "script", "--pool", sol.Key()); err != nil {
+		t.Fatal(err)
+	}
+	_, err := taskCLI(t, "claim", "t1", "--me", "seat-a", "--pool", terra.Key())
+	if err == nil || !strings.Contains(err.Error(), "seat-a is live on "+sol.Key()+"; --pool names "+terra.Key()) || !strings.Contains(err.Error(), "refused (claim_pool_mismatch)") {
+		t.Fatalf("live record and explicit pool mismatch: %v", err)
+	}
+}
+
+func TestTaskCLIClaimRefusalWordsAreAboveTheRule(t *testing.T) {
+	type setup func(*testing.T, string, time.Time) error
+	sol := task.Pool{Runtime: "codex", Model: "gpt-5.6-sol", Effort: "high"}
+	terra := task.Pool{Runtime: "codex", Model: "gpt-5.6-terra", Effort: "medium"}
+	tests := []struct {
+		code  string
+		plain string
+		setup setup
+	}{
+		{task.RefusalClaimOfferRequired, "is handed out by the scheduler", func(t *testing.T, root string, _ time.Time) error {
+			writeTaskCLISeatPool(t, root, "seat-a", sol)
+			start, _ := procinfo.StartToken(os.Getpid())
+			writeTaskCLIScheduler(t, root, start)
+			_, err := taskCLI(t, "claim", "t1", "--me", "seat-a")
+			return err
+		}},
+		{task.RefusalClaimOfferExpired, "offer to seat-a has expired", func(t *testing.T, root string, now time.Time) error {
+			writeTaskCLISeatPool(t, root, "seat-a", sol)
+			start, _ := procinfo.StartToken(os.Getpid())
+			writeTaskCLIScheduler(t, root, start)
+			s, _ := task.Open(root)
+			if _, err := s.Grant("t1", "seat-a", &sol, time.Minute, now.Add(-2*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			_, err := taskCLI(t, "claim", "t1", "--me", "seat-a")
+			return err
+		}},
+		{task.RefusalClaimPoolMismatch, "is handed out by the scheduler", func(t *testing.T, root string, now time.Time) error {
+			writeTaskCLISeatPool(t, root, "seat-a", terra)
+			start, _ := procinfo.StartToken(os.Getpid())
+			writeTaskCLIScheduler(t, root, start)
+			s, _ := task.Open(root)
+			if _, err := s.Grant("t1", "seat-a", &sol, time.Minute, now); err != nil {
+				t.Fatal(err)
+			}
+			_, err := taskCLI(t, "claim", "t1", "--me", "seat-a")
+			return err
+		}},
+		{task.RefusalClaimPoolUnknown, "is pinned to " + sol.Key(), func(t *testing.T, _ string, _ time.Time) error {
+			_, err := taskCLI(t, "claim", "t1", "--me", "seat-a")
+			return err
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.code, func(t *testing.T) {
+			root := t.TempDir()
+			chdir(t, root)
+			now := withFixedTaskNow(t)
+			t.Setenv("AM_ROOT", root)
+			t.Setenv("AM_ME", "")
+			if _, err := taskCLI(t, "add", "--title", "pinned", "--class", "script", "--pool", sol.Key()); err != nil {
+				t.Fatal(err)
+			}
+			err := tt.setup(t, root, now)
+			if err == nil {
+				t.Fatal("claim succeeded")
+			}
+			plain, record, ok := strings.Cut(err.Error(), "\n\n----------\n")
+			if !ok || !strings.Contains(plain, tt.plain) || strings.Contains(plain, tt.code) || !strings.Contains(record, "refused ("+tt.code+")") {
+				t.Fatalf("refusal words = %q", err)
+			}
+		})
+	}
+}
+
+func TestTaskAddReportsFileWaitsInTextAndJSON(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+
+	if _, err := taskCLI(t, "add", "--title", "holder", "--class", "implement", "--files", "docs/**"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := taskCLI(t, "add", "--title", "overlap", "--class", "implement", "--files", "docs/x.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "t2 will wait for t1: both declare docs/x.md"; !strings.Contains(out, want) {
+		t.Fatalf("task add output = %q, want %q", out, want)
+	}
+	if strings.HasPrefix("docs/x.md", "docs/**") || strings.HasPrefix("docs/**", "docs/x.md") {
+		t.Fatal("the fixture must disagree with a prefix-only overlap test")
+	}
+	out, err = taskCLI(t, "add", "--title", "second overlap", "--class", "implement", "--files", "docs/x.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"t3 will wait for t1: both declare docs/x.md",
+		"t3 will wait for t2: both declare docs/x.md",
+	} {
+		if !strings.Contains(out, want+"\n") {
+			t.Fatalf("task add output = %q, want line %q", out, want)
+		}
+	}
+
+	out, err = taskCLI(t, "add", "--title", "separate", "--class", "implement", "--files", "src/x.go")
+	if err != nil || strings.Contains(out, "will wait") {
+		t.Fatalf("non-overlapping add = %q, %v", out, err)
+	}
+	out, err = taskCLI(t, "add", "--title", "json overlap", "--class", "implement", "--files", "docs/x.md", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		Data struct {
+			WaitsFor []string `json:"waits_for"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(out), &env); err != nil {
+		t.Fatal(err)
+	}
+	got := env.Data.WaitsFor
+	want := []string{
+		"t5 will wait for t1: both declare docs/x.md",
+		"t5 will wait for t2: both declare docs/x.md",
+		"t5 will wait for t3: both declare docs/x.md",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("waits_for = %#v, want %#v", got, want)
+	}
+}
+
 func TestTaskCLIRefusals(t *testing.T) {
 	root := t.TempDir()
 	chdir(t, root)
@@ -114,6 +482,85 @@ func TestTaskCLIRefusals(t *testing.T) {
 	t.Setenv("AM_ROOT", "")
 	if _, err := taskCLI(t, "list"); err == nil || !strings.Contains(err.Error(), "no store root") {
 		t.Errorf("list without a root: %v", err)
+	}
+}
+
+func TestTaskCLIPersistsAndExtendsTheAttemptBudget(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	now := withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	t.Setenv("AM_ME", "")
+	if _, err := taskCLI(t, "add", "--title", "bounded", "--class", "implement", "--budget", "45m", "--me", "lead"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	shown, err := taskCLI(t, "show", "t1", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := decodeJSONEnvelope[taskEnvelope](t, shown).Data.Task
+	if got.Budget != 45*time.Minute || got.Lease == nil || !got.Lease.BudgetEndsAt.Equal(now.Add(45*time.Minute)) {
+		t.Fatalf("bounded task = %+v", got)
+	}
+	store, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply := extendBudgetDecision(storeSelection{store: store, root: root}, "lead", schedproc.WidenRequest{Kind: schedproc.WidenRequestKind, Task: "t1", Reason: taskExtendDecisionPrefix + "30m"})
+	if !reply.OK {
+		t.Fatalf("extend decision: %+v", reply)
+	}
+	shown, err = taskCLI(t, "show", "t1", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = decodeJSONEnvelope[taskEnvelope](t, shown).Data.Task
+	if got.Budget != 75*time.Minute || got.Lease == nil || !got.Lease.BudgetEndsAt.Equal(now.Add(75*time.Minute)) || len(got.BudgetExtensions) != 1 {
+		t.Fatalf("extended task = %+v", got)
+	}
+}
+
+func TestManualRenewNormalizesAndBindsTheLegacyAttempt(t *testing.T) {
+	root := t.TempDir()
+	chdir(t, root)
+	now := withFixedTaskNow(t)
+	t.Setenv("AM_ROOT", root)
+	if _, err := taskCLI(t, "add", "--title", "legacy", "--class", "script"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "claim", "t1", "--me", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(task.DirFor(root), "t1.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacy task.Task
+	if err := json.Unmarshal(raw, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	legacy.Budget = 0
+	legacy.Lease.Attempt = 0
+	legacy.Lease.BudgetEndsAt = time.Time{}
+	raw, _ = json.Marshal(legacy)
+	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskCLI(t, "renew", "--me", "dev"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := task.Open(root)
+	current, _ := got.Get("t1")
+	if current.Lease.Attempt != current.Attempt || current.Lease.BudgetEndsAt.IsZero() || current.Lease.ExpiresAt.After(current.Lease.BudgetEndsAt) {
+		t.Fatalf("manual renew bypassed normalization: %+v", current.Lease)
+	}
+	lines, err := schedproc.ReadDecisionsTail(root)
+	if err != nil || len(lines) != 1 || lines[0].Reason != "lease of t1 normalised: attempt 1, budget ends "+now.Add(task.DefaultTaskBudget).Format(time.RFC3339) {
+		t.Fatalf("normalization decisions = %+v, err %v", lines, err)
 	}
 }
 
@@ -318,7 +765,7 @@ func TestTaskCLISetRepinBoundary(t *testing.T) {
 	if _, err := taskCLI(t, "set", "t1", "--pool", "codex:gpt-5.6-terra:medium", "--me", "lead"); err != nil {
 		t.Fatalf("re-pin before the first grant: %v", err)
 	}
-	if _, err := taskCLI(t, "claim", "t1", "--me", "seat"); err != nil {
+	if _, err := taskCLI(t, "claim", "t1", "--me", "seat", "--pool", "codex:gpt-5.6-terra:medium"); err != nil {
 		t.Fatal(err)
 	}
 	_, err := taskCLI(t, "set", "t1", "--pool", "claude:sonnet:medium", "--me", "lead")

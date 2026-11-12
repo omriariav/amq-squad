@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/omriariav/amq-squad/v3/internal/ledger"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
@@ -82,6 +83,68 @@ func TestSchedulerRunLaunchesTheRosterAtStart(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "not in the roster: seat lead is the lead") || !strings.Contains(stdout, "roster of 2 seats") || !strings.Contains(stdout, "lead lead") {
 		t.Fatalf("stdout:\n%s", stdout)
+	}
+}
+
+func TestSchedulerRunWiresCodexActivityAdmissionToTheSessionLedger(t *testing.T) {
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	t.Setenv("HOME", home)
+	writeTestRegistry(t, home)
+	proj, _ := filepath.EvalSymlinks(t.TempDir())
+	root := filepath.Join(proj, ".agent-mail", "s1")
+	if err := os.MkdirAll(filepath.Join(root, "agents"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeSquadProject(t, proj, "schema: 1\nsession: s1\nlead: lead\nseats:\n"+
+		"  - handle: rev-1\n    role: implementer\n    runtime: codex\n    model: gpt-5.4\n    effort: medium\n"+
+		"  - handle: lead\n    role: lead\n    runtime: claude\n    model: opus\n    effort: medium\n", "implementer")
+	if err := os.MkdirAll(filepath.Join(proj, team.SeatWorktreesDir, "rev-1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake := &cliFakeLauncher{}
+	ticks := make(chan []scheduler.Decision, 1000)
+	prev := []any{schedulerAMQLauncher, schedulerSendRun, schedulerStarted, schedulerOnTick}
+	t.Cleanup(func() {
+		schedulerAMQLauncher = prev[0].(func(*schedproc.Slots, string, seatlaunch.Options) scheduler.SeatLauncher)
+		schedulerSendRun = prev[1].(func(context.Context, string, []string, []string) ([]byte, error))
+		schedulerStarted = prev[2].(func(*scheduler.Scheduler))
+		schedulerOnTick = prev[3].(func([]scheduler.Decision))
+	})
+	var capturedRoot string
+	var capturedOpts seatlaunch.Options
+	schedulerAMQLauncher = func(sl *schedproc.Slots, gotRoot string, opts seatlaunch.Options) scheduler.SeatLauncher {
+		fake.sl, capturedRoot, capturedOpts = sl, gotRoot, opts
+		return fake
+	}
+	schedulerSendRun = func(context.Context, string, []string, []string) ([]byte, error) { return []byte("{}"), nil }
+	schedulerStarted = func(s *scheduler.Scheduler) { fake.mu.Lock(); fake.s = s; fake.mu.Unlock() }
+	schedulerOnTick = func(ds []scheduler.Decision) { ticks <- ds }
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runSchedulerRun(ctx, []string{"--project", proj, "--tick", "20ms"}, os.Stdout) }()
+	waitDecision(t, ticks, "roster_launched")
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if capturedOpts.CodexActivityAdmission == nil {
+		t.Fatal("W1 scheduler launch options omitted CodexActivityAdmission")
+	}
+	launched := time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC)
+	capturedOpts.CodexActivityAdmission("rev-1", false, launched)
+	if !fake.sl.NeedsManualRenew("rev-1") {
+		t.Fatal("W1 untrusted Codex launch did not need manual renewal")
+	}
+	if capturedRoot != root {
+		t.Fatalf("W1 launcher root = %q, want %q", capturedRoot, root)
+	}
+	if _, err := ledger.Append(ledger.Path(root, "rev-1"), func(seq uint64) any {
+		return map[string]any{"schema": ledger.LineSchema, "seq": seq, "at": launched.Add(time.Second).Format(time.RFC3339Nano), "handle": "rev-1", "event": "PostToolUse", "tool": "Bash", "outcome": "ok"}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if fake.sl.NeedsManualRenew("rev-1") {
+		t.Fatal("W1 session ledger tool result did not remove manual renewal")
 	}
 }
 

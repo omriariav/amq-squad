@@ -1,0 +1,12 @@
+SIGTERM to 26009 at 2026-11-11T13:53:54Z
+waited 1s, now 2026-11-11T13:53:55Z
+up start 2026-11-11T13:53:55Z
+capture 1 2026-11-11T13:54:07Z
+%149 squad-lead-amq-squad-f42a4 pid=15222 cmd=amq-squad dead=0
+capture 2 2026-11-11T13:54:25Z
+%149 squad-lead-amq-squad-f42a4 pid=15222 cmd=amq-squad dead=0
+up exit 0
+up done 2026-11-11T13:54:25Z
+installed now: amq-squad v3.2.0-rc.2
+15222  9221 נוב׳ 11 2026 15:53:57    /Users/omri/go/bin/amq-squad lead --team
+15228 15222 נוב׳ 11 2026 15:53:57    /Users/omri/go/bin/amq-squad scheduler run --project /Users/omri/code/amq-squad --lead-pool pi:ollama/qwen3.6:27b

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // GH is the Forge over the owner's gh CLI: the train runs under the owner's
@@ -46,10 +47,26 @@ func (g *GH) run(ctx context.Context, args ...string) ([]byte, error) {
 		out, stderr, err = g.exec(ctx, args)
 	}
 	if err != nil {
-		return out, fmt.Errorf("gh %s: %w: %s", strings.Join(args[:min(len(args), 3)], " "), err, strings.TrimSpace(stderr))
+		return out, &GHError{Command: strings.Join(args[:min(len(args), 3)], " "), Err: err, Stderr: stderr}
 	}
 	return out, nil
 }
+
+// GHError is a gh command that failed: the command, the exec (or the
+// context's) error and gh's stderr exactly as gh printed it. Its text is
+// the one GH.run has always returned; Stderr lets definiteRefusal read
+// gh's own last line without this wrapper around it.
+type GHError struct {
+	Command string
+	Err     error
+	Stderr  string
+}
+
+func (e *GHError) Error() string {
+	return fmt.Sprintf("gh %s: %v: %s", e.Command, e.Err, strings.TrimSpace(e.Stderr))
+}
+
+func (e *GHError) Unwrap() error { return e.Err }
 
 func (g *GH) exec(ctx context.Context, args []string) ([]byte, string, error) {
 	bin := g.Bin
@@ -60,6 +77,11 @@ func (g *GH) exec(ctx context.Context, args []string) ([]byte, string, error) {
 	if g.Env != nil {
 		cmd.Env = g.Env
 	}
+	// a gh killed at the context's deadline may leave a child holding its
+	// pipes (a credential helper, a pager); Output then returns after
+	// WaitDelay instead of waiting for the child (the run's bound, Codex's
+	// re-pass on #903)
+	cmd.WaitDelay = 2 * time.Second
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -171,9 +193,9 @@ func rateLimited(err error) bool {
 	return strings.Contains(s, "rate limit") || strings.Contains(s, "ratelimited")
 }
 
-const forcePushQuery = `query($o:String!,$r:String!,$n:Int!,$c:String){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100,after:$c){pageInfo{hasNextPage endCursor} nodes{... on HeadRefForcePushedEvent{beforeCommit{oid} afterCommit{oid} actor{login}}}}}}}`
+const forcePushQuery = `query($o:String!,$r:String!,$n:Int!,$c:String){repository(owner:$o,name:$r){pullRequest(number:$n){timelineItems(itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT],first:100,after:$c){pageInfo{hasNextPage endCursor} nodes{... on HeadRefForcePushedEvent{createdAt beforeCommit{oid} afterCommit{oid} actor{login}}}}}}}`
 
-const forcePushJQ = `.data.repository.pullRequest.timelineItems | {nodes: [.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // "")}], next: .pageInfo.hasNextPage, cursor: (.pageInfo.endCursor // "")}`
+const forcePushJQ = `.data.repository.pullRequest.timelineItems | {nodes: [.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // ""), at: (.createdAt // "")}], next: .pageInfo.hasNextPage, cursor: (.pageInfo.endCursor // "")}`
 
 // Diff reads the compare endpoint for the exact base...head pair: one
 // snapshot, bound to the SHAs the train checks and pins.
@@ -218,8 +240,18 @@ func (g *GH) PatchID(ctx context.Context, repository, base, head string) (string
 	if meta.FileCount >= MaxCompareFiles || meta.MissingPatch > 0 {
 		return "", ErrIncompleteDiff
 	}
+	// gh refuses to print a response holding terminal escape bytes (a
+	// captured log in the diff), also when its output is captured, unless
+	// this flag is passed (brief 320-train-escape-legacy, E2). The bytes go
+	// only to git patch-id's stdin below; no other gh call passes it.
 	diff, err := g.run(ctx, "api", path,
-		"-H", "Accept: application/vnd.github.diff")
+		"-H", "Accept: application/vnd.github.diff", "--allow-escape-sequences")
+	if unknownEscapeFlag(err) {
+		// a gh older than the flag also prints the bytes unrefused: that
+		// answer, and no other, is read once more without it (E3, E4)
+		diff, err = g.run(ctx, "api", path,
+			"-H", "Accept: application/vnd.github.diff")
+	}
 	if err != nil {
 		if compareTooLarge(err) {
 			return "", ErrIncompleteDiff
@@ -237,6 +269,12 @@ func (g *GH) PatchID(ctx context.Context, repository, base, head string) (string
 		return "", errors.New("git patch-id --stable returned no patch id")
 	}
 	return fields[0], nil
+}
+
+// unknownEscapeFlag reports gh's own answer to a flag it does not carry.
+func unknownEscapeFlag(err error) bool {
+	var ge *GHError
+	return errors.As(err, &ge) && strings.Contains(ge.Stderr, "unknown flag: --allow-escape-sequences")
 }
 
 func compareTooLarge(err error) bool {
@@ -265,6 +303,12 @@ func (g *GH) Checks(ctx context.Context, repository, sha string) ([]CheckRun, er
 
 func (g *GH) BranchHead(ctx context.Context, repository, branch string) (string, error) {
 	raw, err := g.run(ctx, "api", "repos/"+repository+"/branches/"+branch, "--jq", ".commit.sha")
+	return strings.TrimSpace(string(raw)), err
+}
+
+// FirstParent reads a commit's first parent ("" for a root commit).
+func (g *GH) FirstParent(ctx context.Context, repository, sha string) (string, error) {
+	raw, err := g.run(ctx, "api", "repos/"+repository+"/commits/"+sha, "--jq", `.parents[0].sha // ""`)
 	return strings.TrimSpace(string(raw)), err
 }
 
@@ -437,8 +481,11 @@ func (g *GH) Ready(ctx context.Context, repository string, number int) error {
 }
 
 // Rebase runs GitHub's updatePullRequestBranch with updateMethod REBASE and
-// expectedHeadOid pinned, and returns the head the mutation reports: the SHA
-// the server pushed, which is the only SHA the train binds.
+// expectedHeadOid pinned, and returns the head the mutation reports. GitHub
+// performs the update asynchronously and answers with the head as it was
+// (run mt-20261105T192313Z-ab184d07 on #894: the mutation answered 68792071,
+// the branch moved to 2555d34a five seconds later), so the train never binds
+// this answer: it reads the head back until it moves (Train.readUpdatedHead).
 func (g *GH) Rebase(ctx context.Context, repository string, number int, expect string) (string, error) {
 	id, err := g.run(ctx, "pr", "view", strconv.Itoa(number), "-R", repository, "--json", "id", "--jq", ".id")
 	if err != nil {

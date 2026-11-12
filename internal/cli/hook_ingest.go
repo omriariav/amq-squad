@@ -6,12 +6,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/ledger"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
+	"github.com/omriariav/amq-squad/v3/internal/schedproc"
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -44,6 +47,7 @@ type hookLedgerLine struct {
 	Tool          string          `json:"tool,omitempty"`
 	ToolUseID     string          `json:"tool_use_id,omitempty"`
 	Outcome       string          `json:"outcome,omitempty"` // ok | error | the payload's own outcome
+	Attempt       int             `json:"attempt,omitempty"` // task attempt observed with this activity
 	PayloadSHA256 string          `json:"payload_sha256"`    // over the full raw stdin bytes
 	PayloadBytes  int64           `json:"payload_bytes"`
 	Malformed     bool            `json:"malformed,omitempty"`
@@ -55,13 +59,23 @@ type hookLedgerLine struct {
 
 const hookTruncatedPrefix = 64 << 10
 
+// ingestAfterStart is a test seam after the event stamp and before identity
+// resolution or any task-store read.
+var ingestAfterStart func()
+
 func runEvidenceIngest(args []string) error {
+	// This stamp precedes identity resolution, stdin parsing, and every task
+	// store read. It is the event incarnation boundary used by renewal.
+	started := hookNow().UTC()
+	if ingestAfterStart != nil {
+		ingestAfterStart()
+	}
 	h := newHookFlags("evidence ingest", evidenceIngestUsage)
 	if err := h.parse(args); err != nil {
 		return err
 	}
 	// the shared hook run report (P2-3)
-	id, err := h.seatIdentity(hookNow())
+	id, err := h.seatIdentity(started)
 	if err != nil {
 		return err
 	}
@@ -70,18 +84,18 @@ func runEvidenceIngest(args []string) error {
 	if err != nil {
 		return hookErrorf("evidence ingest: read stdin: %v", err)
 	}
-	line := newHookLedgerLine(id, head, hookNow())
+	line := newHookLedgerLine(id, head, started)
 	if len(head) > hookMaxPayload { // keep hashing the rest; record the prefix only
 		rest, err := io.Copy(sum, hookStdin)
 		if err != nil {
 			return hookErrorf("evidence ingest: read stdin: %v", err)
 		}
-		line = newHookLedgerLine(id, head[:hookTruncatedPrefix], hookNow())
+		line = newHookLedgerLine(id, head[:hookTruncatedPrefix], started)
 		line.Truncated, line.Malformed, line.Payload = true, false, nil
 		line.PayloadPrefix = printablePrefix(head[:hookTruncatedPrefix], true)
 		line.PayloadBytes, line.PayloadSHA256 = int64(len(head))+rest, "sha256:"+hex.EncodeToString(sum.Sum(nil))
 	}
-	line.LeaseRenewal = renewLeaseOnToolResult(id, line)
+	line.LeaseRenewal, line.Attempt = renewLeaseOnToolResult(id, line, started)
 	path := hookExtPath(id.Root, "ledger", id.Handle+".jsonl")
 	if line.Seq, err = appendHookLedger(path, line); err != nil {
 		return hookErrorf("evidence ingest: %v", err)
@@ -104,22 +118,60 @@ var ingestLeaseRenewInterval = task.DefaultLeaseDuration / 10
 // "skipped" when another writer holds the store lock (the hook never waits
 // for it; the next tool result renews), or "" when nothing was due. It never
 // fails the ingest.
-func renewLeaseOnToolResult(id hookIdentity, line hookLedgerLine) string {
-	if line.Tool == "" || line.Outcome == "" || line.Malformed || line.Truncated {
-		return ""
+func renewLeaseOnToolResult(id hookIdentity, line hookLedgerLine, started time.Time) (string, int) {
+	if !isLeaseActivity(line) || line.Malformed || line.Truncated {
+		return "", 0
 	}
 	store, err := task.Open(id.Root)
 	if err != nil {
-		return ""
+		return "", 0
 	}
-	_, renewed, err := store.RenewNoWait(id.Handle, task.DefaultLeaseDuration, ingestLeaseRenewInterval, hookNow().UTC())
+	normalized, err := store.NormalizeLeasesNoWait(started)
+	if err == nil {
+		for _, n := range normalized {
+			_ = schedproc.AppendDecision(id.Root, started, scheduler.Decision{Kind: "lease_normalised", TaskID: n.TaskID, Seat: id.Handle, Reason: fmt.Sprintf("lease of %s normalised: attempt %d, budget ends %s", n.TaskID, n.Attempt, n.BudgetEndsAt.UTC().Format(time.RFC3339))})
+		}
+	}
+	if errors.Is(err, task.ErrBusy) {
+		return "skipped", 0
+	}
+	if err != nil {
+		return "", 0
+	}
+	t, renewed, err := store.RenewNoWaitActivity(id.Handle, started, task.DefaultLeaseDuration, ingestLeaseRenewInterval, hookNow().UTC())
 	switch {
 	case errors.Is(err, task.ErrBusy):
-		return "skipped"
+		return "skipped", 0
 	case err == nil && renewed:
-		return "renewed"
+		if t.Lease != nil && t.Lease.ActivityRenewals == 1 {
+			reason := fmt.Sprintf("first activity renewal of attempt %d", t.Attempt)
+			if unlabelled := t.Lease.Renewals - t.Lease.ActivityRenewals - t.Lease.ManualRenewals; unlabelled > 0 {
+				reason += fmt.Sprintf(" after %d unlabelled renewals", unlabelled)
+			}
+			_ = schedproc.AppendDecision(id.Root, started, scheduler.Decision{Kind: "lease_renewed", TaskID: t.ID, Seat: id.Handle, Reason: reason})
+		}
+		return "renewed", t.Attempt
+	case err == nil:
+		return "", t.Attempt
 	}
-	return ""
+	return "", 0
+}
+
+// isLeaseActivity is the shared renewal contract. Claude and pi feed
+// PostToolUse/tool_result through their existing adapters; Codex feeds
+// PostToolUse and Stop. Stop renews once at turn end, but ledger.HasActivitySince
+// deliberately requires a tool result before suppressing the manual fallback.
+// Prompt submission and permission waits are absent because neither proves
+// that the seat worked.
+func isLeaseActivity(line hookLedgerLine) bool {
+	switch line.Event {
+	case "Stop":
+		return true
+	case "PostToolUse", "tool_result":
+		return line.Tool != "" && line.Outcome != ""
+	default:
+		return false
+	}
 }
 
 func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLine {
@@ -143,6 +195,12 @@ func newHookLedgerLine(id hookIdentity, raw []byte, now time.Time) hookLedgerLin
 		return ""
 	}
 	line.Event, line.Tool, line.ToolUseID, line.Outcome = str("hook_event_name", "type"), str("tool_name", "toolName"), str("tool_use_id", "toolCallId"), str("outcome")
+	for _, key := range []string{"attempt", "task_attempt"} {
+		if json.Unmarshal(p[key], &line.Attempt) == nil && line.Attempt > 0 {
+			break
+		}
+		line.Attempt = 0
+	}
 	for _, k := range []string{"tool_response", "toolResult", "result"} {
 		var r map[string]any
 		if line.Outcome == "" && len(p[k]) > 0 {

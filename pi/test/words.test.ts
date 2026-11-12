@@ -14,7 +14,7 @@ import { renderScreen, Screen, type ScreenStatus } from "../extensions/lib/scree
 import { Keys, type KeyOutcome } from "../extensions/lib/keys.ts";
 import { refusedPaths } from "../extensions/lib/tools.ts";
 import { SoloTeam } from "../extensions/lib/team.ts";
-import { decisionKind, RESOLVED_BY, ROUTINE_DECISIONS, LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
+import { decisionKind, RESOLVED_BY, ROUTINE_DECISIONS, LAUNCH_WORDS, TRAIN_KIND_WORDS, trainRunWords, BLOCK_WORDS, blockNeedsRecord, blockWords, clean, codeIn, DECISION_WORDS, decisionWords, pinUnresolved, RELAY_WORDS, RULE, SEAT_DOING, seatDoing, TITLE_MAX, TRAIN_RULE_WORDS, trainStop, WAIT_WORDS, waitWords, WARNING_WORDS, warningWords } from "../extensions/lib/words.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunResult } from "../extensions/lib/verbs.ts";
 import { fakeCtx, tmpdir } from "./fakepi.ts";
@@ -72,7 +72,16 @@ function goWaits(): string[] {
 // task/scope.go (file_lock_conflict, self_widen: the widen verb's replies,
 // never a task's block), and the scheduler's verbs and kinds that are not
 // codes (RelaunchVerb's text).
-const NOT_BLOCKS = new Set(["file_lock_conflict", "self_widen"]);
+const NOT_BLOCKS = new Set([
+	"file_lock_conflict",
+	"self_widen",
+	// task claim refusals are CLI replies, never persisted block reasons.
+	// Their complete words live in internal/cli/task.go above the rule.
+	"claim_offer_required",
+	"claim_offer_expired",
+	"claim_pool_mismatch",
+	"claim_pool_unknown",
+]);
 function goBlocks(): string[] {
 	return [
 		...REASON_PACKAGES.flatMap(goFiles).flatMap((f) => [...constants(f, /^(Reason|Block|Refusal)/), ...literals(f, ...REASON_LITERALS)]),
@@ -91,6 +100,7 @@ function goBlocks(): string[] {
 const LAUNCH_FILES = [
 	...goFiles("internal/seatexec"),
 	...goFiles("internal/seatlaunch"),
+	"internal/schedproc/slots.go",
 	"internal/scheduler/launchfail.go",
 	"internal/scheduler/roster.go",
 	"internal/piruntime/session.go",
@@ -113,7 +123,7 @@ const LAUNCH_LITERALS = [
 ];
 const LAUNCH_CONSTS = /^(Reason|PiNotEmbedded$|SandboxPinsMissing$|IdentityIncomplete$|PermissionMismatch$|HooksMissing$|TokenInsecure$|RuntimeMismatchReason$|AMQBindingPresent$)/;
 function goLaunchCodes(): string[] {
-	return LAUNCH_FILES.flatMap((f) => [...literals(f, ...LAUNCH_LITERALS), ...constants(f, LAUNCH_CONSTS)]).filter((c) => !["applied", "up", "none"].includes(c));
+	return LAUNCH_FILES.flatMap((f) => [...literals(f, ...LAUNCH_LITERALS), ...constants(f, LAUNCH_CONSTS)]).filter((c) => !["applied", "up", "none", "git", "main"].includes(c));
 }
 
 // The seat warning codes status shows: Go's schedproc.ClearableWarnings,
@@ -149,6 +159,7 @@ function goSeatCodes(): string[] {
 // task store can emit to plain words; a reason the table lacks fails here,
 // by name. Reverted (a reason dropped from the table), its row fails.
 test("row 7: every wait and block reason in Go's sources maps to plain words in the one table", () => {
+	assert.ok(LAUNCH_FILES.includes("internal/schedproc/slots.go"), "the seat base launch branch is outside the launch-code scan");
 	const waits = goWaits();
 	const blocks = goBlocks();
 	const seats = goSeatCodes();
@@ -172,6 +183,8 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	assert.equal(trainRunWords("made_up_kind"), "its last step is below the line");
 	// Codex on #873: reconcile is written for any binding change, not only a head mismatch
 	assert.equal(trainRunWords("reconcile"), "skipped recording a merge because its task binding no longer matches");
+	// 320-train-escape-legacy: the train's entry for a skipped legacy gate record
+	assert.equal(trainRunWords("note"), "noted a skipped legacy gate record");
 	const relay = goRelayNames();
 	assert.ok(relay.length >= 4, `the relay names were not found: ${relay}`);
 	for (const r of relay) assert.ok(has(RELAY_WORDS, r), `relay refusal ${r} has no words`);
@@ -187,6 +200,19 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	assert.deepEqual(seatDoing({ handle: "dev", state: "online", reason_code: "made_up_code" }, undefined), { text: "waiting", record: "dev: made_up_code" });
 	// the lead's hold
 	assert.equal(blockWords({ id: "t9", task_state: "blocked", block_reason: "hold" }).line, "t9 held by the lead");
+});
+
+test("claim refusal names are CLI-only and their plain words stay above the rule", () => {
+	const src = go("internal/cli/task.go");
+	for (const code of ["claim_offer_required", "claim_offer_expired", "claim_pool_mismatch", "claim_pool_unknown"]) {
+		assert.ok(NOT_BLOCKS.has(code), `${code} must stay out of the block-reason scan`);
+		assert.ok(!Object.hasOwn(BLOCK_WORDS, code), `${code} is not a persisted block reason`);
+	}
+	for (const words of [
+		"the scheduler hands out work; wait for its offer",
+		"has expired; wait for the scheduler to offer it again",
+		"claim it with --pool, or let the scheduler hand it out",
+	]) assert.ok(src.includes(words), `missing CLI refusal words: ${words}`);
 });
 
 // Row 7 (Codex on ed3d1e65): a failed seat launch's code is the pool's
@@ -205,6 +231,17 @@ test("row 7: a launch failure's code as a wait or block reason reads in words", 
 	assert.ok(lines.slice(lines.indexOf(RULE)).includes("  t9 waits: version_probe_failed"));
 	const blocked = renderScreen({ ...fixture, tasks: [{ ...fixture.tasks[0], id: "t9", block_reason: "proof_expired" }] }, now).find((l) => l.startsWith("  t9 "));
 	assert.equal(blocked, "  t9 blocked: its seat's launch failed twice, its proof came after its token expired; fix the cause, then /reset it (or relaunch the roster)");
+});
+
+test("pin_unresolved uses the class-chain detail from task show", () => {
+	const detail = "the pin codex:gpt-5.6-terra:medium is on the task tier (class implement); class plan runs on claude:opus:high, codex:gpt-5.6-sol:high";
+	assert.equal(blockWords({ id: "t75", task_state: "blocked", block_reason: "pin_unresolved" }, { block_detail: detail }).line, `t75 blocked: ${detail}; /reset it onto another pool`);
+	assert.equal(blockNeedsRecord("pin_unresolved"), true);
+	const long = `${detail}, ${Array.from({ length: 20 }, (_, i) => `vendor:model-${i}:medium`).join(", ")}`;
+	const short = pinUnresolved(long);
+	assert.ok(short.startsWith("the pin codex:gpt-5.6-terra:medium"), short);
+	assert.match(short, /, \+\d+ more$/);
+	assert.ok(short.length <= 240, short);
 });
 
 // The decision kinds Go writes to the decision log: every Decision{Kind:
@@ -408,7 +445,7 @@ test("row 7: a stop followed by its resolving decision no longer shows", () => {
 	// the scheduler starting again resolves its stop
 	assert.deepEqual(stopLine([dec("scheduler_stopped", "", "lead_gone: x"), dec("scheduler_started", "")]), []);
 	// a cleared newest stop leaves an older unresolved one showing
-	assert.deepEqual(stopLine([dec("exit_refused", "old", "ledger_tampered at gone"), dec("seat_gone"), dec("seat_up")]), ["  seat old did not stop cleanly: the commits ledger does not verify; ask the owner to inspect the commits ledger before anything commits"]);
+	assert.deepEqual(stopLine([dec("exit_refused", "old", "ledger_tampered at gone"), dec("seat_gone"), dec("seat_up")]), ["  seat old did not stop cleanly: the seat's commit record failed its check; the lead investigates before the seat works again"]);
 	// Codex's sequence on #866: the seat gone, then up, then a roster launch
 	assert.deepEqual(stopLine([dec("seat_gone"), dec("seat_up"), dec("roster_launched", "")]), []);
 	// a request's stop records the task: that task dispatched resolves it
@@ -535,6 +572,7 @@ test("row 3: a seat says what it is doing, a task why it waits or what stopped i
 			{ ...fixture.tasks[2], id: "t29", wait_reason: "no_roster_seat", wait_pool: "claude:opus:high", wait_holders: [] },
 			{ ...fixture.tasks[2], id: "t30", wait_reason: "seat_cap", wait_holders: [] },
 			{ ...fixture.tasks[0], id: "t31", block_reason: "verdict_failed" },
+			{ ...fixture.tasks[2], id: "t32", wait_reason: "file_lock", wait_holders: ["t71"], waits_for: [{ task_id: "t71", path: "docs/v3-spike/320-evidence/" }] },
 		],
 	};
 	const lines = renderScreen(doc, now);
@@ -547,6 +585,7 @@ test("row 3: a seat says what it is doing, a task why it waits or what stopped i
 		/^ {2}t29 waiting: no seat serves claude:opus:high$/,
 		/^ {2}t30 waiting: every seat is busy and the cap of 3 seats is reached$/,
 		/^ {2}t31 blocked: its verifier failed; send it back with \/reset to try again$/,
+		/^ {2}t32 waits for t71: both declare docs\/v3-spike\/320-evidence\/$/,
 	]) {
 		assert.ok(lines.some((l) => want.test(l)), `no line ${want} in\n${lines.join("\n")}`);
 	}
@@ -623,7 +662,7 @@ test("row 4: every seat warning code in Go's list has plain words; the code is b
 // what to do, both from the tables; its record stays verbatim below the
 // rule. The train's line likewise.
 test("row 4: a seat's stop and the train's stop say what happened and what to do", () => {
-	assert.equal(decisionWords({ kind: "exit_refused", seat: "old-dev", reason: "ledger_tampered at gone" }), "seat old-dev did not stop cleanly: the commits ledger does not verify; ask the owner to inspect the commits ledger before anything commits");
+	assert.equal(decisionWords({ kind: "exit_refused", seat: "old-dev", reason: "ledger_tampered at gone" }), "seat old-dev did not stop cleanly: the seat's commit record failed its check; the lead investigates before the seat works again");
 	assert.equal(decisionWords({ kind: "seat_launch_failed", seat: "rev-1", reason: "x", reason_code: "version_probe_failed", stage: "apply_failed" }), "seat rev-1's launch failed: AMQ's apply failed; ask the lead to relaunch the roster");
 	for (const kind of Object.keys(DECISION_WORDS)) {
 		const l = decisionWords({ kind, seat: "dev", reason: "made_up_reason: x" });
@@ -631,9 +670,24 @@ test("row 4: a seat's stop and the train's stop say what happened and what to do
 		assert.ok(l.includes("; "), `${kind} says no what to do: ${l}`);
 	}
 	assert.equal(trainStop("refusal PR #812 ci_green: a required check failed"), "the merge train stopped at PR #812: its CI is not green; fix the failing check and the train tries again");
-	// the plan reviewer on #873: a seat branch is never rebased by hand; the
-	// strict up-to-date rule's remedy is the lead's
-	assert.equal(trainStop("refusal PR #9 strict_required_status_checks_policy: the branch is behind and the train cannot bring it up to date: x"), "the merge train stopped at PR #9: its branch is behind its base; the train brings it up to date and waits for its checks; if the train cannot, reset the task so a seat redoes it on the current base");
+	// The screen is capped at 200 characters. Keep the full round-one words
+	// in the decision detail and plan text, and render these bounded lead
+	// instructions above the rule.
+	const screenStops = [
+		[trainStop("refusal PR #9 strict_required_status_checks_policy: x"), "#9: GitHub's up-to-date rule refused it; no gate overrides it. Run the train again; if it repeats, the lead redoes the task.", "no gate overrides it"],
+		[trainStop("refusal PR #9 update_conflict: x"), "#9 conflicts with the base; no gate overrides it. The lead redoes the task (a seat never merges the base by hand).", "a seat never merges the base by hand"],
+		[trainStop("refusal PR #9 pr_state: PR #9 was already merged at another head (merge abc, bound head def); nothing to land; the lead checks task t115's record against what merged."), "#9 was already merged at another head; nothing to land. The lead checks task t115's record.", "nothing to land"],
+		[trainStop("refusal PR #9 pr_head_moved,strict_required_status_checks_policy: x"), "#9: GitHub's up-to-date rule refused it; no gate overrides it. Run the train again; if it repeats, the lead redoes the task.", "no gate overrides it"],
+		[trainStop("refusal PR #9 ci_green,update_conflict: x"), "#9 conflicts with the base; no gate overrides it. The lead redoes the task (a seat never merges the base by hand).", "a seat never merges the base by hand"],
+		[trainStop("refusal PR #9 ci_green,pr_head_moved,update_conflict: x"), "#9 conflicts with the base; no gate overrides it. The lead redoes the task (a seat never merges the base by hand).", "a seat never merges the base by hand"],
+		[trainStop("refusal PR #9 ci_green,pr_state: PR #9 is CLOSED"), "the merge train stopped at PR #9: its CI is not green; fix the failing check and the train tries again", "its CI is not green"],
+	] as const;
+	for (const [got, want, phrase] of screenStops) {
+		assert.equal(got, want);
+		assert.ok(got.length < 200, got);
+		assert.ok(got.includes(phrase), got);
+	}
+	assert.equal(trainRunWords("reconcile_read_failed"), "could not read one PR while reconciling it and continued with the others");
 	// #874: the seat's patch moved during the train's update; the remedy is the lead's
 	assert.equal(trainStop("refusal PR #9 rebase_patch_changed: the seat patch changed: x"), "the merge train stopped at PR #9: its change moved during the update; reset the task so a seat redoes it on the current base");
 	for (const r of Object.keys(TRAIN_RULE_WORDS)) assert.equal(codeIn(trainStop(`refusal PR #9 ${r}: x`)), "", r);
@@ -642,6 +696,14 @@ test("row 4: a seat's stop and the train's stop say what happened and what to do
 	const rule = lines.indexOf(RULE);
 	assert.ok(lines.slice(rule).includes("  exit_refused: old-dev ledger_tampered at gone"));
 	assert.ok(!lines.some((l) => l.includes("last stop")), "our own term is back");
+});
+
+test("0e: ledger compatibility words name the recorded writer and install command", () => {
+	const detail = "newer_writer: the seat's commit record was written by a newer amq-squad (v9.1.0+build.7); install it";
+	assert.deepEqual(BLOCK_WORDS.newer_writer({ block_detail: detail }), ["the commits ledger was written by v9.1.0+build.7", "ask the owner to run amq-squad up --binary <that build>"]);
+	assert.equal(decisionWords({ kind: "newer_writer", reason: `owner: ${detail}` }), "the exits ledger was written by v9.1.0+build.7; ask the owner to run amq-squad up --binary <that build>");
+	assert.equal(decisionWords({ kind: "seat_excluded", seat: "qa", reason: detail.replace(/^newer_writer: /, ""), reason_code: "newer_writer" }), "seat qa cannot take work because its commits ledger was written by v9.1.0+build.7; ask the owner to run amq-squad up --binary <that build>");
+	assert.equal(decisionWords({ kind: "seat_excluded", seat: "qa", reason: "the authenticated document has an unknown field", reason_code: "schema_mismatch" }), "seat qa cannot take work because its commits ledger does not match the schema its writer claimed; ask the lead to investigate the writer");
 });
 
 // plainAbove is a screen's lines above its rule: every line but the header

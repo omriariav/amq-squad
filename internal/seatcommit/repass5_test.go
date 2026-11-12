@@ -133,7 +133,7 @@ func TestSealedCommitsLedgerDetectsASameUIDEdit(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := writeLedger(f.root, l); err != nil { // a later sealed version
+			if err := writeLedger(f.root, l, "test"); err != nil { // a later sealed version
 				t.Fatal(err)
 			}
 			os.WriteFile(p, orig, 0o600)

@@ -15,6 +15,7 @@ import (
 	"github.com/avivsinai/agent-message-queue/launchapi"
 	"github.com/omriariav/amq-squad/v3/internal/adoptionseam"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 )
 
 // doctorMinAMQVersion is the lowest AMQ release this build of amq-squad
@@ -359,6 +360,7 @@ func runDoctorChecks(d doctorExecution) []doctorCheck {
 		doctorCheckAMQOps(d),
 		doctorCheckVersionSkew(d),
 	}
+	checks = append(checks, doctorCheckLedgerCompatibility(d))
 	checks = append(checks, doctorCheckInstalledAMQFloor(d)...)
 	if d.ReleaseDrift != nil {
 		checks = append(checks, d.ReleaseDrift()...)
@@ -373,6 +375,26 @@ func runDoctorChecks(d doctorExecution) []doctorCheck {
 		checks = append(checks, doctorCheckPiRuntime(d.Fix)...)
 	}
 	return checks
+}
+
+func doctorCheckLedgerCompatibility(d doctorExecution) doctorCheck {
+	const name = "sealed ledger compatibility"
+	if d.ResolveAMQEnv == nil {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "session check unavailable"}
+	}
+	env, err := d.ResolveAMQEnv(d.ProjectDir)
+	if err != nil {
+		return doctorCheck{Name: name, Status: doctorWarn, Detail: "could not locate the session: " + err.Error()}
+	}
+	root := absoluteAMQRoot(d.ProjectDir, env.Root)
+	writer, raw, err := sessionRawLayout(root)
+	if err != nil {
+		return doctorCheck{Name: name, Status: doctorFail, Kind: "ledger_layout_unreadable", Detail: "the session's sealed heads do not verify: " + err.Error()}
+	}
+	if !raw {
+		return doctorCheck{Name: name, Status: doctorOK, Detail: "no raw-bytes sealed ledger is present"}
+	}
+	return doctorCheck{Name: name, Status: doctorOK, Detail: fmt.Sprintf("raw-bytes sealed ledgers written by %s are present; do not roll back before %s. newer_writer means the owner installs the build named in the record with `amq-squad up --binary <that build>`; schema_mismatch means the lead investigates the writer", writer, sealchain.FirstRawLayoutVersion)}
 }
 
 func defaultDoctorAMQOps(projectDir string, env amqEnv) ([]byte, error) {

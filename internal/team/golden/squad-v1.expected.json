@@ -8,6 +8,7 @@
   "target_project_root": "/golden/target",
   "shared_cwd_exception": "golden exception",
   "operator_interaction": "lead_pane",
+  "task_budget": 5400000000000,
   "defaults": {
     "runtime": "claude",
     "model": "golden-model",

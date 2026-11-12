@@ -15,6 +15,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 )
 
 // DecisionSocketName is the scheduler's decision socket in the launch
@@ -130,7 +131,11 @@ func commitSteps(xp string, sd *fsanchor.AnchoredDir) []string {
 			Why    string `json:"why"`
 		} `json:"queue"`
 	}
-	if err := json.Unmarshal(raw, &q); err != nil {
+	body := raw
+	if split, _, splitErr := sealchain.SplitRaw(raw); splitErr == nil {
+		body = split
+	}
+	if err := json.Unmarshal(body, &q); err != nil {
 		return []string{path + " cannot be parsed, so a commit step cannot be ruled out"}
 	}
 	var live []string

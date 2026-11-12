@@ -1,0 +1,5 @@
+amq-squad lead: model ollama/qwen3.6:27b (fallback: the registry has no verified pi entry)
+Error: Failed to load extension "/Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-0a8a721e40df/pi/extensions/amq-squad.ts": Failed to load extension: ParseError: Identifier 'HostFacts' has already been declared.  
+ /Users/omri/.amq-squad/runtime/pi-1.3.0-node-22.21.1-darwin-arm64-0a8a721e40df/pi/extensions/lib/firstturn.ts:114:13
+Hint: Start without extensions using "pi -ne".
+EXIT=0

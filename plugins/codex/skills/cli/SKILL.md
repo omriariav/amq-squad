@@ -1,7 +1,7 @@
 ---
 name: "cli"
 description: "Direct amq-squad 3.0 operations and diagnostics against an existing squad. Use when you need to inspect state, claim or complete a task, read the evidence ledger, check a guard verdict, read the AMQ context, raise or check a gate, check the host, or verify merge and release evidence. Triggers include \"what is the status\", \"claim this task\", \"show my evidence\", \"is this tool call allowed\", \"where does this route\", \"is this safe to merge\". NOT for preparing or launching a squad (use amq-squad:wizard) and NOT for the live lead loop (use amq-squad:orchestrator)."
-version: "3.1.2"  # x-release-please-version
+version: "3.2.0"  # x-release-please-version
 ---
 # amq-squad:cli
 
@@ -91,13 +91,25 @@ data.
 The task store lives under the AMQ session root
 (`extensions/amq-squad/tasks/`). Classes: extract, summarize, script, implement,
 plan, review. The scheduler grants leases; a seat claims its lease (or pulls the next
-eligible task) and renews it through evidence ingest. An unclaimed lease returns to
-the pool when it expires.
+eligible task), and its runtime activity renews that attempt automatically until the
+task budget is spent. Manual `task renew` remains harmless but is not part of the
+normal work loop. An unclaimed lease returns to the pool when it expires.
+
+Codex activity hooks are exact-hash trusted session overlays. Each task's
+doorbell says whether to renew by hand: it carries that sentence until this
+seat's hooks are proven, which means trusted at its launch or one tool result
+ingested from it since. While it does, renew after each tool batch, at least
+every five minutes; the owner ends it by trusting the amq-squad entries in
+`/hooks`, and the sentence goes at this seat's next ingested tool result or
+its next launch. Every doorbell also says that a command running longer than
+the lease loses it: run long work in the background and poll it.
 
 ```sh
 amq-squad task list --project P --session S --json
 amq-squad task claim --me H --project P --session S
 amq-squad task renew --me H --project P --session S
+amq-squad task add --title "Bounded task" --class implement --budget 90m --project P --session S
+amq-squad task extend ID --by 30m --project P --session S
 amq-squad task done ID --me H --evidence "go test ./... ok" --project P --session S
 amq-squad task fail ID --me H --reason TEXT --project P --session S
 amq-squad task release ID --me H --reason TEXT --project P --session S

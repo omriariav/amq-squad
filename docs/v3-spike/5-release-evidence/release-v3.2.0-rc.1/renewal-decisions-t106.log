@@ -1,0 +1,3 @@
+{"at":"2026-11-07T17:33:58.280687Z","kind":"commit_running","task_id":"t106","seat":"reviewer","reason":"running"}
+{"at":"2026-11-07T17:34:02.289087Z","kind":"completed","task_id":"t106","seat":"reviewer"}
+{"at":"2026-11-07T17:34:02.289099Z","kind":"pr_bound","task_id":"t106","seat":"reviewer","reason":"omriariav/amq-squad pr 911 head 723ed3f5094e4bba0565368626e3dc262b8737da"}

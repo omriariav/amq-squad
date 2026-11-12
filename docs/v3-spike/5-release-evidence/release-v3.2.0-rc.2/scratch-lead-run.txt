@@ -1,0 +1,8 @@
+start 2026-11-11T13:44:12Z
+binary: /Users/omri/scratch-v320rc2/build/pi/amq-squad (amq-squad v3.2.0-rc.2)
+at 3 s: dead=0 status= cmd=amq-squad
+capture 2026-11-11T13:44:22Z
+at 10 s: dead=0 status= cmd=amq-squad pid=5041
+ 5040     1 tmux -L rc2lead5003 -f /private/tmp/rc2lead.fmoVPO/tmux.conf new-session -d -s l -x 100 -y 30 -c /private/tmp/rc2lead.fmoVPO/proj env -i HOME=/private/tmp/rc2lead.fmoVPO/home PATH=/usr/bin:/bin:/usr/sbin:/sbin TERM=xterm-256color GIT_CEILING_DIRECTORIES=/private/tmp/rc2lead.fmoVPO /Users/omri/scratch-v320rc2/build/pi/amq-squad lead --team -- --offline
+after kill-server, processes naming the scratch root:
+end 2026-11-11T13:44:24Z

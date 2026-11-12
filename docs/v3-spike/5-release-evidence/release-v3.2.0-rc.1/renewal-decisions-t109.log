@@ -1,0 +1,4 @@
+{"at":"2026-11-07T17:48:47.835855Z","kind":"lease_renewed","task_id":"t109","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-07T18:05:38.202012Z","kind":"commit_running","task_id":"t109","seat":"reviewer","reason":"running"}
+{"at":"2026-11-07T18:05:44.21936Z","kind":"completed","task_id":"t109","seat":"reviewer"}
+{"at":"2026-11-07T18:05:44.219379Z","kind":"pr_bound","task_id":"t109","seat":"reviewer","reason":"omriariav/amq-squad pr 914 head 5a4bc57c79e461a2e54e99f4c70a9f4366900b4c"}

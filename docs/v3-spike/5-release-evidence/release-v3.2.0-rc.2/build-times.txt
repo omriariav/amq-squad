@@ -1,0 +1,7 @@
+build start 2026-11-11T13:19:29Z
+build exit 0
+build done 2026-11-11T13:19:47Z
+amq-squad v3.2.0-rc.2
+smoke exit 0
+smoke done 2026-11-11T13:20:12Z
+0
