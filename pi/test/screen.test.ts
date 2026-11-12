@@ -264,6 +264,7 @@ test("a gate alert and legacy warnings print the alert line and the count below 
 		attention: [{ kind: "merge_gate_drift", subject: "gate g9: the recorded head moved", gate_id: "g9", since: "2026-11-01T09:00:00Z" }],
 	}, now);
 	const rule = lines.indexOf("----------");
+	assert.notEqual(rule, -1, lines.join("\n"));
 	assert.equal(lines.slice(0, rule).filter((line) => line === "  ! a gate needs a look; its alert is below the line").length, 1);
 	const records = lines.slice(rule + 1).map((line) => line.trim());
 	assert.ok(records.includes("merge_gate_drift: gate g9: the recorded head moved"), lines.join("\n"));

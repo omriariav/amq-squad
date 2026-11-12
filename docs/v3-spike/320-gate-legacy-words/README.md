@@ -157,7 +157,9 @@ The required host-path count command printed `0` and exited 1 because grep found
 
 ## Row S-alert
 
-The row is `a gate alert and legacy warnings print the alert line and the count below the rule`, placed at `pi/test/screen.test.ts:258-272`.
+The row is `a gate alert and legacy warnings print the alert line and the count below the rule`, placed at `pi/test/screen.test.ts:258-273`.
+
+A0 asserts that the rule line `----------` is found.
 
 A1 asserts that exactly one line above the rule equals `  ! a gate needs a look; its alert is below the line`.
 
@@ -170,6 +172,8 @@ A4 asserts that no screen line contains `clear-`.
 The screen code is unchanged; the row pins what `pi/extensions/lib/screen.ts` already does when a gate alert and legacy gate warnings are both present.
 
 ### The reverts
+
+The console blocks under The reverts and What ran print the lines the brief asked for, not every line the command printed; the ✖ lines, the exit codes and the counts are complete.
 
 RA1 edited `pi/extensions/lib/screen.ts:347`.
 
@@ -260,11 +264,40 @@ $ git diff --quiet -- pi/extensions/lib/screen.ts; echo $?
 0
 ```
 
+RA5 added one line directly after `pi/extensions/lib/screen.ts:339`.
+
+Before: no line after the `legacyGateWarnings` declaration.
+
+After: `const RULE = "";`
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+✖ the screen renders from a status fixture: the lead and the root, each block in plain words, the codes below the rule
+✖ three legacy gate warnings print one count below the rule and no read failure or gate id
+✖ one legacy gate warning prints the singular count
+✖ a gate alert and legacy warnings print the alert line and the count below the rule
+✖ the requests block marks each phone request relayed or refused, the name below the rule
+✖ the widget measures the rendered screen with no fixed records, includes content at fixed plus three, and never exceeds the pane
+ℹ tests 33
+ℹ pass 27
+ℹ fail 6
+```
+
+Exit code: 1.
+
+```console
+$ git show HEAD:pi/extensions/lib/screen.ts > pi/extensions/lib/screen.ts
+$ git diff --quiet -- pi/extensions/lib/screen.ts; echo $?
+0
+```
+
+With the rule line removed, five other tests of the file fail with this row.
+
 ### What ran
 
 ```console
 $ cd pi && npm ci --ignore-scripts --offline
-added 118 packages, and audited 119 packages in 1s
+added 118 packages, and audited 119 packages in 2s
 found 0 vulnerabilities
 ```
 
@@ -333,9 +366,9 @@ Exit code: 0.
 
 ```console
 $ git diff --stat
- docs/v3-spike/320-gate-legacy-words/README.md | 185 ++++++++++++++++++++++++++
- pi/test/screen.test.ts                        |  16 +++
- 2 files changed, 201 insertions(+)
+ docs/v3-spike/320-gate-legacy-words/README.md | 43 +++++++++++++++++++++++----
+ pi/test/screen.test.ts                        |  1 +
+ 2 files changed, 39 insertions(+), 5 deletions(-)
 ```
 
 Exit code: 0.
