@@ -1,10 +1,9 @@
-// Brief 3.1.1-3, rows 3, 4 and 7: the screen in plain words. One table maps
-// every wait and block reason the scheduler and the task store can emit (Go's
-// reason constants, read here from the Go sources at test time) and every
-// seat reason code; no refusal or outcome line above its rule carries a
-// snake_case code or a hex run; free-text titles pass the redaction and a
-// control-character strip before the cut; each empty block shows one plain
-// line.
+// Brief 3.1.1-3, rows 3, 4 and 7: the screen in plain words. The state
+// contract's wait and block reasons agree with their word maps both ways;
+// every other map is checked against Go's sources. No refusal or outcome line
+// above its rule carries a snake_case code or a hex run; free-text titles pass
+// the redaction and a control-character strip before the cut; each empty block
+// shows one plain line.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -51,43 +50,63 @@ function literals(rel: string, ...patterns: RegExp[]): string[] {
 	return patterns.flatMap((re) => [...src.matchAll(re)].flatMap((m) => m.slice(1).filter(Boolean)));
 }
 
-// The packages that write a task's wait and block reasons: the task store,
-// the commit step, the scheduler and the router (brief 3.1.1-3, Codex on
-// ed3d1e65: every package file, not a list of files).
-const REASON_PACKAGES = ["internal/task", "internal/seatcommit", "internal/scheduler", "internal/routing"];
-// A wait or block field assigned a literal (a Route{Block: "..."}, a
-// WaitReason or BlockReason, a wait or a block call with a literal reason).
-const REASON_LITERALS = [/\bBlock:\s*"([a-z][a-z0-9_]*)"/g, /\b(?:WaitReason|BlockReason)\s*=\s*"([a-z][a-z0-9_]*)"/g, /\.wait\([^,()]*,\s*"([a-z][a-z0-9_]*)"/g, /\.(?:Block|BlockWithPaths|RefuseCommit|RefuseCommitPaths|Escalate|SetWait)\([^,()]*,(?:\s*[^,()]*,)?\s*"([a-z][a-z0-9_]*)"/g];
+type ReasonList = "block" | "wait";
 
-// The wait reasons: every Wait* constant of the four packages and every
-// literal wait.
-function goWaits(): string[] {
-	return REASON_PACKAGES.flatMap(goFiles).flatMap((f) => [...constants(f, /^Wait/), ...literals(f, /\.wait\([^,()]*,\s*"([a-z][a-z0-9_]*)"/g, /\bWaitReason\s*=\s*"([a-z][a-z0-9_]*)"/g)]);
+// Reasons which the contract has but no words table handles yet, named for S2.
+const NO_WORDS_YET: { code: string; lists: ReasonList[]; why: string }[] = [
+	{ code: "process_exited", lists: ["block", "wait"], why: "a seat's process exit (internal/scheduler GoneProcessExited); no table has words for it; S2" },
+	{ code: "tool_unpinned", lists: ["block"], why: "the pin check's missing pin (internal/registry PinMissing); no table has words for it; S2" },
+];
+
+// Word-map keys which are not represented by state-contract reason codes.
+const NOT_IN_THE_CONTRACT: { key: string; list: ReasonList; why: string }[] = [
+	{ key: "", list: "wait", why: "not a code: the wait field is empty when a task only waits its turn" },
+	{ key: "class_unknown", list: "block", why: "a Go string literal with no constant; S2" },
+	{ key: "retries_exhausted", list: "block", why: "a Go string literal with no constant; S2" },
+];
+
+// Read and validate the reason half of the generated state contract.
+function stateContractReasons(): { block: Set<string>; wait: Set<string>; notReasons: Set<string> } {
+	const contract = JSON.parse(fs.readFileSync(path.join(here, "state-contract.json"), "utf8")) as any;
+	assert.ok(contract?.schema === "amq-squad-state-contract/1", `pi/test/state-contract.json has the schema ${JSON.stringify(contract?.schema)}; this test reads "amq-squad-state-contract/1" only`);
+	const read = (value: unknown, name: string): Set<string> => {
+		assert.ok(Array.isArray(value) && value.length > 0, `pi/test/state-contract.json: ${name} is missing or empty`);
+		for (const entry of value) assert.ok(typeof entry?.code === "string" && entry.code.length > 0, `pi/test/state-contract.json: an entry of ${name} has no code: ${JSON.stringify(entry)}`);
+		return new Set(value.map((entry) => entry.code));
+	};
+	return {
+		block: read(contract?.reasons?.block?.entries, "reasons.block.entries"),
+		wait: read(contract?.reasons?.wait?.entries, "reasons.wait.entries"),
+		notReasons: read(contract?.reasons?.not_reasons, "reasons.not_reasons"),
+	};
 }
 
-// The block reasons: every Reason*, Block* and Refusal* constant of the four
-// packages, typed or not, every literal assigned to a block field, and the
-// pin check's (internal/registry PinMismatch).
-// Not block reasons, and left out by name: the widen refusals of
-// task/scope.go (file_lock_conflict, self_widen: the widen verb's replies,
-// never a task's block), and the scheduler's verbs and kinds that are not
-// codes (RelaunchVerb's text).
-const NOT_BLOCKS = new Set([
-	"file_lock_conflict",
-	"self_widen",
-	// task claim refusals are CLI replies, never persisted block reasons.
-	// Their complete words live in internal/cli/task.go above the rule.
-	"claim_offer_required",
-	"claim_offer_expired",
-	"claim_pool_mismatch",
-	"claim_pool_unknown",
-]);
-function goBlocks(): string[] {
-	return [
-		...REASON_PACKAGES.flatMap(goFiles).flatMap((f) => [...constants(f, /^(Reason|Block|Refusal)/), ...literals(f, ...REASON_LITERALS)]),
-		...constants("internal/scheduler/roster.go", /^AMQBindingPresent$/),
-		...constants("internal/registry/pins.go", /^PinMismatch$/),
-	].filter((r) => !NOT_BLOCKS.has(r));
+// Compare one contract reason set and its word map in both directions, while
+// keeping the two named exception lists honest.
+function reasonWordProblems(list: ReasonList, codes: Set<string>, table: Record<string, unknown>): string[] {
+	const problems: string[] = [];
+	const tableName = list === "block" ? "BLOCK_WORDS" : "WAIT_WORDS";
+	// its words are in LAUNCH_WORDS: waitWords and blockWords read a launch failure's code there, after their own table
+	for (const code of [...codes].sort()) {
+		if (!Object.hasOwn(table, code) && !Object.hasOwn(LAUNCH_WORDS, code) && !NO_WORDS_YET.some((entry) => entry.code === code && entry.lists.includes(list))) {
+			problems.push(`contract to words: the ${list} code ${JSON.stringify(code)} of pi/test/state-contract.json is no key of ${tableName}, its words are not in LAUNCH_WORDS, and it is not on NO_WORDS_YET for ${list}`);
+		}
+	}
+	for (const key of Object.keys(table).sort()) {
+		if (!codes.has(key) && !NOT_IN_THE_CONTRACT.some((entry) => entry.key === key && entry.list === list)) {
+			problems.push(`words to contract: the ${tableName} key ${JSON.stringify(key)} is no ${list} code of pi/test/state-contract.json and is not on NOT_IN_THE_CONTRACT for ${list}`);
+		}
+	}
+	for (const entry of NO_WORDS_YET.filter((entry) => entry.lists.includes(list))) {
+		if (!codes.has(entry.code)) problems.push(`NO_WORDS_YET is stale: ${JSON.stringify(entry.code)} is no ${list} code of pi/test/state-contract.json any more; take ${list} off its entry`);
+		if (Object.hasOwn(table, entry.code)) problems.push(`NO_WORDS_YET is stale: the ${list} code ${JSON.stringify(entry.code)} is now a key of ${tableName}; take ${list} off its entry`);
+		else if (Object.hasOwn(LAUNCH_WORDS, entry.code)) problems.push(`NO_WORDS_YET is stale: the ${list} code ${JSON.stringify(entry.code)} now has its words in LAUNCH_WORDS; take ${list} off its entry`);
+	}
+	for (const entry of NOT_IN_THE_CONTRACT.filter((entry) => entry.list === list)) {
+		if (codes.has(entry.key)) problems.push(`NOT_IN_THE_CONTRACT is stale: the ${tableName} key ${JSON.stringify(entry.key)} is now a ${list} code of pi/test/state-contract.json; take it off the list`);
+		if (!Object.hasOwn(table, entry.key)) problems.push(`NOT_IN_THE_CONTRACT is stale: ${JSON.stringify(entry.key)} is no key of ${tableName} any more; take it off the list`);
+	}
+	return problems;
 }
 
 // The launch path's codes (internal/scheduler launchfail.go: a failed
@@ -155,22 +174,15 @@ function goSeatCodes(): string[] {
 	return [...fn.matchAll(/ReasonCode = State\w+, "([a-z_]+)"/g)].map((m) => m[1]);
 }
 
-// Row 7: ONE table maps every wait and block reason the scheduler and the
-// task store can emit to plain words; a reason the table lacks fails here,
-// by name. Reverted (a reason dropped from the table), its row fails.
-test("row 7: every wait and block reason in Go's sources maps to plain words in the one table", () => {
+// Row 7: launch, seat, train and relay maps still agree with Go's sources;
+// the state-contract tests below check wait and block maps in both directions.
+test("row 7: every launch code, seat code, train rule and kind and relay name in Go's sources maps to plain words", () => {
 	assert.ok(LAUNCH_FILES.includes("internal/schedproc/slots.go"), "the seat base launch branch is outside the launch-code scan");
-	const waits = goWaits();
-	const blocks = goBlocks();
 	const seats = goSeatCodes();
-	assert.ok(waits.length >= 12, `the wait reasons were not found: ${waits}`);
-	assert.ok(blocks.length >= 35, `the block reasons were not found: ${blocks}`);
 	assert.ok(seats.length >= 8, `the seat codes were not found: ${seats}`);
 	const has = (t: object, k: string) => Object.hasOwn(t, k);
 	const launch = goLaunchCodes();
 	assert.ok(launch.length >= 60, `the launch codes were not found: ${launch}`);
-	for (const r of waits) assert.ok(has(WAIT_WORDS, r), `wait reason ${r} has no words`);
-	for (const r of blocks) assert.ok(has(BLOCK_WORDS, r) || has(LAUNCH_WORDS, r), `block reason ${r} has no words`);
 	// a launch code is a wait reason and, repeated, a block reason
 	for (const r of launch) assert.ok(has(LAUNCH_WORDS, r) || has(BLOCK_WORDS, r) || has(WAIT_WORDS, r), `launch code ${r} has no words`);
 	for (const r of seats) assert.ok(has(SEAT_DOING, r), `seat reason code ${r} has no words`);
@@ -202,10 +214,35 @@ test("row 7: every wait and block reason in Go's sources maps to plain words in 
 	assert.equal(blockWords({ id: "t9", task_state: "blocked", block_reason: "hold" }).line, "t9 held by the lead");
 });
 
+// The generated contract's block reasons and BLOCK_WORDS agree both ways.
+test("row 7: the state contract's block reasons and BLOCK_WORDS agree both ways", () => {
+	const { block } = stateContractReasons();
+	const problems = reasonWordProblems("block", block, BLOCK_WORDS);
+	assert.ok(problems.length === 0, problems.join("\n"));
+});
+
+// The generated contract's wait reasons and WAIT_WORDS agree both ways.
+test("row 7: the state contract's wait reasons and WAIT_WORDS agree both ways", () => {
+	const { wait } = stateContractReasons();
+	const problems = reasonWordProblems("wait", wait, WAIT_WORDS);
+	assert.ok(problems.length === 0, problems.join("\n"));
+});
+
+// A not_reasons code is never a task reason and therefore has no words key.
+test("row 7: no code of the state contract's not_reasons is a key of BLOCK_WORDS or WAIT_WORDS", () => {
+	const { notReasons } = stateContractReasons();
+	for (const code of [...notReasons].sort()) {
+		for (const [tableName, table] of [["BLOCK_WORDS", BLOCK_WORDS], ["WAIT_WORDS", WAIT_WORDS]] as const) {
+			assert.ok(!Object.hasOwn(table, code), `the not_reasons code ${JSON.stringify(code)} of pi/test/state-contract.json is a key of ${tableName}: it is no task's reason, so it has no words there`);
+		}
+	}
+});
+
 test("claim refusal names are CLI-only and their plain words stay above the rule", () => {
 	const src = go("internal/cli/task.go");
+	const { notReasons } = stateContractReasons();
 	for (const code of ["claim_offer_required", "claim_offer_expired", "claim_pool_mismatch", "claim_pool_unknown"]) {
-		assert.ok(NOT_BLOCKS.has(code), `${code} must stay out of the block-reason scan`);
+		assert.ok(notReasons.has(code), `${code} must stay in the not_reasons of pi/test/state-contract.json`);
 		assert.ok(!Object.hasOwn(BLOCK_WORDS, code), `${code} is not a persisted block reason`);
 	}
 	for (const words of [
