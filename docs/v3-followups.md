@@ -550,8 +550,8 @@ as #960 corrected it.
   (`:247`, which names `launchapi.InspectRequestV1`) are in a liveness
   classifier that no command reaches (`deadcode` on 8d66f50e; the rc.2
   soak's record has the run). They were removed on v3 by #969; the 3.2 line
-  keeps them, and at its pin v0.116.2 they build. The 3.2.0 notes carry the
-  corrected sentence.
+  keeps them, and at its pin v0.116.2 they build. The corrected sentence
+  goes into the 3.2.0 notes with the release PR.
 
 ### Evidence tooling
 
