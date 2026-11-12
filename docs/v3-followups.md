@@ -465,17 +465,21 @@ as #962 corrected it.
 - Cap-off (item 7c): `size_cap_lines` and `size_cap_files` accept no off
   value (`internal/grants/parse.go:258-261`); add an explicit off with the
   growth gate following it.
-- **The train cannot land a PR that is behind its base when GitHub's compare
-  returns no patch for one of its files** (a large changed file): it refuses
-  with `rebase_patch_changed`, "the update could not be proved: GitHub
-  returned an incomplete diff", before the update
-  (`internal/mergetrain/train.go:702-709`, `ErrIncompleteDiff`). Seen on
-  #991 on 2026-11-12: a 110 KB note with 962 changed lines, for which `gh
-  api repos/<owner>/<repo>/compare/<base>...<head>` gave the file no
-  `patch`. The fix: the train checks the API diff against the compare's file
-  set and line counts itself, in place of the JSON `patch` test. Named for
-  3.3.0. Until it lands the lead merges nothing into the base under an open
-  seat PR unless that compare shows a patch for every file.
+- **done (the note docs/v3-spike/330-train-compare-proof/README.md):** the
+  train could not land a PR that was behind its base when GitHub's compare
+  returned no patch for one of its files (#991, 2026-11-12: a 110 KB note
+  with 962 changed lines); it refused with `rebase_patch_changed` before
+  the update. The train now checks the API diff against the compare's file
+  set and line counts itself, in place of the JSON `patch` test. A binary
+  file, an empty file and a rename with no change, for which the compare
+  gives no patch either, are accepted on their section's header.
+- **The compare proof does not prove every header line is present.** A diff
+  with one header line removed from its middle is accepted by the train's
+  check in 121 of 3,739 measured removals, and in 84 of them the patch id
+  differs; in 72 of the 84 the line is a `---` or `+++` line. No cut
+  produces such a diff. The next sentence to measure for the rule: "a
+  section with a hunk holds its `---` and `+++` lines". Source: the note
+  docs/v3-spike/330-train-compare-proof/README.md.
 
 ### Control bytes and status text
 
