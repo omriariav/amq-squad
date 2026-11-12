@@ -1,6 +1,6 @@
 # 3.3.0 S1-3: state-contract reason words
 
-The words test now reads the wait and block reasons from `pi/test/state-contract.json` and checks them against `WAIT_WORDS` and `BLOCK_WORDS` in both directions. The maps that retain their Go-source scans are `LAUNCH_WORDS`, `SEAT_DOING`, `TRAIN_RULE_WORDS`, `TRAIN_KIND_WORDS`, `RELAY_WORDS`, `DECISION_WORDS` and `ROUTINE_DECISIONS`, and `WARNING_WORDS`. The dispatched TIP and this tree's HEAD are both `e1dceeec784c9d756ec8a7938c0503c51161abae`. The named lists are at `pi/test/words.test.ts:53-66`, the state-contract reader at `pi/test/words.test.ts:68-82`, the bidirectional comparison at `pi/test/words.test.ts:84-110`, the retained Go-source-map test at `pi/test/words.test.ts:177-215`, the three new contract tests at `pi/test/words.test.ts:217-239`, and the claim-refusal contract check at `pi/test/words.test.ts:241-253`.
+The words test now reads the wait and block reasons from `pi/test/state-contract.json` and checks them against `WAIT_WORDS` and `BLOCK_WORDS` in both directions. The maps that retain their Go-source scans are `LAUNCH_WORDS`, `SEAT_DOING`, `TRAIN_RULE_WORDS`, `TRAIN_KIND_WORDS`, `RELAY_WORDS`, `DECISION_WORDS` and `ROUTINE_DECISIONS`, and `WARNING_WORDS`. The dispatched TIP and this tree's HEAD at the precheck are both `e1dceeec784c9d756ec8a7938c0503c51161abae`. The named lists are at `pi/test/words.test.ts:53-66`, the state-contract reader at `pi/test/words.test.ts:68-82`, the bidirectional comparison at `pi/test/words.test.ts:84-110`, the retained Go-source-map test at `pi/test/words.test.ts:177-215`, the three new contract tests at `pi/test/words.test.ts:217-239`, and the claim-refusal contract check at `pi/test/words.test.ts:241-253`.
 
 ## The two lists
 
@@ -1551,4 +1551,3 @@ $ git status --porcelain -- pi/test/state-contract.json pi/extensions/lib/words.
 `git status --porcelain --untracked-files=all` printed ` M pi/test/words.test.ts` and `?? docs/v3-spike/330-s1-3-words/README.md`, the two declared paths.
 
 `git diff --stat` exited 0 and reported `pi/test/words.test.ts`, with 90 insertions and 53 deletions in one file.
-
