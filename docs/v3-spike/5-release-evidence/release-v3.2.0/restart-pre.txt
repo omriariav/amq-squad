@@ -1,0 +1,60 @@
+pre 2026-11-12T11:10:54Z
+build: amq-squad v3.2.0; installed: amq-squad v3.2.0-rc.2
+--- processes with a cwd in a seat worktree (the standing lead check)
+  PID  PPID  ELAPSED COMMAND
+19920 19361 05:38:49 <home>/.nvm/versions/node/v22.21.1/bin/node <home>/.npm/_npx/15c61037b1978c83/node_modules/chrome-devtools-mc
+19925 19386 05:38:49 <home>/.nvm/versions/node/v22.21.1/bin/node <home>/.npm/_npx/15c61037b1978c83/node_modules/chrome-devtools-mc
+18451  9221 05:38:52 /opt/homebrew/bin/codex --model gpt-5.6-terra -c model_reasoning_effort=medium --sandbox workspace-write --ask-for-appr
+18457 18451 05:38:52 <home>/go/bin/amq --no-update-check wake --me dev --root <home>/code/amq-squad/.agent-mail/v31 --baseline-exi
+18780 18451 05:38:50 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl
+18781 18451 05:38:50 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl
+18787 18451 05:38:50 npm exec chrome-devtools-mcp@latest --browserUrl=http://localhost:9222
+19361 18787 05:38:50 chrome-devtools-mcp
+20260 18451 05:38:44 /opt/homebrew/Caskroom/codex/0.166.0/bin/codex-code-mode-host
+18458  9221 05:38:52 /opt/homebrew/bin/codex --model gpt-5.6-sol -c model_reasoning_effort=high --sandbox workspace-write --ask-for-approval
+18463 18458 05:38:52 <home>/go/bin/amq --no-update-check wake --me reviewer --root <home>/code/amq-squad/.agent-mail/v31 --baselin
+18829 18458 05:38:50 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl
+18831 18458 05:38:50 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl
+18835 18458 05:38:50 npm exec chrome-devtools-mcp@latest --browserUrl=http://localhost:9222
+19386 18835 05:38:50 chrome-devtools-mcp
+20223 18458 05:38:45 /opt/homebrew/Caskroom/codex/0.166.0/bin/codex-code-mode-host
+--- status
+Squad v31 (root <home>/code/amq-squad/.agent-mail/v31): 1 needs you, 1 working, 1 ready, 180 inactive
+--- ledgers before (names, sizes, times; no content)
+-rw-------@ 1 omri  staff  230 12 נוב׳ 13:10 <home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/scheduler/exits.json
+
+<home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/commits:
+total 640
+drwx------@ 16 omri  staff     512 12 נוב׳ 11:45 .
+drwx------@ 16 omri  staff     512 12 נוב׳ 13:10 ..
+-rw-------@  1 omri  staff   10852 11 נוב׳ 02:56 dev.json
+-rw-r--r--@  1 omri  staff       0 30 אוק׳ 16:43 dev.lock
+-rw-------@  1 omri  staff    4348 12 נוב׳ 10:59 dev2.json
+-rw-r--r--@  1 omri  staff       0 12 נוב׳ 07:32 dev2.lock
+-rw-------@  1 omri  staff     770 30 אוק׳ 16:40 qa.json
+-rw-r--r--@  1 omri  staff       0 30 אוק׳ 16:40 qa.lock
+-rw-------@  1 omri  staff  290767 12 נוב׳ 11:45 reviewer.json
+-rw-r--r--@  1 omri  staff       0 30 אוק׳ 16:43 reviewer.lock
+-rw-------@  1 omri  staff    3959 30 אוק׳ 16:39 scribe.json
+-rw-r--r--@  1 omri  staff       0 30 אוק׳ 15:58 scribe.lock
+-rw-------@  1 omri  staff    1969 30 אוק׳ 16:15 senior-dev.json
+-rw-r--r--@  1 omri  staff       0 30 אוק׳ 16:05 senior-dev.lock
+-rw-------@  1 omri  staff     794 10 נוב׳ 00:40 sonnet-dev.json
+-rw-r--r--@  1 omri  staff       0 10 נוב׳ 00:40 sonnet-dev.lock
+
+<home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/ledger:
+total 74816
+drwx------@  7 omri  staff       224 12 נוב׳ 07:32 .
+drwx------@ 16 omri  staff       512 12 נוב׳ 13:10 ..
+-rw-------@  1 omri  staff     15906  6 נוב׳ 06:51 cto.jsonl
+-rw-------@  1 omri  staff    428677 12 נוב׳ 07:32 dev.jsonl
+-rw-------@  1 omri  staff   1830329 12 נוב׳ 11:36 dev2.jsonl
+-rw-------@  1 omri  staff     37134  1 נוב׳ 18:22 lead.jsonl
+-rw-------@  1 omri  staff  35251909 12 נוב׳ 11:47 reviewer.jsonl
+   21654 <home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/scheduler/decisions.jsonl
+     181 <home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/routing/decisions.jsonl
+   21835 total
+--- the lead and its scheduler
+  PID  PPID STARTED                      COMMAND
+15222  9221 נוב׳ 11 2026 15:53:57    <home>/go/bin/amq-squad lead --team
+15228 15222 נוב׳ 11 2026 15:53:57    <home>/go/bin/amq-squad scheduler run --project <home>/code/amq-squad --lead-pool pi:ollama/qwen3.6:27b

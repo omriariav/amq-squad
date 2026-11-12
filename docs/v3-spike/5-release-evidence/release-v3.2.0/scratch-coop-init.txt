@@ -1,0 +1,12 @@
+Initialized co-op mode:
+  Root: .agent-mail
+  Agents: claude, codex, user
+  Created: .amqrc
+  Updated: .gitignore
+
+Next steps:
+  Terminal 1: amq coop exec claude
+  Terminal 2: amq coop exec codex
+  (handle = command basename; custom handle: amq coop exec --me <handle> <command>)
+
+Tip: eval "$(amq shell-setup)" to add co-op aliases to your shell

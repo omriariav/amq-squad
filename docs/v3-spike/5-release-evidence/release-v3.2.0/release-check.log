@@ -1,0 +1,18 @@
+release metadata matches v3.2.0
+current docs and generated team rules route to wizard/cli/orchestrator
+......
+----------------------------------------------------------------------
+Ran 6 tests in 0.003s
+
+OK
+<home>/scratch-v320/scripts/test_release_version_forms.py:192: ResourceWarning: unclosed file <_io.TextIOWrapper name='<home>/scratch-v320/scripts/../.github/workflows/ci.yml' mode='r' encoding='utf-8'>
+  ci = open(os.path.join(HERE, "..", ".github", "workflows", "ci.yml"), encoding="utf-8").read()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+<home>/scratch-v320/scripts/test_release_version_forms.py:176: ResourceWarning: unclosed file <_io.TextIOWrapper name='<home>/scratch-v320/scripts/../Makefile' mode='r' encoding='utf-8'>
+  lines = open(os.path.join(HERE, "..", "Makefile"), encoding="utf-8").read().splitlines()
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.004s
+
+OK
