@@ -211,6 +211,17 @@ lead-screen-2026-11-12.txt shows the relaunched reviewer seat as "waiting: on yo
 
 lead-screen-2026-11-12.txt, line 33: "! the gate store could not be read; its error is below the line". Line 39 is the status warning for a skipped legacy record: "gate store: gate clear-0a227ca8d88dc97c65c540a4d0fa18a7 is a legacy quarantine_clear gate (a kind this build no longer carries); skipped". This is README.md's Things seen 3. The fix is #966 (t162), merged as 8d66f50e58a5d8c0635cd0d44d7dc21cdf54b488, which is not an ancestor of the v3.2.0-rc.2 tag. The installed binary is the rc.2 build (the eleven binary.txt files, the last at 2026-11-12T08:18:03Z), so the screen prints the rc.2 words.
 
+### 4. A seat refused at its next prepare after a task branch cut from a later tip ended with no commit
+
+Seen on 2026-11-12, after the copy of the decision log, on the installed rc.2 build. Not one of R3's four classes. Added to this record by #985.
+
+- The reviewer seat was launched with the base 1a3db2f13466502a8de7948fc7e1fa07574843d9 (its launch record's `base`). Two commits later on v3 (#982 and #983, `git rev-list --count` 2), task t178's second attempt was granted to the seat at 2026-11-12T09:45:40Z; at the block, 09:47:27Z, the seat's worktree was on `seat/reviewer-t178` at 91081d70ea66e5c6c0f7747935328fc1467909a9, origin/v3's tip (the block's text: "actual clean HEAD 91081d70"), and the worktree held no change.
+- The next task for the seat, t179, was refused at prepare: decision log line 21653, `seat_prepare_failed` at 2026-11-12T09:51:20.543677Z, "the commit ledger of seat reviewer: seat_head_detached_unmerged: seat reviewer: the worktree's branch seat/reviewer-t178 holds an unrecorded commit 91081d70ea66e5c6c0f7747935328fc1467909a9; the harness never discards a local commit". Line 21654 is `seat_prepare_suppressed` for the same reason.
+- The head is not a local commit: at 09:54:06Z `git merge-base --is-ancestor 91081d70ea66 origin/v3` exits 0, `git rev-list --count 1a3db2f1..91081d70` prints 2, and the seat's worktree holds no change (`git status --porcelain --untracked-files=all` prints 0 lines).
+- The check, at the v3.2.0-rc.2 tag: `internal/seatcommit/commit.go:679-697`. On a task branch the head counts as recorded when it equals the launch record's base (`restTarget`, `:784-790`) or is a commit of the seat's ledger; the clean refuses when `git rev-list` from that base to the head is not empty and the head is not recorded. It does not ask whether the head is on the remote branch.
+- By the check's code, the condition is: a seat whose task branch was cut from a tip later than the seat's launch base, and whose attempt ends with no commit, is refused at its next prepare with `seat_head_detached_unmerged`.
+- Not measured: whether a relaunch clears it; a cancel or an expiry in place of the block.
+
 ## What this PR corrects
 
 Three corrections ride with this record, each ruled by the plan reviewer.

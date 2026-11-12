@@ -355,6 +355,19 @@ as #962 corrected it.
 - A seat launch can hang indefinitely while fetching from origin because the
   fetch has no time limit. Reuse the bounded runner already provided by
   `seatcommit`.
+- `lead --team` in a repository where `amq coop init` has not run is refused
+  at the roster launch with `base_root_unauthorized`; today the first host
+  step (`amq coop init`, README.md:229-230) has to be run first, and `up`
+  runs it itself. Source: the 3.2.0 notes, Known limit 33.
+- Not on this list (3.3.0): a Claude seat's launch that fails with the bare
+  code `launch_action_required` and no other reason text in the decision
+  log, cause not established (the 3.2.0 notes, Known limit 34). It is a
+  Claude-lane item of the 3.3.0 plan.
+- A seat whose task branch was cut from a tip later than the seat's launch
+  base, and whose attempt ends with no commit, is refused at its next prepare
+  with `seat_head_detached_unmerged`; the fix: a head reachable from the
+  remote branch is not a local commit. Source: the 3.2.0 notes, Known limit
+  35.
 
 ### The merge train
 
