@@ -46,7 +46,7 @@ Met, by these counts.
 2. A lease lost under steady activity. Decisions of kind `lease_expired`: 0 of 97. The whole log holds 11, each before line 21544. Decisions whose kind or reason contains `expired`: 0 of 97. Each of the fifteen tasks t162 to t176 has one attempt in the task store, with outcome `completed`.
 3. A control byte on the screen. Captures of the lead's pane on two days: two on the first, one on the second.
    - 2026-11-11: lead-first-screen.txt (13:54:07Z) and lead-screen-30s.txt (13:54:25Z), both in this folder since #965: 1428 bytes each, 0 ESC bytes, 0 other C0 bytes apart from the line feed, 0 DEL bytes, 0 C1 characters.
-   - 2026-11-12: lead-screen-2026-11-12.txt (07:04:11Z by the lead session's note and the file's time): 3773 bytes, 42 lines, 0 ESC bytes, 0 other C0 bytes apart from the line feed, 0 DEL bytes, 0 C1 characters.
+   - 2026-11-12: lead-screen-2026-11-12.txt (07:04:11Z by the lead session's note and the file's time): 3768 bytes (3773 as captured, before the placeholder), 42 lines, 0 ESC bytes, 0 other C0 bytes apart from the line feed, 0 DEL bytes, 0 C1 characters.
    - A second file of the same pane, written at 2026-11-12T07:04:03Z and kept in the lead session's scratch (lead-screen-2026-11-12.raw.txt, 3892 bytes), holds 21 ESC bytes. Each of the 21 starts a sequence of the form ESC `[` digits `m`. It holds 0 other C0 bytes apart from the line feed and 0 C1 characters. It is not proposed for this folder.
 4. A train run ended by an escape byte. Eleven real runs, eleven with status `merged`. The 44 files of the eleven train directories that hold a run's output (dry.json, real.json, dry.err, real.err) hold 0 ESC bytes and 0 lines with the JSON escape `u001b`. The 22 `.err` files are 0 bytes each.
 
@@ -197,7 +197,7 @@ dev2 came up. Lines 21623 to 21640 (18 lines) hold 0 occurrences of `binding_pre
 
 A screen observation of 2026-11-12, recorded as seen. Cause not read.
 
-- The lead's screen (lead-screen-2026-11-12.txt, 2026-11-12T07:04:11Z; 3773 bytes, 42 lines, 0 ESC, 0 other C0, 0 C1, 0 DEL) showed "! seat dev2 asked for a permission 1m45s ago this turn; if it is not moving, check its pane" and, below the rule, "dev2: seat_stalled_at_dialog: a harness dialog has been open since 2026-11-12T07:02:25Z (1m45s); the seat waits at it and AMQ holds its doorbell".
+- The lead's screen (lead-screen-2026-11-12.txt, 2026-11-12T07:04:11Z; 3768 bytes (3773 as captured, before the placeholder), 42 lines, 0 ESC, 0 other C0, 0 C1, 0 DEL) showed "! seat dev2 asked for a permission 1m45s ago this turn; if it is not moving, check its pane" and, below the rule, "dev2: seat_stalled_at_dialog: a harness dialog has been open since 2026-11-12T07:02:25Z (1m45s); the seat waits at it and AMQ holds its doorbell".
 - By the lead session's note: at 2026-11-12T07:04:25Z t175's lease read renewed_at 07:03:22Z, renewals 13, last_renewal activity, so the lease was renewed after the dialog's stated start; at 2026-11-12T07:04:30Z the seat's pane (a read-only capture of pane %152) showed "Working (20m 24s)", its status line "Approve for me", and no dialog. By the same note, nothing was typed into any pane.
 - dev2's hook ledger agrees on the renewal: its line seq 60, at 2026-11-12T07:03:22.430557Z, carries `lease_renewal` `renewed`, and it is the 13th such line from t175's grant.
 - The decision log holds 0 lines containing `stall` or `dialog`.
@@ -213,18 +213,90 @@ lead-screen-2026-11-12.txt, line 33: "! the gate store could not be read; its er
 
 ## What this PR corrects
 
-Three corrections ride with this record, each ruled by the plan reviewer and recorded in the lead session's approvals record.
+Three corrections ride with this record, each ruled by the plan reviewer.
 
-1. `docs/v3-spike/320-gate-legacy-words/README.md:25` (#966's note). Two sentences were wider than the rows: "It never prints a legacy record's gate id." and "The count is independent of a gate alert or read failure." They now read: "It never prints the gate id of a legacy warning carrying the new prefix (S-legacy-3); an old-prefix line still prints it (S-old). The count is printed with a read failure (S-both) and, by the code at `pi/extensions/lib/screen.ts:347-349` and the lead's probe, with a gate alert; no row asserted the alert case in v3.2.0 (the row S-alert, added on v3 afterwards, #982)." The cite is of 8d66f50e58a5d8c0635cd0d44d7dc21cdf54b488, this branch's tip before this PR. The lead's probe (a gate alert and two legacy warnings: the alert line above the rule, the alert's record and "2 legacy gate records skipped" below it) was run at #966's gate on 2026-11-11; its output stays in the lead session's scratch.
-2. `docs/v3-followups.md`, the entry "The AMQ pin". The rc.2 notes (`docs/v3.2.0-release-notes.md:629`, published with the tag and not edited) say AMQ v0.139.0 removed `launchapi.Inspect`, "which the seat liveness check calls". No command reaches the two lines that name it (`internal/cli/liveness.go:209`, `:247`): `deadcode ./...` on 8d66f50e58a5d8c0635cd0d44d7dc21cdf54b488 reports their functions unreachable from main (the lead's run of 2026-11-11, by the approvals record). The followups entry now says so. The 3.2.0 notes carry the corrected sentence under "Corrections to the rc.2 notes".
+1. `docs/v3-spike/320-gate-legacy-words/README.md:25` (#966's note). Two sentences were wider than the rows: "It never prints a legacy record's gate id." and "The count is independent of a gate alert or read failure." They now read: "It never prints the gate id of a legacy warning carrying the new prefix (S-legacy-3); an old-prefix line still prints it (S-old). The count is printed with a read failure (S-both) and, by the code at `pi/extensions/lib/screen.ts:347-349`, with a gate alert; no row asserted the alert case in v3.2.0 (the row S-alert, #982 on v3, added afterwards)." The cite is of 8d66f50e58a5d8c0635cd0d44d7dc21cdf54b488, this branch's tip before this PR.
+2. `docs/v3-followups.md`, the entry "The AMQ pin". The rc.2 notes (`docs/v3.2.0-release-notes.md:629`, published with the tag and not edited) say AMQ v0.139.0 removed `launchapi.Inspect`, "which the seat liveness check calls". The line that names it is `internal/cli/liveness.go:209` (`var launchapiInspect = launchapi.Inspect`) and the call through it is `:247`, which names `launchapi.InspectRequestV1`, inside `launchapiSessionInspectUncached` (`:246`). `deadcode` reports that function and nine others of the file unreachable from main (measurement 3 below). The followups entry now says so, and that #969 removed the lines on v3 while this branch keeps them, where they build at the pin v0.116.2. The 3.2.0 notes carry the corrected sentence under "Corrections to the rc.2 notes".
 3. The row the first correction names. #966's note had no row for the count beside a gate alert. That row is #982 (t176) on v3, the task that also meets R4. It is 3.2.x content for v3 and is not part of the 3.2.0 release.
+
+## Three measurements the 3.2.0 notes cite
+
+Each is the lead's run, kept here as the run's own record. The first two were asked by the plan reviewer at #972's merge; the third is the run correction 2 rests on.
+
+### 1. `up` in a repository where `amq coop init` has not run
+
+The command, run by the scratch script whose record is measure-up-noinit-run.txt: `amq-squad up --skip-install --wait 150s --json`, the v3.2.0-rc.2 binary, host amq 0.116.2, in a scratch repository with no `.amqrc` and no `.agent-mail`. From the record:
+
+```text
+start 2026-11-11T18:28:16Z
+amq-squad: amq-squad v3.2.0-rc.2 at /private/tmp/upmup-codex-noinit.ZL1c3o/bin/amq-squad
+amq: 0.116.2 at <home>/go/bin/amq
+before up: .amqrc absent; .agent-mail absent
+up exit=0
+after up: .amqrc {  "root": ".agent-mail"}
+doctor after up exit=0
+roster decision seen=yes at 2026-11-11T18:28:22Z (after about 2 s)
+end 2026-11-11T18:28:52Z
+```
+
+The run's decision log, measure-up-noinit-decisions.jsonl, holds 5 lines, in order: `session_created`, `scheduler_started`, `roster_launched`, `seat_up`, `decision_socket_open`. The first names what `up` ran: `amq coop init` and `amq session create`. So the documented route (`up`) creates the session itself. The limit the 3.2.0 notes state is of the direct route only: `lead --team` in a repository where `amq coop init` has not run creates no session. No run of that direct route is in this folder; the sentence in the notes is the plan reviewer's, from #972's gate.
+
+### 2. A Claude seat with a token file of the right shape
+
+The run's record is measure-claude-token-run.txt: the v3.2.0-rc.2 binary, host amq 0.116.2, a scratch HOME holding a token file with a made-up value. From the record:
+
+```text
+start 2026-11-11T18:29:30Z
+amq-squad: amq-squad v3.2.0-rc.2 at /private/tmp/tokmtok-rc2-amq0116.aKQwBq/bin/amq-squad
+amq: 0.116.2 at <home>/go/bin/amq
+provider: <home>/.local/bin/claude 2.1.319 (Claude Code)
+amq coop init exit=0
+amq session create exit=0
+scratch token file: mode=600 size=39; dir mode=700
+doctor exit=0
+roster decision seen=yes at 2026-11-11T18:29:33Z (after about 2 s)
+end 2026-11-11T18:30:09Z
+```
+
+Its decision log, measure-claude-token-decisions.jsonl, as kind, stage, reason code and reason:
+
+```text
+{"kind":"scheduler_started","stage":null,"reason_code":null,"reason":"incarnation 34159ed15cca"}
+{"kind":"roster_launch_failed","stage":null,"reason_code":null,"reason":"the roster launch failed at stage apply_failed, reason launch_action_required: launch_action_required"}
+{"kind":"seat_launch_failed","stage":"apply_failed","reason_code":"launch_action_required","reason":"launch_action_required"}
+{"kind":"scheduler_stopped","stage":null,"reason_code":null,"reason":"the roster launch failed at stage apply_failed, reason launch_action_required: launch_action_required"}
+```
+
+The launch failed at stage `apply_failed` with the reason code `launch_action_required` and no other reason text. The cause was not established. A second run of the same script against the head of #972 with AMQ 0.140.0 gave the same stage and code by the lead session's record; its files are not in this folder.
+
+### 3. `deadcode` on this branch's tip
+
+`deadcode ./...` (golang.org/x/tools/cmd/deadcode) in a worktree at 8d66f50e58a5d8c0635cd0d44d7dc21cdf54b488, run on 2026-11-11: exit 0, 235 lines. deadcode-liveness.txt is its ten lines for `internal/cli/liveness.go`:
+
+```text
+internal/cli/liveness.go:52:24: unreachable func: agentLiveness.Live
+internal/cli/liveness.go:65:6: unreachable func: classifyAgentLivenessFromDisk
+internal/cli/liveness.go:180:6: unreachable func: launchapiObservationForHandle
+internal/cli/liveness.go:201:6: unreachable func: launchapiObservationIsNotable
+internal/cli/liveness.go:214:6: unreachable func: launchapiSessionInspect
+internal/cli/liveness.go:246:6: unreachable func: launchapiSessionInspectUncached
+internal/cli/liveness.go:282:6: unreachable func: applyLaunchapiInspectionFloor
+internal/cli/liveness.go:318:6: unreachable func: launchapiAppendObservationDetail
+internal/cli/liveness.go:338:6: unreachable func: launchapiNoLaunchRecordDetail
+internal/cli/liveness.go:351:6: unreachable func: classifyAgentLivenessForRollup
+```
 
 ## The files
 
-Beside this note, each passed through `go run ./scripts/redact-evidence` (it replaced no value, and `-check` is clean):
+Beside this note, each passed through `go run ./scripts/redact-evidence` (it replaced no value, and `-check` is clean). A host path under the home directory is replaced by hand with the placeholder `<home>`; the count of replacements is beside each file that had one. After it the eight files and this note hold 0 lines with a home path.
 
-- decisions-soak.jsonl: 97 lines, 13576 bytes, sha256 88bfeccf40d44ae8464925c00fa4f3cace23cf02efa8892ce12c4962a8d70f20. Lines 21544 to 21640 of the decision log's copy. One of its lines (`decision_socket_open`) holds a host path.
-- soak-task-table.md: 17 lines, 2116 bytes. The table under "The tasks": rows t162 to t174 as the lead session's table script printed them from its extract of 2026-11-12T07:00:22Z, rows t175 and t176 from the task store read after #982 merged.
-- lead-screen-2026-11-12.txt: 42 lines, 3773 bytes, sha256 3fb101f67bab1f2b3cadbd7237e98bc077016854edb65cd17f12ace2a90ebf41. One of its lines holds a host path.
+- decisions-soak.jsonl: 97 lines, 13571 bytes, sha256 a0fd1833d3c7f6b6f7a3fbb378f0ee62df18dc3443dc9578f4059375307f3f8e. Lines 21544 to 21640 of the decision log's copy. 1 placeholder.
+- soak-task-table.md: 17 lines, 2116 bytes, sha256 a077f49a4dc5d8017c51b69d629235706d4ad8334b847083e989aa9a7ba3baeb. The table under "The tasks".
+- lead-screen-2026-11-12.txt: 42 lines, 3768 bytes, sha256 3c9db393b56484189ef1af00a6800076086db8556cf5d006c02bc4f317522e25. The lead's pane at 2026-11-12T07:04:11Z. 1 placeholder.
+- measure-up-noinit-run.txt: 26 lines, 1462 bytes, sha256 8f7cd5f26b5791fb4ac0eece9627c92ad05bd87511584457da774a64eafe5e4e. Measurement 1's record. 1 placeholder.
+- measure-up-noinit-decisions.jsonl: 5 lines, 665 bytes, sha256 38bc4f7794922db197307a1b2cac5b96055e2a3e961852c8f8a1e98c0086974f. Measurement 1's decision log.
+- measure-claude-token-run.txt: 26 lines, 1275 bytes, sha256 0d313aae4316f9d89acb58a0372e53e80d93ec79e49d9aa4d3aa1b87ed93d11e. Measurement 2's record. 2 placeholders.
+- measure-claude-token-decisions.jsonl: 4 lines, 660 bytes, sha256 103041b4397d4722f99da8a63e58acbad3d5cbdfca082cc95ab45b9b0d140d35. Measurement 2's decision log.
+- deadcode-liveness.txt: 10 lines, 788 bytes, sha256 a287d2d29c21cbf495a3ed9291e74c3bd71cacedd3cd86eca39b9c015083e293. Measurement 3's ten lines.
 
-Already in this folder and named above: README.md, lead-first-screen.txt, lead-screen-30s.txt. Not copied: the full copy of the decision log (21640 lines, 4566220 bytes), the task store's answers, the eleven train directories, the lead session's approvals record and notes.
+Already in this folder and named above: README.md, lead-first-screen.txt, lead-screen-30s.txt. Not copied: the full copy of the decision log (21640 lines, 4566220 bytes), the task store's answers, the eleven train directories, the other captures of the two measurement runs, the rest of deadcode's output, the lead session's approvals record and notes.

@@ -546,10 +546,12 @@ as #960 corrected it.
   sentence on the supported pin.
   Corrected 2026-11-12 (the rc.2 soak's record): the rc.2 notes' sentence
   says the seat liveness check calls `launchapi.Inspect`. It does not: the
-  two lines that name it (`internal/cli/liveness.go:209`, `:247`) are in a
-  liveness classifier that no command reaches (`deadcode` on 8d66f50e). The
-  build fails at a later pin until those lines are removed; removing them is
-  the 3.3.0 item. The 3.2.0 notes carry the corrected sentence.
+  line that names it (`internal/cli/liveness.go:209`) and the call through it
+  (`:247`, which names `launchapi.InspectRequestV1`) are in a liveness
+  classifier that no command reaches (`deadcode` on 8d66f50e; the rc.2
+  soak's record has the run). They were removed on v3 by #969; the 3.2 line
+  keeps them, and at its pin v0.116.2 they build. The 3.2.0 notes carry the
+  corrected sentence.
 
 ### Evidence tooling
 

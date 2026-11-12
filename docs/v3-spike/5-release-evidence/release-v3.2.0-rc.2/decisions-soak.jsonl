@@ -9,7 +9,7 @@
 {"at":"2026-11-11T13:53:59.12337Z","kind":"seat_clean_superseded","task_id":"t58","seat":"reviewer","reason":"seat reviewer holds a later lease (t59); the queued item for t58 attempt 1 is dropped, and nothing is closed or cleaned for it"}
 {"at":"2026-11-11T13:53:59.126255Z","kind":"seat_clean_superseded","task_id":"t64","seat":"dev","reason":"seat dev holds a later lease (t70); the queued item for t64 attempt 2 is dropped, and nothing is closed or cleaned for it"}
 {"at":"2026-11-11T13:53:59.129387Z","kind":"roster_incomplete","seat":"dev2","reason":"adopted dev,reviewer; no launch: AMQ refuses a fresh seat into the present binding (binding_present_without_resumable_conversation), so a task for a missing seat's pool blocks for the lead's relaunch (amq-squad scheduler relaunch)"}
-{"at":"2026-11-11T13:53:59.133623Z","kind":"decision_socket_open","reason":"/Users/omri/code/amq-squad/.agent-mail/v31/extensions/amq-squad/launch/scheduler-decide.sock"}
+{"at":"2026-11-11T13:53:59.133623Z","kind":"decision_socket_open","reason":"<home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/launch/scheduler-decide.sock"}
 {"at":"2026-11-11T14:05:35.731785Z","kind":"ledger_layout_migrated","ledger_kind":"commits","seat":"reviewer","seq":454,"reason":"legacy commit ledger migrated to raw-bytes-v1 at link 454"}
 {"at":"2026-11-11T14:05:36.252341Z","kind":"dispatched","task_id":"t162","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
 {"at":"2026-11-11T14:09:59.819561Z","kind":"lease_renewed","task_id":"t162","seat":"reviewer","reason":"first activity renewal of attempt 1"}

@@ -1,0 +1,26 @@
+start 2026-11-11T18:28:16Z
+root: /private/tmp/upmup-codex-noinit.ZL1c3o
+amq-squad: amq-squad v3.2.0-rc.2 at /private/tmp/upmup-codex-noinit.ZL1c3o/bin/amq-squad
+amq: 0.116.2 at <home>/go/bin/amq
+amq-remote: amq-remote 0.116.2; amq-owner-sign: 0.116.2
+provider: /opt/homebrew/bin/codex codex-cli 0.166.0
+live tmux sessions before: amq-amq-squad-f42a4d5279-v31-c7acc1c7 gws-ollama-session memory-wpp squad-lead-amq-squad-f42a4 
+before up: .amqrc absent; .agent-mail absent
+hold session exit=0
+up exit=0
+after up: .amqrc {  "root": ".agent-mail"}
+doctor after up exit=0
+roster decision seen=yes at 2026-11-11T18:28:22Z (after about 2 s)
+capture 2026-11-11T18:28:47Z
+amq-proj-7b12f08aee-upm1-30802fa2 dev %2 dead=0 status= cmd=codex pid=43219 cwd=/private/tmp/upmup-codex-noinit.ZL1c3o/proj/.worktrees/dev
+hold zsh %0 dead=0 status= cmd=sleep pid=43015 cwd=/private/tmp/upmup-codex-noinit.ZL1c3o
+squad-lead-proj-7b12f amq-squad %1 dead=0 status= cmd=amq-squad pid=43165 cwd=/private/tmp/upmup-codex-noinit.ZL1c3o/proj
+status exit=1
+processes naming the root while live: 5
+tmux server pid: 43014
+processes under the scratch tmux server while live: 6
+processes naming the root after kill-server: 0
+processes of the scratch tmux tree still alive after kill-server: 0
+live tmux sessions after: amq-amq-squad-f42a4d5279-v31-c7acc1c7 gws-ollama-session memory-wpp squad-lead-amq-squad-f42a4 
+end 2026-11-11T18:28:52Z
+owner Codex home files unchanged (mtime and size): yes
