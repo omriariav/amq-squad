@@ -219,7 +219,7 @@ Three corrections ride with this record, each ruled by the plan reviewer.
 2. `docs/v3-followups.md`, the entry "The AMQ pin". The rc.2 notes (`docs/v3.2.0-release-notes.md:629`, published with the tag and not edited) say AMQ v0.139.0 removed `launchapi.Inspect`, "which the seat liveness check calls". The line that names it is `internal/cli/liveness.go:209` (`var launchapiInspect = launchapi.Inspect`) and the call through it is `:247`, which names `launchapi.InspectRequestV1`, inside `launchapiSessionInspectUncached` (`:246`). `deadcode` reports that function and nine others of the file unreachable from main (measurement 3 below). The followups entry now says so, and that #969 removed the lines on v3 while this branch keeps them, where they build at the pin v0.116.2. At this PR's head the notes file is still rc.2's; the release PR for 3.2.0 puts the corrected sentence into it under "Corrections to the rc.2 notes".
 3. The row the first correction names. #966's note had no row for the count beside a gate alert. That row is #982 (t176) on v3, the task that also meets R4. It is 3.2.x content for v3 and is not part of the 3.2.0 release.
 
-## Three measurements the 3.2.0 notes cite
+## Three measurements for the 3.2.0 notes
 
 Each is the lead's run, kept here as the run's own record. The first two were asked by the plan reviewer at #972's merge; the third is the run correction 2 rests on.
 
@@ -239,7 +239,7 @@ roster decision seen=yes at 2026-11-11T18:28:22Z (after about 2 s)
 end 2026-11-11T18:28:52Z
 ```
 
-The run's decision log, measure-up-noinit-decisions.jsonl, holds 5 lines, in order: `session_created`, `scheduler_started`, `roster_launched`, `seat_up`, `decision_socket_open`. The first names what `up` ran: `amq coop init` and `amq session create`. So the documented route (`up`) creates the session itself. The limit the 3.2.0 notes state is of the direct route only, measurement 1b.
+The run's decision log, measure-up-noinit-decisions.jsonl, holds 5 lines, in order: `session_created`, `scheduler_started`, `roster_launched`, `seat_up`, `decision_socket_open`. The first names what `up` ran: `amq coop init` and `amq session create`. So the documented route (`up`) creates the session itself. The limit is of the direct route only, measurement 1b; the release PR for 3.2.0 writes it into the notes, which at this PR's head are still rc.2's.
 
 ### 1b. `lead --team` in a repository where `amq coop init` has not run
 
@@ -325,6 +325,6 @@ Beside this note, each passed through `go run ./scripts/redact-evidence` (it rep
 - deadcode-liveness.txt: 10 lines, 788 bytes, sha256 a287d2d29c21cbf495a3ed9291e74c3bd71cacedd3cd86eca39b9c015083e293. Measurement 3's ten lines.
 - measure-lead-noinit-run.txt: 19 lines, 872 bytes, sha256 fd86ba595567ee25b3004832d11290c680eb4088794249ab8d93036a1a32b865. Measurement 1b's record. 1 placeholder.
 - measure-lead-noinit-decisions.jsonl: 4 lines, 676 bytes, sha256 20fd979c55ef5e5c87f39aa42fe479be7282d7f6f5facb9a35b24ab285a8fc07. Measurement 1b's decision log.
-- measure-lead-noinit-doctor.txt: 40 lines, 7923 bytes, sha256 61b26f69980ebe02c15ebbba5dcd1a06b2e598a505133490d2712aa095c55c65. Measurement 1b's `doctor` output. 9 placeholders.
+- measure-lead-noinit-doctor.txt: 40 lines, 7923 bytes, sha256 61b26f69980ebe02c15ebbba5dcd1a06b2e598a505133490d2712aa095c55c65. Measurement 1b's `doctor` output. 9 placeholders (`<home>`); its 4 `<session-flags>` and 3 `<agent>` are the tools' own printed text, not replacements.
 
 Already in this folder and named above: README.md, lead-first-screen.txt, lead-screen-30s.txt. Not copied: the full copy of the decision log (21640 lines, 4566220 bytes), the task store's answers, the eleven train directories, the other captures of the two measurement runs, the rest of deadcode's output, the lead session's approvals record and notes.
