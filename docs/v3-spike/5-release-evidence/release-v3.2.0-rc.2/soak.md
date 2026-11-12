@@ -239,7 +239,32 @@ roster decision seen=yes at 2026-11-11T18:28:22Z (after about 2 s)
 end 2026-11-11T18:28:52Z
 ```
 
-The run's decision log, measure-up-noinit-decisions.jsonl, holds 5 lines, in order: `session_created`, `scheduler_started`, `roster_launched`, `seat_up`, `decision_socket_open`. The first names what `up` ran: `amq coop init` and `amq session create`. So the documented route (`up`) creates the session itself. The limit the 3.2.0 notes state is of the direct route only: `lead --team` in a repository where `amq coop init` has not run creates no session. No run of that direct route is in this folder; the sentence in the notes is the plan reviewer's, from #972's gate.
+The run's decision log, measure-up-noinit-decisions.jsonl, holds 5 lines, in order: `session_created`, `scheduler_started`, `roster_launched`, `seat_up`, `decision_socket_open`. The first names what `up` ran: `amq coop init` and `amq session create`. So the documented route (`up`) creates the session itself. The limit the 3.2.0 notes state is of the direct route only, measurement 1b.
+
+### 1b. `lead --team` in a repository where `amq coop init` has not run
+
+The run's record is measure-lead-noinit-run.txt: the v3.2.0-rc.2 binary, host amq 0.116.2, a scratch repository with no `.amqrc`, a scratch HOME, and the lead started directly with `amq-squad lead --team -- --offline` (run on 2026-11-11 at #972's gate). From the record:
+
+```text
+start 2026-11-11T18:13:55Z
+amq-squad: amq-squad v3.2.0-rc.2 at /private/tmp/ctl972ctl-codex-noinit.6SzIqX/bin/amq-squad
+amq: 0.116.2 at <home>/go/bin/amq
+doctor exit=2
+new-session exit=0
+roster decision seen=yes at 2026-11-11T18:13:58Z (after about 2 s)
+end 2026-11-11T18:14:28Z
+```
+
+`amq-squad doctor`, run before the lead, exits 2; measure-lead-noinit-doctor.txt has 2 `fail` lines, each ending in AMQ's own answer that it "cannot determine an eligible AMQ root". The run's decision log, measure-lead-noinit-decisions.jsonl, as kind, stage, reason code and reason:
+
+```text
+{"kind":"scheduler_started","stage":null,"reason_code":null,"reason":"incarnation fb4e3a687d0d"}
+{"kind":"roster_launch_failed","stage":null,"reason_code":null,"reason":"the roster launch failed at stage prepare_refused, reason base_root_unauthorized: base_root_unauthorized"}
+{"kind":"seat_launch_failed","stage":"prepare_refused","reason_code":"base_root_unauthorized","reason":"base_root_unauthorized"}
+{"kind":"scheduler_stopped","stage":null,"reason_code":null,"reason":"the roster launch failed at stage prepare_refused, reason base_root_unauthorized: base_root_unauthorized"}
+```
+
+The roster launch is refused at stage `prepare_refused` with the reason code `base_root_unauthorized`, and the scheduler stops. With `amq coop init` run first, the same start gave `roster_launched` in three runs of three by the lead session's record of 2026-11-11 (19:05Z to 19:07Z); those runs' files are not in this folder.
 
 ### 2. A Claude seat with a token file of the right shape
 
@@ -288,7 +313,7 @@ internal/cli/liveness.go:351:6: unreachable func: classifyAgentLivenessForRollup
 
 ## The files
 
-Beside this note, each passed through `go run ./scripts/redact-evidence` (it replaced no value, and `-check` is clean). A host path under the home directory is replaced by hand with the placeholder `<home>`; the count of replacements is beside each file that had one. After it the eight files and this note hold 0 lines with a home path.
+Beside this note, each passed through `go run ./scripts/redact-evidence` (it replaced no value, and `-check` is clean). A host path under the home directory is replaced by hand with the placeholder `<home>`; the count of replacements is beside each file that had one. After it the eleven files and this note hold 0 lines with a home path.
 
 - decisions-soak.jsonl: 97 lines, 13571 bytes, sha256 a0fd1833d3c7f6b6f7a3fbb378f0ee62df18dc3443dc9578f4059375307f3f8e. Lines 21544 to 21640 of the decision log's copy. 1 placeholder.
 - soak-task-table.md: 17 lines, 2116 bytes, sha256 a077f49a4dc5d8017c51b69d629235706d4ad8334b847083e989aa9a7ba3baeb. The table under "The tasks".
@@ -298,5 +323,8 @@ Beside this note, each passed through `go run ./scripts/redact-evidence` (it rep
 - measure-claude-token-run.txt: 26 lines, 1275 bytes, sha256 0d313aae4316f9d89acb58a0372e53e80d93ec79e49d9aa4d3aa1b87ed93d11e. Measurement 2's record. 2 placeholders.
 - measure-claude-token-decisions.jsonl: 4 lines, 660 bytes, sha256 103041b4397d4722f99da8a63e58acbad3d5cbdfca082cc95ab45b9b0d140d35. Measurement 2's decision log.
 - deadcode-liveness.txt: 10 lines, 788 bytes, sha256 a287d2d29c21cbf495a3ed9291e74c3bd71cacedd3cd86eca39b9c015083e293. Measurement 3's ten lines.
+- measure-lead-noinit-run.txt: 21 lines, 1117 bytes, sha256 9a6cd99407b5420b9d0fa4ba038062cbdd4cfe2494fc54471842b08ad3b5797d. Measurement 1b's record. 1 placeholder.
+- measure-lead-noinit-decisions.jsonl: 4 lines, 676 bytes, sha256 20fd979c55ef5e5c87f39aa42fe479be7282d7f6f5facb9a35b24ab285a8fc07. Measurement 1b's decision log.
+- measure-lead-noinit-doctor.txt: 40 lines, 7923 bytes, sha256 61b26f69980ebe02c15ebbba5dcd1a06b2e598a505133490d2712aa095c55c65. Measurement 1b's `doctor` output. 9 placeholders.
 
 Already in this folder and named above: README.md, lead-first-screen.txt, lead-screen-30s.txt. Not copied: the full copy of the decision log (21640 lines, 4566220 bytes), the task store's answers, the eleven train directories, the other captures of the two measurement runs, the rest of deadcode's output, the lead session's approvals record and notes.

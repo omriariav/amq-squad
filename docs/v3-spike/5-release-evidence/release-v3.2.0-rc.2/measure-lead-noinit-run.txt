@@ -1,0 +1,21 @@
+start 2026-11-11T18:13:55Z
+root: /private/tmp/ctl972ctl-codex-noinit.6SzIqX
+amq-squad: amq-squad v3.2.0-rc.2 at /private/tmp/ctl972ctl-codex-noinit.6SzIqX/bin/amq-squad
+amq: 0.116.2 at <home>/go/bin/amq
+amq-remote: amq-remote 0.116.2; amq-owner-sign: 0.116.2
+provider: /opt/homebrew/bin/codex codex-cli 0.166.0
+live tmux sessions before: amq-amq-squad-f42a4d5279-v31-c7acc1c7 gws-ollama-session memory-wpp squad-lead-amq-squad-f42a4 
+doctor exit=2
+new-session exit=0
+roster decision seen=yes at 2026-11-11T18:13:58Z (after about 2 s)
+capture 2026-11-11T18:14:23Z
+l amq-squad %0 dead=0 status= cmd=amq-squad pid=80797 cwd=/private/tmp/ctl972ctl-codex-noinit.6SzIqX/proj
+status exit=1
+processes naming the root while live: 2
+tmux server pid: 80796
+processes under the scratch tmux server while live: 2
+processes naming the root after kill-server: 0
+processes of the scratch tmux tree still alive after kill-server: 0
+live tmux sessions after: amq-amq-squad-f42a4d5279-v31-c7acc1c7 gws-ollama-session memory-wpp squad-lead-amq-squad-f42a4 
+end 2026-11-11T18:14:28Z
+owner Codex home files unchanged (mtime and size): yes
