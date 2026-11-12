@@ -255,7 +255,7 @@ roster decision seen=yes at 2026-11-11T18:13:58Z (after about 2 s)
 end 2026-11-11T18:14:28Z
 ```
 
-`amq-squad doctor`, run before the lead, exits 2; measure-lead-noinit-doctor.txt has 2 `fail` lines, each ending in AMQ's own answer that it "cannot determine an eligible AMQ root". The run's decision log, measure-lead-noinit-decisions.jsonl, as kind, stage, reason code and reason:
+`amq-squad doctor`, run before the lead, exits 2; measure-lead-noinit-doctor.txt has 2 `fail` lines, each holding AMQ's own answer that it "cannot determine an eligible AMQ root". The run's decision log, measure-lead-noinit-decisions.jsonl, as kind, stage, reason code and reason:
 
 ```text
 {"kind":"scheduler_started","stage":null,"reason_code":null,"reason":"incarnation fb4e3a687d0d"}
