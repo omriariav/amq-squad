@@ -401,5 +401,1030 @@
         ]
       }
     ]
+  },
+  "reasons": {
+    "block": {
+      "open": true,
+      "open_doors": [
+        {
+          "name": "the launch failure code: the reason code, else the stage",
+          "functions": [
+            "scheduler.(LaunchFailure).Code"
+          ]
+        },
+        {
+          "name": "AMQ launchapi field Reason, copied by seatlaunch.rosterOutcome",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "AMQ launchapi field ReasonCode, copied by seatlaunch.rosterOutcome",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "the pending action kinds joined with a comma",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "the --reason flag of task block",
+          "functions": [
+            "cli.runTaskTransition"
+          ]
+        },
+        {
+          "name": "decoded field launch.ProofReply.Code",
+          "functions": [
+            "seatexec.DialProof"
+          ]
+        },
+        {
+          "name": "decoded field launch.Exec.ReasonCode",
+          "functions": [
+            "launch.Decode",
+            "uninstall.seatsLive"
+          ]
+        },
+        {
+          "name": "decoded field scheduler.LaunchFailure.Stage",
+          "functions": [
+            "scheduler.ReadState"
+          ]
+        },
+        {
+          "name": "decoded field scheduler.LaunchFailure.ReasonCode",
+          "functions": [
+            "scheduler.ReadState"
+          ]
+        },
+        {
+          "name": "field task.Task.BlockReason read back from disk",
+          "functions": [
+            "task.snapshotOnce",
+            "task.readDir",
+            "task.recoverJournal"
+          ]
+        },
+        {
+          "name": "parameter reasonCode of task.(Store).RefuseCommit, which no code outside tests calls",
+          "functions": [
+            "task.(Store).RefuseCommit"
+          ]
+        }
+      ],
+      "doors": [
+        "field scheduler.CommitResult.ReasonCode",
+        "field scheduler.Event.ReasonCode",
+        "field scheduler.RosterOutcome.ReasonCode",
+        "field scheduler.Route.Block",
+        "field seatcommit.Result.ReasonCode",
+        "field seatcommit.Violation.Reason",
+        "local code in scheduler.(*Scheduler).commit",
+        "param seatcommit.(Result).refuse#0",
+        "param seatexec.refusef#0",
+        "param task.(Store).Block#2",
+        "param task.(Store).Escalate#1",
+        "param task.block#1",
+        "result registry.OpenPinned#1",
+        "result seatcommit.planVerifier#1"
+      ],
+      "entries": [
+        {
+          "code": "claude_token_insecure",
+          "constant": "claudeseat.TokenInsecure",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "tool_pin_mismatch",
+          "constant": "registry.PinMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.commitAndPush",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "registry.OpenPinned",
+              "door": "result registry.OpenPinned#1"
+            }
+          ]
+        },
+        {
+          "code": "tool_unpinned",
+          "constant": "registry.PinMissing",
+          "writers": [
+            {
+              "function": "registry.OpenPinned",
+              "door": "result registry.OpenPinned#1"
+            }
+          ]
+        },
+        {
+          "code": "pin_unresolved",
+          "constant": "routing.BlockPinUnresolved",
+          "writers": [
+            {
+              "function": "routing.(*Router).decide",
+              "door": "field scheduler.Route.Block"
+            }
+          ]
+        },
+        {
+          "code": "declared_tree_unchecked",
+          "constant": "routing.BlockTreeUnchecked",
+          "writers": [
+            {
+              "function": "routing.(*Router).decide",
+              "door": "field scheduler.Route.Block"
+            }
+          ]
+        },
+        {
+          "code": "history_tampered",
+          "constant": "routing.HistoryTampered",
+          "writers": [
+            {
+              "function": "routing.(*Router).holdTampered",
+              "door": "field scheduler.Route.Block"
+            }
+          ]
+        },
+        {
+          "code": "process_exited",
+          "constant": "scheduler.GoneProcessExited",
+          "mark": "traced, guarded at scheduler.(*Scheduler).applyEvents",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).checkLiveness",
+              "door": "field scheduler.Event.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "commit_failed",
+          "constant": "scheduler.ReasonCommitFailed",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).commit",
+              "door": "local code in scheduler.(*Scheduler).commit"
+            }
+          ]
+        },
+        {
+          "code": "ledger_tampered",
+          "constant": "scheduler.ReasonLedgerTampered",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).blockOnTamper",
+              "door": "param task.(Store).Block#2"
+            }
+          ]
+        },
+        {
+          "code": "seat_replacement_resource_present",
+          "constant": "scheduler.ReasonResourcePresent",
+          "writers": [
+            {
+              "function": "seatlaunch.rosterOutcome",
+              "door": "field scheduler.RosterOutcome.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "seat_replacement_needs_relaunch",
+          "constant": "scheduler.ReasonSeatRelaunch",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).rosterNoIdleSeat",
+              "door": "param task.(Store).Block#2"
+            }
+          ]
+        },
+        {
+          "code": "task_branch_unprepared",
+          "constant": "scheduler.ReasonTaskBranchUnprepared",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).dispatch",
+              "door": "param task.(Store).Block#2"
+            }
+          ]
+        },
+        {
+          "code": "verifier_interrupted",
+          "constant": "scheduler.ReasonVerifierInterrupted",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).commit",
+              "door": "local code in scheduler.(*Scheduler).commit"
+            }
+          ]
+        },
+        {
+          "code": "base_unrecorded",
+          "constant": "seatcommit.ReasonBaseUnrecorded",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "grants_invalid",
+          "constant": "seatcommit.ReasonGrants",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "seatcommit.planVerifier",
+              "door": "result seatcommit.planVerifier#1"
+            }
+          ]
+        },
+        {
+          "code": "growth_gate_required",
+          "constant": "seatcommit.ReasonGrowthGate",
+          "writers": [
+            {
+              "function": "cli.applyLeadWiden",
+              "door": "param task.(Store).Escalate#1"
+            }
+          ]
+        },
+        {
+          "code": "lease_task_mismatch",
+          "constant": "seatcommit.ReasonLeaseTaskMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "ledger_tampered",
+          "constant": "seatcommit.ReasonLedgerTampered",
+          "writers": [
+            {
+              "function": "seatcommit.(Result).tamperedRefusal",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "seatcommit.(Result).writeOutcome",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "link_target_refused",
+          "constant": "seatcommit.ReasonLinkTarget",
+          "writers": [
+            {
+              "function": "seatcommit.check",
+              "door": "field seatcommit.Violation.Reason"
+            },
+            {
+              "function": "seatcommit.verify",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "nested_repository",
+          "constant": "seatcommit.ReasonNested",
+          "writers": [
+            {
+              "function": "seatcommit.check",
+              "door": "field seatcommit.Violation.Reason"
+            }
+          ]
+        },
+        {
+          "code": "newer_writer",
+          "constant": "seatcommit.ReasonNewerWriter",
+          "writers": [
+            {
+              "function": "seatcommit.(Result).ledgerRefusal",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "outside_declared_files",
+          "constant": "seatcommit.ReasonOutside",
+          "writers": [
+            {
+              "function": "seatcommit.check",
+              "door": "field seatcommit.Violation.Reason"
+            }
+          ]
+        },
+        {
+          "code": "pr_bound_elsewhere",
+          "constant": "seatcommit.ReasonPRBoundElsewhere",
+          "writers": [
+            {
+              "function": "seatcommit.openPR",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "seatcommit.prCheck",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "pr_pending",
+          "constant": "seatcommit.ReasonPRPending",
+          "mark": "traced, guarded at scheduler.(*Scheduler).commit",
+          "writers": [
+            {
+              "function": "seatcommit.openPR",
+              "door": "field seatcommit.Result.ReasonCode"
+            },
+            {
+              "function": "seatcommit.prCheck",
+              "door": "field seatcommit.Result.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "protected_path",
+          "constant": "seatcommit.ReasonProtected",
+          "writers": [
+            {
+              "function": "seatcommit.check",
+              "door": "field seatcommit.Violation.Reason"
+            }
+          ]
+        },
+        {
+          "code": "push_rejected",
+          "constant": "seatcommit.ReasonPushRejected",
+          "writers": [
+            {
+              "function": "seatcommit.commitAndPush",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "push_target_unacknowledged",
+          "constant": "seatcommit.ReasonPushTargetUnacknowledged",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "recorded_diff_mismatch",
+          "constant": "seatcommit.ReasonRecordedDiffMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.commitAndPush",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "schema_mismatch",
+          "constant": "seatcommit.ReasonSchemaMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.(Result).ledgerRefusal",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "size_cap_exceeded",
+          "constant": "seatcommit.ReasonSizeCap",
+          "writers": [
+            {
+              "function": "seatcommit.check",
+              "door": "field seatcommit.Violation.Reason"
+            }
+          ]
+        },
+        {
+          "code": "commit_cancelled",
+          "constant": "seatcommit.ReasonStepCancelled",
+          "mark": "traced, guarded at scheduler.(*Scheduler).commit",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "field seatcommit.Result.ReasonCode"
+            },
+            {
+              "function": "seatcommit.verify",
+              "door": "field seatcommit.Result.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "verifier_interrupted",
+          "constant": "seatcommit.ReasonVerifierInterrupted",
+          "writers": [
+            {
+              "function": "seatcommit.verify",
+              "door": "field seatcommit.Result.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "widen_snapshot_attempt_mismatch",
+          "constant": "seatcommit.ReasonWidenSnapshotMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "widen_snapshot_missing",
+          "constant": "seatcommit.ReasonWidenSnapshotMissing",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "worktree_mismatch",
+          "constant": "seatcommit.ReasonWorktree",
+          "writers": [
+            {
+              "function": "seatcommit.Run",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "seatcommit.commitAndPush",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "claude_hooks_missing",
+          "constant": "seatexec.ClaudeHooksMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckClaudeHooks",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "claude_permission_mismatch",
+          "constant": "seatexec.ClaudePermissionMismatch",
+          "writers": [
+            {
+              "function": "seatexec.CheckClaudePermission",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "identity_incomplete",
+          "constant": "seatexec.IdentityIncomplete",
+          "writers": [
+            {
+              "function": "seatexec.checkIdentity",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "pi_not_embedded",
+          "constant": "seatexec.PiNotEmbedded",
+          "writers": [
+            {
+              "function": "seatexec.piShimProvider",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "sandbox_pins_missing",
+          "constant": "seatexec.SandboxPinsMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckCodexSandboxPins",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "verdict_failed",
+          "constant": "task.BlockVerdictFailed",
+          "writers": [
+            {
+              "function": "seatcommit.verify",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "task.(Store).complete",
+              "door": "param task.block#1"
+            }
+          ]
+        },
+        {
+          "code": "verdict_missing",
+          "constant": "task.BlockVerdictMissing",
+          "writers": [
+            {
+              "function": "task.(Store).complete",
+              "door": "param task.block#1"
+            },
+            {
+              "function": "seatcommit.planVerifier",
+              "door": "result seatcommit.planVerifier#1"
+            }
+          ]
+        },
+        {
+          "code": "verdict_tree_mismatch",
+          "constant": "task.BlockVerdictTreeMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.verify",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "grants_invalid",
+          "constant": "task.ReasonGrantsInvalid",
+          "writers": [
+            {
+              "function": "routing.(*Router).decide",
+              "door": "field scheduler.Route.Block"
+            },
+            {
+              "function": "scheduler.(*Scheduler).dispatch",
+              "door": "param task.(Store).Block#2"
+            }
+          ]
+        },
+        {
+          "code": "pr_bound_elsewhere",
+          "constant": "task.RefusalPRBoundElsewhere",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).applyCommit",
+              "door": "field scheduler.CommitResult.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "repin_after_attempt",
+          "constant": "task.ReasonRePinAfterAttempt",
+          "mark": "no writer"
+        },
+        {
+          "code": "widen_requested",
+          "constant": "task.ReasonWidenRequested",
+          "mark": "no writer"
+        },
+        {
+          "code": "growth_gate_required",
+          "constant": "task.ReasonGrowthGateRequired",
+          "mark": "no writer"
+        },
+        {
+          "code": "seat_head_detached_unmerged",
+          "constant": "seatcommit.RefusalSeatHeadDetachedUnmerged",
+          "mark": "no writer"
+        },
+        {
+          "code": "evidence_ref_symbolic",
+          "constant": "seatcommit.ReasonEvidenceRefSymbolic",
+          "mark": "no writer"
+        },
+        {
+          "code": "verifier_timeout",
+          "constant": "seatcommit.ReasonVerifierTimeout",
+          "mark": "no writer"
+        },
+        {
+          "code": "verifier_output_exceeded",
+          "constant": "seatcommit.ReasonVerifierOutput",
+          "mark": "no writer"
+        },
+        {
+          "code": "verifier_start_failed",
+          "constant": "seatcommit.ReasonVerifierStart",
+          "mark": "no writer"
+        },
+        {
+          "code": "verifier_cancelled",
+          "constant": "seatcommit.ReasonVerifierCancelled",
+          "mark": "no writer"
+        },
+        {
+          "code": "commit_failed",
+          "constant": "seatcommit.ReasonCommitFailed",
+          "mark": "no writer"
+        },
+        {
+          "code": "seat_identity_unproven",
+          "constant": "scheduler.ReasonSeatIdentityUnproven",
+          "mark": "no writer"
+        },
+        {
+          "code": "routing_invalid",
+          "constant": "routing.ReasonInvalid",
+          "mark": "no writer"
+        },
+        {
+          "code": "binding_present_without_resumable_conversation",
+          "constant": "scheduler.AMQBindingPresent",
+          "mark": "no writer"
+        },
+        {
+          "code": "seat_head_detached_unmerged",
+          "constant": "schedproc.ReasonSeatHeadDetachedUnmerged",
+          "mark": "no writer"
+        }
+      ]
+    },
+    "wait": {
+      "open": true,
+      "open_doors": [
+        {
+          "name": "the launch failure code: the reason code, else the stage",
+          "functions": [
+            "scheduler.(LaunchFailure).Code"
+          ]
+        },
+        {
+          "name": "AMQ launchapi field Reason, copied by seatlaunch.rosterOutcome",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "AMQ launchapi field ReasonCode, copied by seatlaunch.rosterOutcome",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "the pending action kinds joined with a comma",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "decoded field launch.ProofReply.Code",
+          "functions": [
+            "seatexec.DialProof"
+          ]
+        },
+        {
+          "name": "decoded field launch.Exec.ReasonCode",
+          "functions": [
+            "launch.Decode",
+            "uninstall.seatsLive"
+          ]
+        },
+        {
+          "name": "decoded field scheduler.LaunchFailure.Stage",
+          "functions": [
+            "scheduler.ReadState"
+          ]
+        },
+        {
+          "name": "decoded field scheduler.LaunchFailure.ReasonCode",
+          "functions": [
+            "scheduler.ReadState"
+          ]
+        },
+        {
+          "name": "field task.Task.WaitReason read back from disk",
+          "functions": [
+            "task.snapshotOnce",
+            "task.readDir",
+            "task.recoverJournal"
+          ]
+        },
+        {
+          "name": "the sentence task.DependencyMergeWait formats",
+          "functions": [
+            "task.DependencyMergeWait"
+          ]
+        }
+      ],
+      "doors": [
+        "element in routing.waitReason",
+        "field scheduler.Event.ReasonCode",
+        "field scheduler.RosterOutcome.ReasonCode",
+        "field scheduler.Route.Wait",
+        "param scheduler.(*Scheduler).wait#1",
+        "param scheduler.firstNonEmpty#1",
+        "param seatexec.refusef#0",
+        "result routing.waitReason#0",
+        "result task.Blocker#0"
+      ],
+      "entries": [
+        {
+          "code": "claude_token_insecure",
+          "constant": "claudeseat.TokenInsecure",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "concurrency_cap",
+          "constant": "routing.SkipConcurrencyCap",
+          "writers": [
+            {
+              "function": "routing.waitReason",
+              "door": "element in routing.waitReason"
+            }
+          ]
+        },
+        {
+          "code": "cost_cap",
+          "constant": "routing.SkipCostCap",
+          "writers": [
+            {
+              "function": "routing.waitReason",
+              "door": "element in routing.waitReason"
+            }
+          ]
+        },
+        {
+          "code": "privacy_class",
+          "constant": "routing.SkipPrivacyClass",
+          "writers": [
+            {
+              "function": "routing.waitReason",
+              "door": "element in routing.waitReason"
+            }
+          ]
+        },
+        {
+          "code": "reviewer_family",
+          "constant": "routing.SkipReviewerFamily",
+          "writers": [
+            {
+              "function": "routing.waitReason",
+              "door": "element in routing.waitReason"
+            }
+          ]
+        },
+        {
+          "code": "process_exited",
+          "constant": "scheduler.GoneProcessExited",
+          "mark": "traced, guarded at scheduler.(*Scheduler).applyEvents",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).checkLiveness",
+              "door": "field scheduler.Event.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "seat_replacement_resource_present",
+          "constant": "scheduler.ReasonResourcePresent",
+          "writers": [
+            {
+              "function": "seatlaunch.rosterOutcome",
+              "door": "field scheduler.RosterOutcome.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "no_roster_seat",
+          "constant": "scheduler.WaitNoRosterSeat",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).rosterNoIdleSeat",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            }
+          ]
+        },
+        {
+          "code": "claude_hooks_missing",
+          "constant": "seatexec.ClaudeHooksMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckClaudeHooks",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "claude_permission_mismatch",
+          "constant": "seatexec.ClaudePermissionMismatch",
+          "writers": [
+            {
+              "function": "seatexec.CheckClaudePermission",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "identity_incomplete",
+          "constant": "seatexec.IdentityIncomplete",
+          "writers": [
+            {
+              "function": "seatexec.checkIdentity",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "pi_not_embedded",
+          "constant": "seatexec.PiNotEmbedded",
+          "writers": [
+            {
+              "function": "seatexec.piShimProvider",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "sandbox_pins_missing",
+          "constant": "seatexec.SandboxPinsMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckCodexSandboxPins",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "dependencies",
+          "constant": "task.WaitDependencies",
+          "writers": [
+            {
+              "function": "task.Blocker",
+              "door": "result task.Blocker#0"
+            }
+          ]
+        },
+        {
+          "code": "file_lock",
+          "constant": "task.WaitFileLock",
+          "writers": [
+            {
+              "function": "task.Blocker",
+              "door": "result task.Blocker#0"
+            }
+          ]
+        },
+        {
+          "code": "no_route",
+          "constant": "task.WaitNoRoute",
+          "writers": [
+            {
+              "function": "routing.(*Router).Route",
+              "door": "field scheduler.Route.Wait"
+            },
+            {
+              "function": "scheduler.(DefaultRouter).Route",
+              "door": "field scheduler.Route.Wait"
+            },
+            {
+              "function": "scheduler.(*Scheduler).dispatch",
+              "door": "param scheduler.firstNonEmpty#1"
+            },
+            {
+              "function": "routing.waitReason",
+              "door": "result routing.waitReason#0"
+            }
+          ]
+        },
+        {
+          "code": "outcome_log_unwritable",
+          "constant": "task.WaitOutcomeLogUnwritable",
+          "writers": [
+            {
+              "function": "routing.(*Router).Route",
+              "door": "field scheduler.Route.Wait"
+            },
+            {
+              "function": "routing.(*Router).holdTampered",
+              "door": "field scheduler.Route.Wait"
+            }
+          ]
+        },
+        {
+          "code": "seat_cap",
+          "constant": "task.WaitSeatCap",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).dispatch",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            },
+            {
+              "function": "scheduler.(*Scheduler).rosterNoIdleSeat",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            }
+          ]
+        },
+        {
+          "code": "seat_starting",
+          "constant": "task.WaitSeatStarting",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).waitForSeat",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            }
+          ]
+        },
+        {
+          "code": "usage_limit",
+          "constant": "task.WaitUsageLimit",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).dispatch",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            },
+            {
+              "function": "scheduler.(*Scheduler).rosterNoIdleSeat",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            }
+          ]
+        },
+        {
+          "code": "privacy_class",
+          "constant": "task.WaitPrivacyClass",
+          "mark": "no writer"
+        },
+        {
+          "code": "concurrency_cap",
+          "constant": "task.WaitConcurrencyCap",
+          "mark": "no writer"
+        },
+        {
+          "code": "cost_cap",
+          "constant": "task.WaitCostCap",
+          "mark": "no writer"
+        },
+        {
+          "code": "reviewer_family",
+          "constant": "task.WaitReviewerFamily",
+          "mark": "no writer"
+        }
+      ]
+    },
+    "not_reasons": [
+      {
+        "code": "file_lock_conflict",
+        "constant": "task.RefusalFileLock"
+      },
+      {
+        "code": "self_widen",
+        "constant": "task.RefusalSelfWiden"
+      },
+      {
+        "code": "claim_offer_required",
+        "constant": "task.RefusalClaimOfferRequired"
+      },
+      {
+        "code": "claim_offer_expired",
+        "constant": "task.RefusalClaimOfferExpired"
+      },
+      {
+        "code": "claim_pool_mismatch",
+        "constant": "task.RefusalClaimPoolMismatch"
+      },
+      {
+        "code": "claim_pool_unknown",
+        "constant": "task.RefusalClaimPoolUnknown"
+      }
+    ]
   }
 }
