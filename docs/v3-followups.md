@@ -122,6 +122,13 @@ its PR. Nothing here is promised by date.
   zero is green, and the injected clock ignored is green;
   `internal/buzz/owner_sender_test.go:28` reads the store sorted by
   CreatedAt (`relay_test.go:103`).
+- Dated 2026-11-12: `git push <path>`, to a path that is a configured
+  remote's URL, moved that remote's tracking ref in CI (macos-latest, git
+  2.56.0) and not on the lead's host (git 2.55.0). #994's seven tests failed
+  on it at their ground's own assertion; #995's ground records the ref and
+  puts it back after its push. The version as the cause is not established.
+  The rule for a test: its ground is asserted, never assumed from a command's
+  side effect.
 
 ### Ledgers, seals and recovery
 
@@ -375,7 +382,9 @@ as #962 corrected it.
   with `seat_head_detached_unmerged`. The clean now treats a head the
   remote base branch held at the task's grant as recorded; a commit the
   remote does not hold is refused with the same words. Source: the 3.2.0
-  notes, Known limit 35.
+  notes, Known limit 35. The fix is on v3 (#995) and ships in 3.3.0, on the
+  owner's word of 2026-11-12; there is no 3.2.1, so a squad on 3.2.0 keeps
+  the limit and clears a refused seat with a roster relaunch.
 
 ### The merge train
 
@@ -454,6 +463,17 @@ as #962 corrected it.
 - Cap-off (item 7c): `size_cap_lines` and `size_cap_files` accept no off
   value (`internal/grants/parse.go:258-261`); add an explicit off with the
   growth gate following it.
+- **The train cannot land a PR that is behind its base when GitHub's compare
+  returns no patch for one of its files** (a large changed file): it refuses
+  with `rebase_patch_changed`, "the update could not be proved: GitHub
+  returned an incomplete diff", before the update
+  (`internal/mergetrain/train.go:702-709`, `ErrIncompleteDiff`). Seen on
+  #991 on 2026-11-12: a 110 KB note with 962 changed lines, for which `gh
+  api repos/<owner>/<repo>/compare/<base>...<head>` gave the file no
+  `patch`. The fix: prove the update from fetched git objects. For 3.3.0, on
+  the owner's word of 2026-11-12. Until it lands the lead merges nothing into
+  the base under an open seat PR unless that compare shows a patch for every
+  file.
 
 ### Control bytes and status text
 
