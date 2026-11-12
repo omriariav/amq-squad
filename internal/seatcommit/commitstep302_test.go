@@ -303,6 +303,229 @@ func TestCleanSeatRefusesAnUnrecordedCommitOnTheCancelledTaskBranch(t *testing.T
 	}
 }
 
+// remoteBranchGround makes two fetched remote commits that the seat repository
+// holds as objects but names with no ref, while its local main stays at B0.
+func (f *fixture) remoteBranchGround() (b1, b2 string) {
+	f.t.Helper()
+	f.setLaunchBase(f.base)
+	sh(f.t, f.main, "checkout", "-q", "--detach", f.base)
+	write(f.t, filepath.Join(f.main, "README.md"), "remote one\n")
+	sh(f.t, f.main, "commit", "-q", "-am", "remote one")
+	b1 = sh(f.t, f.main, "rev-parse", "HEAD")
+	write(f.t, filepath.Join(f.main, "README.md"), "remote two\n")
+	sh(f.t, f.main, "commit", "-q", "-am", "remote two")
+	b2 = sh(f.t, f.main, "rev-parse", "HEAD")
+	sh(f.t, f.main, "push", "-q", f.origin, "HEAD:refs/heads/main")
+	sh(f.t, f.main, "checkout", "-q", "main")
+	if got := sh(f.t, f.origin, "rev-parse", "refs/heads/main"); got != b2 {
+		f.t.Fatalf("origin main is %s, not B2 %s", got, b2)
+	}
+	if got := sh(f.t, f.main, "for-each-ref", "--format=%(refname)", "--contains", b1); got != "" {
+		f.t.Fatalf("the seat repository names the fetched remote commits: %s", got)
+	}
+	return b1, b2
+}
+
+// cancelTaskAttempt ends a leased fixture task without a harness commit.
+func cancelTaskAttempt(t *testing.T, f *fixture, tk task.Task) {
+	t.Helper()
+	if _, err := f.store.Cancel(tk.ID, "lead", "stop", f.now); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// assertCleanedTaskBranch checks the common successful-clean contract and
+// returns the ledger for the test's discard-specific assertions.
+func assertCleanedTaskBranch(t *testing.T, f *fixture, tk task.Task, taskHead string, wantDiscarded bool, wantDiscards int) Ledger {
+	t.Helper()
+	discarded, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now)
+	if err != nil || discarded != wantDiscarded {
+		t.Fatalf("clean: discarded=%v want %v err=%v", discarded, wantDiscarded, err)
+	}
+	if got := sh(t, f.wt, "symbolic-ref", "HEAD"); got != "refs/heads/"+f.branch {
+		t.Fatalf("the cleaned worktree stayed on %s", got)
+	}
+	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != f.base {
+		t.Fatalf("the cleaned worktree rests at %s, not B0 %s", got, f.base)
+	}
+	if got := sh(t, f.wt, "status", "--porcelain", "--untracked-files=all"); got != "" {
+		t.Fatalf("the cleaned worktree is dirty: %s", got)
+	}
+	branch := TaskBranch(f.handle, tk.ID)
+	if got := sh(t, f.wt, "rev-parse", "refs/heads/"+branch); got != taskHead {
+		t.Fatalf("the task branch moved to %s, not %s", got, taskHead)
+	}
+	l, err := ReadLedger(f.root, f.handle)
+	if err != nil || l.Lease != nil || l.Rest != f.base || len(l.Discarded) != wantDiscards {
+		t.Fatalf("cleaned ledger: rest=%s lease=%+v discarded=%+v err=%v", l.Rest, l.Lease, l.Discarded, err)
+	}
+	return l
+}
+
+// TestCleanSeatReturnsATaskBranchAtTheFetchedRemoteTip proves the lease base
+// records the fetched tip even when no repository ref names it.
+func TestCleanSeatReturnsATaskBranchAtTheFetchedRemoteTip(t *testing.T) {
+	f := newFixture(t)
+	_, b2 := f.remoteBranchGround()
+	f.grantBase = b2
+	tk := f.leased("cmd/")
+	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != b2 {
+		t.Fatalf("the task branch is at %s, not B2 %s", got, b2)
+	}
+	cancelTaskAttempt(t, f, tk)
+	assertCleanedTaskBranch(t, f, tk, b2, false, 0)
+}
+
+// TestCleanSeatReturnsATaskBranchAtAnEarlierCommitOfTheFetchedRemoteBranch
+// proves an ancestor of the fetched tip is recorded and its tree is kept.
+func TestCleanSeatReturnsATaskBranchAtAnEarlierCommitOfTheFetchedRemoteBranch(t *testing.T) {
+	f := newFixture(t)
+	b1, b2 := f.remoteBranchGround()
+	f.grantBase = b2
+	tk := f.leased("cmd/")
+	sh(t, f.wt, "reset", "-q", "--hard", b1)
+	cancelTaskAttempt(t, f, tk)
+	l := assertCleanedTaskBranch(t, f, tk, b1, true, 1)
+	wantTree := sh(t, f.wt, "rev-parse", b1+"^{tree}")
+	if l.Discarded[0].Parent != b2 || l.Discarded[0].Tree != wantTree {
+		t.Fatalf("earlier fetched commit discard: %+v, want parent %s tree %s", l.Discarded[0], b2, wantTree)
+	}
+}
+
+// TestCleanSeatRefusesALocalCommitOnATaskBranchCutFromAMovedRemoteTip proves
+// a local child of the fetched tip keeps the refusal and the worktree intact.
+func TestCleanSeatRefusesALocalCommitOnATaskBranchCutFromAMovedRemoteTip(t *testing.T) {
+	f := newFixture(t)
+	_, b2 := f.remoteBranchGround()
+	f.grantBase = b2
+	tk := f.leased("cmd/")
+	body := "package cmd\n// local child\n"
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), body)
+	sh(t, f.wt, "add", "-A")
+	sh(t, f.wt, "commit", "-q", "-m", "local child")
+	head := sh(t, f.wt, "rev-parse", "HEAD")
+	branch := TaskBranch(f.handle, tk.ID)
+	cancelTaskAttempt(t, f, tk)
+	want := RefusalSeatHeadDetachedUnmerged + ": seat " + f.handle + ": the worktree's branch " + branch + " holds an unrecorded commit " + head + "; the harness never discards a local commit"
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err == nil || err.Error() != want {
+		t.Fatalf("local task commit refusal = %v, want %q", err, want)
+	}
+	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != head {
+		t.Fatalf("the refusal moved HEAD from %s to %s", head, got)
+	}
+	if got := sh(t, f.wt, "symbolic-ref", "HEAD"); got != "refs/heads/"+branch {
+		t.Fatalf("the refusal moved the branch to %s", got)
+	}
+	if raw, err := os.ReadFile(filepath.Join(f.wt, "cmd", "root.go")); err != nil || string(raw) != body {
+		t.Fatalf("the refusal changed the file: %q, %v", raw, err)
+	}
+	l, err := ReadLedger(f.root, f.handle)
+	if err != nil || l.Lease == nil || l.Lease.Task != tk.ID || len(l.Discarded) != 0 {
+		t.Fatalf("the refusal changed the lease or discard ledger: %+v, %v", l, err)
+	}
+}
+
+// TestCleanSeatRefusesACommitOnlyTheLocalBaseBranchHolds proves a local ref
+// is not mistaken for the remote base branch fetched at the grant.
+func TestCleanSeatRefusesACommitOnlyTheLocalBaseBranchHolds(t *testing.T) {
+	f := newFixture(t)
+	_, b2 := f.remoteBranchGround()
+	f.grantBase = b2
+	tk := f.leased("cmd/")
+	write(t, filepath.Join(f.main, "README.md"), "local main only\n")
+	sh(t, f.main, "commit", "-q", "-am", "local main only")
+	local := sh(t, f.main, "rev-parse", "HEAD")
+	sh(t, f.wt, "reset", "-q", "--hard", local)
+	branch := TaskBranch(f.handle, tk.ID)
+	cancelTaskAttempt(t, f, tk)
+	want := RefusalSeatHeadDetachedUnmerged + ": seat " + f.handle + ": the worktree's branch " + branch + " holds an unrecorded commit " + local + "; the harness never discards a local commit"
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err == nil || err.Error() != want {
+		t.Fatalf("local base commit refusal = %v, want %q", err, want)
+	}
+	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != local {
+		t.Fatalf("the refusal moved HEAD from %s to %s", local, got)
+	}
+	if got := sh(t, f.wt, "symbolic-ref", "HEAD"); got != "refs/heads/"+branch {
+		t.Fatalf("the refusal moved the branch to %s", got)
+	}
+}
+
+// TestCleanSeatReturnsATaskBranchAtTheLaunchBase is the control proving the
+// existing launch-base case still returns without a discard.
+func TestCleanSeatReturnsATaskBranchAtTheLaunchBase(t *testing.T) {
+	f := newFixture(t)
+	f.remoteBranchGround()
+	f.grantBase = f.base
+	tk := f.leased("cmd/")
+	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != f.base {
+		t.Fatalf("the task branch is at %s, not B0 %s", got, f.base)
+	}
+	cancelTaskAttempt(t, f, tk)
+	assertCleanedTaskBranch(t, f, tk, f.base, false, 0)
+}
+
+// TestCleanSeatKeepsALeftoverDiffOnATaskBranchAtTheFetchedRemoteTip proves
+// the newly recorded head still archives an uncommitted leftover tree.
+func TestCleanSeatKeepsALeftoverDiffOnATaskBranchAtTheFetchedRemoteTip(t *testing.T) {
+	f := newFixture(t)
+	_, b2 := f.remoteBranchGround()
+	f.grantBase = b2
+	tk := f.leased("cmd/")
+	body := "package cmd\n// leftover at the fetched tip\n"
+	write(t, filepath.Join(f.wt, "cmd", "root.go"), body)
+	cancelTaskAttempt(t, f, tk)
+	l := assertCleanedTaskBranch(t, f, tk, b2, true, 1)
+	d := l.Discarded[0]
+	if d.Parent != b2 || d.Ref == "" {
+		t.Fatalf("leftover discard = %+v", d)
+	}
+	if got := sh(t, f.wt, "cat-file", "-p", d.Tree+":cmd/root.go") + "\n"; got != body {
+		t.Fatalf("the kept tree has %q, want %q", got, body)
+	}
+	if got := sh(t, f.wt, "rev-parse", d.Ref+"^{tree}"); got != d.Tree {
+		t.Fatalf("the evidence ref has tree %s, want %s", got, d.Tree)
+	}
+}
+
+// TestCleanSeatRefusesAnUnrecordedCommitWhenTheLeaseHasNoBase proves an
+// empty lease base adds no trust even when the task started at the fetched tip.
+func TestCleanSeatRefusesAnUnrecordedCommitWhenTheLeaseHasNoBase(t *testing.T) {
+	f := newFixture(t)
+	_, b2 := f.remoteBranchGround()
+	f.grantBase = b2
+	tk := f.leased("cmd/")
+	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != b2 {
+		t.Fatalf("the task branch is at %s, not B2 %s", got, b2)
+	}
+	cancelTaskAttempt(t, f, tk)
+	l, err := ReadLedger(f.root, f.handle)
+	if err != nil || l.Lease == nil {
+		t.Fatalf("lease before emptying its base: %+v, %v", l.Lease, err)
+	}
+	l.Lease.Base = ""
+	if err := writeLedger(f.root, l, "test: empty lease base"); err != nil {
+		t.Fatal(err)
+	}
+	branch := TaskBranch(f.handle, tk.ID)
+	want := RefusalSeatHeadDetachedUnmerged + ": seat " + f.handle + ": the worktree's branch " + branch + " holds an unrecorded commit " + b2 + "; the harness never discards a local commit"
+	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, f.now); err == nil || err.Error() != want {
+		t.Fatalf("empty-base refusal = %v, want %q", err, want)
+	}
+	if got := sh(t, f.wt, "rev-parse", "HEAD"); got != b2 {
+		t.Fatalf("the refusal moved HEAD from %s to %s", b2, got)
+	}
+	if got := sh(t, f.wt, "symbolic-ref", "HEAD"); got != "refs/heads/"+branch {
+		t.Fatalf("the refusal moved the branch to %s", got)
+	}
+	if got := sh(t, f.wt, "status", "--porcelain", "--untracked-files=all"); got != "" {
+		t.Fatalf("the refused worktree is dirty: %s", got)
+	}
+	l, err = ReadLedger(f.root, f.handle)
+	if err != nil || l.Lease == nil || l.Lease.Task != tk.ID || l.Lease.Base != "" || len(l.Discarded) != 0 {
+		t.Fatalf("empty-base refusal ledger: %+v, %v", l, err)
+	}
+}
+
 // setLaunchBase writes the launch's base tip into the seat's staged launch
 // record (3.0.2 t22's "base"), as a relaunch does.
 func (f *fixture) setLaunchBase(base string) {
