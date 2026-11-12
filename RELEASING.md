@@ -4,9 +4,9 @@ Release changes must go through a PR and `make ci` before merge. `make ci`
 includes a README.html freshness check, so a release that touches `README.md`
 cannot merge without the matching regenerated `README.html` (see step 1).
 
-The supported AMQ series is 0.60.x and the fail-closed minimum is 0.60.0.
+The fail-closed AMQ minimum is 0.116.2 (`internal/cli/doctor.go`, `doctorMinAMQVersion`).
 Release validation must keep the doctor floor, active README/CLI-skill policy,
-and both real-AMQ CI matrices aligned on pinned `v0.60.0` plus `latest`.
+and both real-AMQ CI matrices aligned on pinned `v0.116.2` plus `latest`.
 
 ## Patch Release Checklist
 
@@ -24,7 +24,7 @@ and both real-AMQ CI matrices aligned on pinned `v0.60.0` plus `latest`.
    `make skills-generate` is sufficient. `make ci` (`skills-check`) fails if a mirror
    drifts from its manifest.
    Confirm the doctor minimum, README and CLI-skill support text, release-policy
-   checker, and both real-AMQ matrices still agree on AMQ 0.60.0 / `v0.60.0`
+   checker, and both real-AMQ matrices still agree on AMQ 0.116.2 / `v0.116.2`
    plus the `latest` canary.
 Who does each step: the lead runs the cut. A release agent the lead starts may
 prepare and check (the notes, the skew check, the tag build, the evidence) but never

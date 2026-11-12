@@ -274,8 +274,8 @@
 <li><a href="#amq-squad" id="toc-amq-squad">amq-squad</a>
 <ul>
 <li><a href="#contents" id="toc-contents">Contents</a></li>
-<li><a href="#whats-new-in-320-rc2" id="toc-whats-new-in-320-rc2">What's
-new in 3.2.0-rc.2</a></li>
+<li><a href="#whats-new-in-320" id="toc-whats-new-in-320">What's new in
+3.2.0</a></li>
 <li><a href="#install" id="toc-install">Install</a></li>
 <li><a href="#requirements" id="toc-requirements">Requirements</a></li>
 <li><a href="#first-run" id="toc-first-run">First run</a></li>
@@ -326,7 +326,7 @@ verifies.</li>
 </ul>
 <h2 id="contents">Contents</h2>
 <ul>
-<li><a href="#whats-new-in-320-rc2">What's new in 3.2.0-rc.2</a></li>
+<li><a href="#whats-new-in-320">What's new in 3.2.0</a></li>
 <li><a href="#install">Install</a></li>
 <li><a href="#requirements">Requirements</a></li>
 <li><a href="#first-run">First run</a></li>
@@ -339,11 +339,10 @@ verifies.</li>
 <li><a href="#where-the-plan-and-evidence-live">Where the plan and
 evidence live</a></li>
 </ul>
-<h2 id="whats-new-in-320-rc2">What's new in 3.2.0-rc.2</h2>
-<p>3.2.0-rc.2 is the second candidate of 3.2, which fixes how the squad
-keeps working on its own: <a
+<h2 id="whats-new-in-320">What's new in 3.2.0</h2>
+<p>3.2.0 fixes how the squad keeps working on its own: <a
 href="docs/v3.2.0-release-notes.md">docs/v3.2.0-release-notes.md</a>. In
-short, with what rc.1 already had:</p>
+short:</p>
 <ul>
 <li>A seat's lease is renewed from its own work, never past its task's
 budget, with no <code>task renew</code> call needed. The budget is
@@ -377,7 +376,7 @@ only actionable questions, reads a diff with escape bytes, and skips
 legacy gate records. Until a 3.2.x fix, the lead lands a PR through the
 train only when its task has no live lease and no queued commit
 result.</li>
-<li>The notes list rc.2's known limits, among them a Buzz answer that
+<li>The notes list 3.2.0's known limits, among them a Buzz answer that
 may need sending again; what waits is in the 3.2.x list of <a
 href="docs/v3-followups.md">docs/v3-followups.md</a>.</li>
 </ul>

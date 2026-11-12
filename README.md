@@ -26,7 +26,7 @@ The model in five lines:
 
 ## Contents
 
-- [What's new in 3.2.0-rc.2](#whats-new-in-320-rc2)
+- [What's new in 3.2.0](#whats-new-in-320)
 - [Install](#install)
 - [Requirements](#requirements)
 - [First run](#first-run)
@@ -38,11 +38,10 @@ The model in five lines:
 - [Upgrading from v2](#upgrading-from-v2)
 - [Where the plan and evidence live](#where-the-plan-and-evidence-live)
 
-## What's new in 3.2.0-rc.2
+## What's new in 3.2.0
 
-3.2.0-rc.2 is the second candidate of 3.2, which fixes how the squad keeps
-working on its own: [docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md).
-In short, with what rc.1 already had:
+3.2.0 fixes how the squad keeps working on its own:
+[docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md). In short:
 
 - A seat's lease is renewed from its own work, never past its task's budget,
   with no `task renew` call needed. The budget is squad.yaml's `task_budget`
@@ -70,7 +69,7 @@ In short, with what rc.1 already had:
   actionable questions, reads a diff with escape bytes, and skips legacy gate
   records. Until a 3.2.x fix, the lead lands a PR through the train only when
   its task has no live lease and no queued commit result.
-- The notes list rc.2's known limits, among them a Buzz answer that may need
+- The notes list 3.2.0's known limits, among them a Buzz answer that may need
   sending again; what waits is in the 3.2.x list of
   [docs/v3-followups.md](docs/v3-followups.md).
 
