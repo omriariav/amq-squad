@@ -22,7 +22,7 @@ The gate store had been read. Status held three warnings for stored legacy `quar
 
 The read-failure form is `gate store: <error>`. The legacy-record form is `gate store legacy: ` followed by `gatestore.LegacyLine`, one warning per stored record.
 
-The screen prints the could-not-be-read line and its detail only for the read-failure form. It prints one count below the rule for all legacy-record warnings: singular for one, plural for more than one. It never prints a legacy record's gate id. The count is independent of a gate alert or read failure.
+The screen prints the could-not-be-read line and its detail only for the read-failure form. It prints one count below the rule for all legacy-record warnings: singular for one, plural for more than one. It never prints the gate id of a legacy warning carrying the new prefix (S-legacy-3); an old-prefix line still prints it (S-old). The count is printed with a read failure (S-both) and, by the code at `pi/extensions/lib/screen.ts:347-349` and the lead's probe, with a gate alert; no row asserted the alert case in v3.2.0 (the row S-alert, added on v3 afterwards, #982).
 
 An old status document from rc.2 or earlier still carries a legacy record under the `gate store: ` form. The screen and binary normally ship together, so this is the mixed-version case only, and the screen continues to take its read-failure path.
 
