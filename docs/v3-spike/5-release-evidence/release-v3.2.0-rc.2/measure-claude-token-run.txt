@@ -1,0 +1,24 @@
+start 2026-11-11T18:29:30Z
+root: /private/tmp/tokmtok-rc2-amq0116.aKQwBq
+amq-squad: amq-squad v3.2.0-rc.2 at /private/tmp/tokmtok-rc2-amq0116.aKQwBq/bin/amq-squad
+amq: 0.116.2 at <home>/go/bin/amq
+amq-remote: amq-remote 0.116.2; amq-owner-sign: 0.116.2
+provider: <home>/.local/bin/claude 2.1.319 (Claude Code)
+amq coop init exit=0
+amq session create exit=0
+.amqrc: {  "root": ".agent-mail"}
+scratch token file: mode=600 size=39; dir mode=700
+doctor exit=0
+new-session exit=0
+roster decision seen=yes at 2026-11-11T18:29:33Z (after about 2 s)
+capture 2026-11-11T18:29:58Z
+l amq-squad %0 dead=0 status= cmd=amq-squad pid=45005 cwd=/private/tmp/tokmtok-rc2-amq0116.aKQwBq/proj
+files naming a reason word: 6
+status exit=1
+processes naming the root while live: 2
+tmux server pid: 45003
+processes under the scratch tmux server while live: 2
+processes naming the root after kill-server: 0
+processes of the scratch tmux tree still alive after kill-server: 0
+end 2026-11-11T18:30:09Z
+owner Codex home files unchanged (mtime and size): yes

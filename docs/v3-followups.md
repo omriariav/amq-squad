@@ -544,6 +544,14 @@ as #960 corrected it.
 - **The AMQ pin** (2026-11-11): AMQ v0.139.0 removed `launchapi.Inspect`; the
   pin cannot pass v0.138.0 until 3.3.0's R0. The rc.2 notes carry one
   sentence on the supported pin.
+  Corrected 2026-11-12 (the rc.2 soak's record): the rc.2 notes' sentence
+  says the seat liveness check calls `launchapi.Inspect`. It does not: the
+  line that names it (`internal/cli/liveness.go:209`) and the call through it
+  (`:247`, which names `launchapi.InspectRequestV1`) are in a liveness
+  classifier that no command reaches (`deadcode` on 8d66f50e; the rc.2
+  soak's record has the run). They were removed on v3 by #969; the 3.2 line
+  keeps them, and at its pin v0.116.2 they build. The corrected sentence
+  goes into the 3.2.0 notes with the release PR.
 
 ### Evidence tooling
 

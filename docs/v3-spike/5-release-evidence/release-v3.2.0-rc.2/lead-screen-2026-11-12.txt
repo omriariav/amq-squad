@@ -1,0 +1,42 @@
+
+ Warning: tmux extended-keys is off. Modified Enter keys may not work. Add `set -g extended-keys on` to ~/.tmux.conf and restart tmux.
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ $ amq-squad scheduler relaunch --reason "rc.2 launch path for the soak"
+
+ scheduler relaunch: accepted: the seats finish what they hold, then every seat closes and the roster relaunches in one apply; the outcome is in the
+ decisions log (roster_launched or roster_launch_failed)
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+amq-squad: lead cto (pid 15222, pane %149) · root <home>/code/amq-squad/.agent-mail/v31
+seats (4)
+  cto  -  stopped
+  dev  codex gpt-5.6-terra medium  idle  · up in 6.0s
+  dev2  codex gpt-5.6-sol high  working on t175: 3.3.0 S1-2b: the block and wait reasons declared from the...  · up in 6.0s
+    ! seat dev2 asked for a permission 1m45s ago this turn; if it is not moving, check its pane
+  reviewer  codex gpt-5.6-sol high  waiting: on your answer to its question  · up in 5.9s
+tasks (175)
+  t175 in progress on dev2: 3.3.0 S1-2b: the block and wait reasons declared from the...
+  174 closed
+train
+  running: none
+  last run: merged a PR, 2h ago; PRs #980; 1 merged
+    ! release v3.2.0-rc.2 on omriariav/amq-squad has no accepted owner gate
+    ! tag v3.2.0-rc.2 on omriariav/amq-squad has no accepted owner gate
+waiting on you (0)
+  Nothing is waiting on you.
+  ! the gate store could not be read; its error is below the line
+----------
+  dev2: seat_stalled_at_dialog: a harness dialog has been open since 2026-11-12T07:02:25Z (1m45s); the seat waits at it and AMQ holds its doorbell
+  train last run: mt-20261112T042315Z-b66aeae3 merge
+  ungated_release
+  ungated_tag
+  gate store: gate clear-0a227ca8d88dc97c65c540a4d0fa18a7 is a legacy quarantine_clear gate (a kind this build no longer carries); skipped
+/add  /reset  /dismiss  /answer  /widen  /team hide
+~/code/amq-squad (v3)
+0.1%/131k (auto)                                                                                                                  qwen3.6:27b • medium
