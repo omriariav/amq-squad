@@ -197,6 +197,9 @@ const forcePushQuery = `query($o:String!,$r:String!,$n:Int!,$c:String){repositor
 
 const forcePushJQ = `.data.repository.pullRequest.timelineItems | {nodes: [.nodes[] | {before: .beforeCommit.oid, after: .afterCommit.oid, actor: (.actor.login // ""), at: (.createdAt // "")}], next: .pageInfo.hasNextPage, cursor: (.pageInfo.endCursor // "")}`
 
+// compareProofFilesJQ is the file list PatchID checks against the API diff.
+const compareProofFilesJQ = `.files[]? | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}`
+
 // Diff reads the compare endpoint for the exact base...head pair: one
 // snapshot, bound to the SHAs the train checks and pins.
 func (g *GH) Diff(ctx context.Context, repository, base, head string) ([]FileChange, error) {
@@ -223,21 +226,18 @@ func (g *GH) Behind(ctx context.Context, repository, base, head string) (bool, e
 
 func (g *GH) PatchID(ctx context.Context, repository, base, head string) (string, error) {
 	path := "repos/" + repository + "/compare/" + base + "..." + head
-	raw, err := g.run(ctx, "api", path, "--jq", `{file_count: (.files | length), missing_patch: ([.files[] | select(.patch == null)] | length)}`)
+	raw, err := g.run(ctx, "api", path, "--jq", compareProofFilesJQ)
 	if err != nil {
 		if compareTooLarge(err) {
 			return "", ErrIncompleteDiff
 		}
 		return "", err
 	}
-	var meta struct {
-		FileCount    int `json:"file_count"`
-		MissingPatch int `json:"missing_patch"`
+	files, err := lines[FileChange](raw)
+	if err != nil {
+		return "", fmt.Errorf("decode compare file list: %w", err)
 	}
-	if err := json.Unmarshal(raw, &meta); err != nil {
-		return "", fmt.Errorf("decode compare completeness: %w", err)
-	}
-	if meta.FileCount >= MaxCompareFiles || meta.MissingPatch > 0 {
+	if len(files) >= MaxCompareFiles {
 		return "", ErrIncompleteDiff
 	}
 	// gh refuses to print a response holding terminal escape bytes (a
@@ -258,6 +258,9 @@ func (g *GH) PatchID(ctx context.Context, repository, base, head string) (string
 		}
 		return "", err
 	}
+	if mismatch := compareDiffMismatch(files, diff); mismatch != "" {
+		return "", fmt.Errorf("%w: %s", ErrIncompleteDiff, mismatch)
+	}
 	cmd := exec.CommandContext(ctx, "git", "patch-id", "--stable")
 	cmd.Stdin = bytes.NewReader(diff)
 	out, err := cmd.Output()
@@ -269,6 +272,165 @@ func (g *GH) PatchID(ctx context.Context, repository, base, head string) (string
 		return "", errors.New("git patch-id --stable returned no patch id")
 	}
 	return fields[0], nil
+}
+
+// compareDiffMismatch checks that a compare's file list and API diff describe
+// the same files and per-file line counts. It returns the mismatch detail.
+func compareDiffMismatch(files []FileChange, diff []byte) string {
+	const (
+		filesMismatch  = "the diff's files are not the compare's files"
+		countsMismatch = "the diff's added and removed lines are not the compare's counts"
+		zeroMismatch   = "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines"
+		cutMismatch    = "the diff is cut short inside a hunk"
+	)
+	type wantedFile struct {
+		file   FileChange
+		seen   bool
+		add    int
+		del    int
+		hunk   bool
+		index  bool
+		sim100 bool
+		from   bool
+		to     bool
+	}
+	wanted := make(map[string]*wantedFile, len(files))
+	for _, file := range files {
+		from := file.Path
+		if file.PreviousPath != "" {
+			from = file.PreviousPath
+		}
+		header := "diff --git a/" + from + " b/" + file.Path
+		if _, exists := wanted[header]; exists {
+			return filesMismatch + ": duplicate compare entry for " + strconv.Quote(file.Path)
+		}
+		wanted[header] = &wantedFile{file: file}
+	}
+	if len(files) == 0 && len(diff) == 0 {
+		return ""
+	}
+	lines := strings.Split(string(diff), "\n")
+	var current *wantedFile
+	oldLeft, newLeft := 0, 0
+	inHunk := false
+	finishHunk := func() string {
+		if inHunk && (oldLeft != 0 || newLeft != 0) {
+			name := ""
+			if current != nil {
+				name = current.file.Path
+			}
+			return cutMismatch + ": " + strconv.Quote(name)
+		}
+		inHunk = false
+		return ""
+	}
+	for _, line := range lines {
+		if inHunk {
+			if oldLeft == 0 && newLeft == 0 {
+				inHunk = false
+			} else {
+				switch {
+				case strings.HasPrefix(line, " "):
+					oldLeft--
+					newLeft--
+				case strings.HasPrefix(line, "-"):
+					oldLeft--
+					current.del++
+				case strings.HasPrefix(line, "+"):
+					newLeft--
+					current.add++
+				case strings.HasPrefix(line, `\ No newline at end of file`):
+					continue
+				default:
+					return cutMismatch + ": " + strconv.Quote(current.file.Path)
+				}
+				if oldLeft < 0 || newLeft < 0 {
+					return cutMismatch + ": " + strconv.Quote(current.file.Path)
+				}
+				continue
+			}
+		}
+		if strings.HasPrefix(line, "diff --git ") {
+			if mismatch := finishHunk(); mismatch != "" {
+				return mismatch
+			}
+			next, ok := wanted[line]
+			if !ok {
+				return filesMismatch + ": unexpected section " + strconv.Quote(line)
+			}
+			if next.seen {
+				return filesMismatch + ": duplicate section for " + strconv.Quote(next.file.Path)
+			}
+			next.seen = true
+			current = next
+			continue
+		}
+		if current == nil {
+			if line == "" {
+				continue
+			}
+			return filesMismatch + ": content before the first file section"
+		}
+		if strings.HasPrefix(line, "@@ ") {
+			old, new, ok := compareHunkLengths(line)
+			if !ok {
+				return cutMismatch + ": malformed hunk in " + strconv.Quote(current.file.Path)
+			}
+			current.hunk = true
+			oldLeft, newLeft, inHunk = old, new, true
+			continue
+		}
+		current.index = current.index || strings.HasPrefix(line, "index ")
+		current.sim100 = current.sim100 || line == "similarity index 100%"
+		current.from = current.from || line == "rename from "+current.file.PreviousPath
+		current.to = current.to || line == "rename to "+current.file.Path
+	}
+	if mismatch := finishHunk(); mismatch != "" {
+		return mismatch
+	}
+	for _, file := range files {
+		from := file.Path
+		if file.PreviousPath != "" {
+			from = file.PreviousPath
+		}
+		got := wanted["diff --git a/"+from+" b/"+file.Path]
+		if !got.seen {
+			return filesMismatch + ": missing section for " + strconv.Quote(file.Path)
+		}
+		if file.Additions == 0 && file.Deletions == 0 {
+			rename := file.PreviousPath != "" && got.sim100 && got.from && got.to
+			if got.hunk || (!got.index && !rename) {
+				return zeroMismatch + ": " + strconv.Quote(file.Path)
+			}
+			continue
+		}
+		if got.add != file.Additions || got.del != file.Deletions {
+			return countsMismatch + ": " + strconv.Quote(file.Path)
+		}
+	}
+	return ""
+}
+
+// compareHunkLengths reads the old and new lengths from a unified hunk header.
+func compareHunkLengths(line string) (old, new int, ok bool) {
+	fields := strings.Fields(line)
+	if len(fields) < 4 || fields[0] != "@@" || fields[3] != "@@" {
+		return 0, 0, false
+	}
+	parse := func(field string, sign byte) (int, bool) {
+		if len(field) < 2 || field[0] != sign {
+			return 0, false
+		}
+		_, length, hasLength := strings.Cut(field[1:], ",")
+		if !hasLength {
+			return 1, true
+		}
+		n, err := strconv.Atoi(length)
+		return n, err == nil && n >= 0
+	}
+	old, oldOK := parse(fields[1], '-')
+	new, newOK := parse(fields[2], '+')
+	return old, new, oldOK && newOK
 }
 
 // unknownEscapeFlag reports gh's own answer to a flag it does not carry.

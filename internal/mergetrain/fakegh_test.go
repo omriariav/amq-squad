@@ -55,14 +55,22 @@ type fakeState struct {
 	AlterAfterRebase []string `json:"alter_after_rebase,omitempty"`
 	// AdvanceBaseBeforeRebase moves the base after the train pins it.
 	AdvanceBaseBeforeRebase []string `json:"advance_base_before_rebase,omitempty"`
-	// TruncateAfterRebase omits a patch marker for the updated head.
+	// TruncateAfterRebase serves the updated head's diff without its last line.
 	TruncateAfterRebase []string `json:"truncate_after_rebase,omitempty"`
 	// CapCompareAfterRebase reports MaxCompareFiles for the updated head.
 	CapCompareAfterRebase []string `json:"cap_compare_after_rebase,omitempty"`
 	// RejectCompareAfterRebase makes the updated compare metadata return HTTP 422.
 	RejectCompareAfterRebase []string `json:"reject_compare_after_rebase,omitempty"`
-	CIName                   string   `json:"ci_name"`
-	FailMerge                bool     `json:"fail_merge,omitempty"`
+	// NoPatchFiles are files for which the completeness answer reports no patch.
+	NoPatchFiles []string `json:"no_patch_files,omitempty"`
+	// OmitDiffFiles are files whose whole section is left out of the diff answer.
+	OmitDiffFiles []string `json:"omit_diff_files,omitempty"`
+	// OmitDiffIndex are files whose index line is left out of the diff answer.
+	OmitDiffIndex []string `json:"omit_diff_index,omitempty"`
+	// ExtraAdditionFiles gain one addition in the proof's file-list answer.
+	ExtraAdditionFiles []string `json:"extra_addition_files,omitempty"`
+	CIName             string   `json:"ci_name"`
+	FailMerge          bool     `json:"fail_merge,omitempty"`
 	// LoseMergeResponse: the merge happens on the server, then the
 	// connection fails before the response (5 re-pass, P2-5).
 	LoseMergeResponse bool `json:"lose_merge_response,omitempty"`
@@ -171,6 +179,43 @@ func gitOut(dir string, args ...string) (string, error) {
 		"GIT_COMMITTER_NAME=owner", "GIT_COMMITTER_EMAIL=owner@example.com", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// gitBytes runs fixture git without trimming its output bytes.
+func gitBytes(dir string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=owner", "GIT_AUTHOR_EMAIL=owner@example.com",
+		"GIT_COMMITTER_NAME=owner", "GIT_COMMITTER_EMAIL=owner@example.com", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	return cmd.Output()
+}
+
+// fakeDiffSection removes one named file section or just its index line.
+func fakeDiffSection(diff []byte, path string, whole bool) []byte {
+	lines := bytes.SplitAfter(diff, []byte("\n"))
+	start, end := -1, len(lines)
+	for i, line := range lines {
+		if bytes.HasPrefix(line, []byte("diff --git ")) {
+			if start >= 0 {
+				end = i
+				break
+			}
+			if bytes.HasSuffix(bytes.TrimSuffix(line, []byte("\n")), []byte(" b/"+path)) {
+				start = i
+			}
+		}
+	}
+	if start < 0 {
+		return diff
+	}
+	if whole {
+		return bytes.Join(append(lines[:start:start], lines[end:]...), nil)
+	}
+	for i := start + 1; i < end; i++ {
+		if bytes.HasPrefix(lines[i], []byte("index ")) {
+			return bytes.Join(append(lines[:i:i], lines[i+1:]...), nil)
+		}
+	}
+	return diff
 }
 
 func fakeGH(statePath string, args []string) int {
@@ -430,12 +475,17 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 						return fail("gh: compare result unavailable (HTTP 422)")
 					}
 				}
-				status, _ := gitOut(s.Bare, "diff", "--name-only", base+"..."+head)
-				fileCount, missing := len(strings.Fields(status)), 0
-				for _, n := range s.TruncateAfterRebase {
-					pushes := pr(n).ForcePushes
-					if len(pushes) > 0 && pushes[len(pushes)-1].After == head {
-						missing = 1
+				numstat, _ := gitOut(s.Bare, "diff", "--numstat", "-M", base+"..."+head)
+				fileCount, missing := 0, 0
+				for _, line := range strings.Split(numstat, "\n") {
+					if line == "" {
+						continue
+					}
+					fileCount++
+					fields := strings.Split(line, "\t")
+					path := fields[len(fields)-1]
+					if fields[0] == "-" || fields[1] == "-" || slices.Contains(s.NoPatchFiles, path) {
+						missing++
 					}
 				}
 				for _, n := range s.CapCompareAfterRebase {
@@ -448,21 +498,61 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 				break
 			}
 			if slices.Contains(args, "Accept: application/vnd.github.diff") {
-				diff, _ := gitOut(s.Bare, "diff", "--binary", base+"..."+head)
+				diff, _ := gitBytes(s.Bare, "diff", "--binary", base+"..."+head)
+				for _, path := range s.OmitDiffFiles {
+					diff = fakeDiffSection(diff, path, true)
+				}
+				for _, path := range s.OmitDiffIndex {
+					diff = fakeDiffSection(diff, path, false)
+				}
+				for _, n := range s.TruncateAfterRebase {
+					pushes := pr(n).ForcePushes
+					if len(pushes) > 0 && pushes[len(pushes)-1].After == head {
+						trimmed := bytes.TrimSuffix(diff, []byte("\n"))
+						if cut := bytes.LastIndexByte(trimmed, '\n'); cut >= 0 {
+							diff = trimmed[:cut+1]
+						}
+					}
+				}
 				// gh 2.100.0, measured by the lead on #948's diff: a
 				// response holding terminal escape bytes is refused, also
 				// when captured (exit 1, no bytes, these words), unless the
 				// flag is passed (brief 320-train-escape-legacy, E1)
-				if strings.Contains(diff, "\x1b") && !s.OldGH && !allowEscape {
+				if bytes.Contains(diff, []byte("\x1b")) && !s.OldGH && !allowEscape {
 					return fail("the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway")
 				}
-				fmt.Fprintln(stdout, diff)
+				// The API diff is served byte for byte: trimming loses a final
+				// blank context line and makes a complete hunk look cut short.
+				_, _ = stdout.Write(diff)
 				break
 			}
 			if slices.Contains(args, ".behind_by") {
 				behind, _ := gitOut(s.Bare, "rev-list", "--count", head+".."+base)
 				fmt.Fprintln(stdout, behind)
 				break
+			}
+			if slices.Contains(args, compareProofFilesJQ) {
+				capped := false
+				for _, n := range s.RejectCompareAfterRebase {
+					pushes := pr(n).ForcePushes
+					if len(pushes) > 0 && pushes[len(pushes)-1].After == head {
+						return fail("gh: compare result unavailable (HTTP 422)")
+					}
+				}
+				for _, n := range s.CapCompareAfterRebase {
+					pushes := pr(n).ForcePushes
+					if len(pushes) > 0 && pushes[len(pushes)-1].After == head {
+						for i := 0; i < MaxCompareFiles; i++ {
+							out, _ := json.Marshal(FileChange{Path: fmt.Sprintf("capped/%03d.txt", i)})
+							fmt.Fprintln(stdout, string(out))
+						}
+						capped = true
+						break
+					}
+				}
+				if capped {
+					break
+				}
 			}
 			numstat, _ := gitOut(s.Bare, "diff", "--numstat", "-M", base+"..."+head)
 			status, _ := gitOut(s.Bare, "diff", "--name-status", "-M", base+"..."+head)
@@ -479,6 +569,9 @@ func fakeGHRun(statePath string, args []string, stdout, stderr io.Writer) int {
 					fc.PreviousPath, fc.Path, fc.Status = ns[1], ns[2], "renamed"
 				} else if ns[0] == "A" {
 					fc.Status = "added"
+				}
+				if slices.Contains(s.ExtraAdditionFiles, fc.Path) {
+					fc.Additions++
 				}
 				out, _ := json.Marshal(fc)
 				fmt.Fprintln(stdout, string(out))
