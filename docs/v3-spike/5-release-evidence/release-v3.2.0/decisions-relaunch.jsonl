@@ -1,0 +1,9 @@
+{"at":"2026-11-12T11:13:10.990876Z","kind":"roster_relaunch_requested","reason":"the reviewer seat is refused at prepare (seat_head_detached_unmerged) and dev2 closed on a lease expiry; 3.2.0 cut"}
+{"at":"2026-11-12T11:13:10.99696Z","kind":"seat_closed","seat":"dev","reason":"roster_relaunch"}
+{"at":"2026-11-12T11:13:10.999791Z","kind":"seat_closed","seat":"reviewer","reason":"roster_relaunch"}
+{"at":"2026-11-12T11:13:11.003091Z","kind":"roster_reloaded","reason":"squad.yaml compiled again at the relaunch's drain: a roster of 3 seats; added none; removed none (each closed in the drain, not launched again); at most 4 leases at once"}
+{"at":"2026-11-12T11:13:11.006831Z","kind":"roster_launched","reason":"launch 0f8d18e46d01e76695f6de05a06ae55c: 3 seats in one apply"}
+{"at":"2026-11-12T11:13:11.011026Z","kind":"seat_up","seat":"dev","pool":"codex:gpt-5.6-terra:medium"}
+{"at":"2026-11-12T11:13:11.014936Z","kind":"seat_up","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-12T11:13:11.019115Z","kind":"seat_up","seat":"dev2","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-12T11:13:11.02288Z","kind":"dispatched","task_id":"t179","seat":"dev2","pool":"codex:gpt-5.6-sol:high"}

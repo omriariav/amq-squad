@@ -1,0 +1,14 @@
+{"at":"2026-11-12T08:31:34.341521Z","kind":"dispatched","task_id":"t177","seat":"dev2","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-12T08:33:29.282612Z","kind":"lease_renewed","task_id":"t177","seat":"dev2","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-12T08:35:57.992493Z","kind":"commit_running","task_id":"t177","seat":"dev2","reason":"running"}
+{"at":"2026-11-12T08:36:02.015802Z","kind":"completed","task_id":"t177","seat":"dev2"}
+{"at":"2026-11-12T08:36:02.018838Z","kind":"pr_bound","task_id":"t177","seat":"dev2","reason":"omriariav/amq-squad pr 983 head 108778f14496c8dacc85f4cf70c8e5565fb92085"}
+{"at":"2026-11-12T08:59:33.057203Z","kind":"dispatched","task_id":"t178","seat":"dev2","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-12T09:01:13.167137Z","kind":"lease_renewed","task_id":"t178","seat":"dev2","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-12T09:45:39.31946Z","kind":"seat_cleaned","seat":"reviewer","reason":"an earlier attempt's uncommitted diff kept on the ledger and removed from the worktree"}
+{"at":"2026-11-12T09:45:40.893326Z","kind":"lease_expired","task_id":"t178","seat":"dev2","reason":"expired"}
+{"at":"2026-11-12T09:45:40.896752Z","kind":"seat_closing","task_id":"t178","seat":"dev2","reason":"lease_expired"}
+{"at":"2026-11-12T09:45:40.899906Z","kind":"dispatched","task_id":"t178","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-12T09:45:40.903725Z","kind":"seat_closed","seat":"dev2","reason":"lease_expired"}
+{"at":"2026-11-12T09:51:20.543677Z","kind":"seat_prepare_failed","task_id":"t179","seat":"reviewer","reason":"the commit ledger of seat reviewer: seat_head_detached_unmerged: seat reviewer: the worktree's branch seat/reviewer-t178 holds an unrecorded commit 91081d70ea66e5c6c0f7747935328fc1467909a9; the harness never discards a local commit"}
+{"at":"2026-11-12T09:51:22.35277Z","kind":"seat_prepare_suppressed","task_id":"t179","seat":"reviewer","reason":"the same prepare failure repeats; further repeats are counted, not logged, until the task, the seat or the reason changes: the commit ledger of seat reviewer: seat_head_detached_unmerged: seat reviewer: the worktree's branch seat/reviewer-t178 holds an unrecorded commit 91081d70ea66e5c6c0f7747935328fc1467909a9; the harness never discards a local commit"}
