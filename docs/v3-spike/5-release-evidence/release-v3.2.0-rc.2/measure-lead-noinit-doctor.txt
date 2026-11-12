@@ -1,0 +1,40 @@
+STATUS  CHECK                            DETAIL
+fail    amq version                      amq env failed: amq env: exit status 5: cannot determine an eligible AMQ root while cwd is inside Git worktree or bare repository /private/tmp/ctl972ctl-codex-noinit.6SzIqX/proj: no project .amqrc, repo-local .agent-mail, or explicit root was found; implicit ~/.amqrc is ineligible here; --session selects a session but does not authorize a base root; run 'amq coop init' (or 'amq coop exec <agent>') in this repository to create its queue; for a bare repository, cd into a worktree or pass --root explicitly; alternatively configure this repository, set AMQ_GLOBAL_ROOT or AM_ROOT, or pass --root explicitly
+ok      launchapi compatibility          contract 0.61.1 (13 negotiable feature(s))
+ok      amq vs launchapi adoption floor  amq version unavailable; see 'amq version' check
+ok      amq identity pin                 no injected AMQ agent-shell identity
+fail    amq ops                          amq env failed: amq env: exit status 5: cannot determine an eligible AMQ root while cwd is inside Git worktree or bare repository /private/tmp/ctl972ctl-codex-noinit.6SzIqX/proj: no project .amqrc, repo-local .agent-mail, or explicit root was found; implicit ~/.amqrc is ineligible here; --session selects a session but does not authorize a base root; run 'amq coop init' (or 'amq coop exec <agent>') in this repository to create its queue; for a bare repository, cd into a worktree or pass --root explicitly; alternatively configure this repository, set AMQ_GLOBAL_ROOT or AM_ROOT, or pass --root explicitly
+ok      amq-squad on PATH                matches this build (v3.2.0-rc.2) at /private/tmp/ctl972ctl-codex-noinit.6SzIqX/bin/amq-squad
+warn    sealed ledger compatibility      could not locate the session: amq env: exit status 5: cannot determine an eligible AMQ root while cwd is inside Git worktree or bare repository /private/tmp/ctl972ctl-codex-noinit.6SzIqX/proj: no project .amqrc, repo-local .agent-mail, or explicit root was found; implicit ~/.amqrc is ineligible here; --session selects a session but does not authorize a base root; run 'amq coop init' (or 'amq coop exec <agent>') in this repository to create its queue; for a bare repository, cd into a worktree or pass --root explicitly; alternatively configure this repository, set AMQ_GLOBAL_ROOT or AM_ROOT, or pass --root explicitly
+ok      amq installed floor              <home>/go/bin/amq 0.116.2 (floor 0.116.2)
+ok      amq-remote installed floor       <home>/go/bin/amq-remote 0.116.2 (floor 0.116.2)
+ok      amq-owner-sign installed floor   <home>/go/bin/amq-owner-sign 0.116.2 (floor 0.116.2)
+warn    tool/claude                      2.1.319 at <home>/.local/bin/claude; launch API verified 2.1.233 (newer); not logged in
+ok      tool/codex                       0.166.0 at /opt/homebrew/bin/codex; launch API verified 0.163.0 (newer); logged in (file)
+ok      tool/pi                          not on PATH (optional)
+ok      tool/grok                        1.0.25 at <home>/.local/bin/grok; launch API verified 1.0.5 (newer); login state unknown
+ok      tool/cursor-agent                not on PATH (optional)
+ok      tool/ollama                      not on PATH (optional)
+ok      tool/amq                         0.116.2 at <home>/go/bin/amq; launch API verified 0.116.2 (match)
+ok      tool/amq-remote                  0.116.2 at <home>/go/bin/amq-remote
+ok      tool/tmux                        3.7 at /opt/homebrew/bin/tmux
+warn    tool/gh                          2.100.0 at /opt/homebrew/bin/gh; not logged in
+ok      host                             RAM 64 GB, GPU Apple M5 Max (unified memory)
+warn    registry                         60 entries, 40 verified (the lead proposes seats from these only); /private/tmp/ctl972ctl-codex-noinit.6SzIqX/home/.amq-squad/registry.yaml absent (run 'amq-squad doctor --write-registry')
+ok      pi runtime                       pi 1.3.0 not unpacked yet; the first lead or pi seat launch unpacks it
+ok      sleep                            system sleep after 1 min, currently sleep prevented by coreaudiod, caffeinate, ChatGPT
+warn    amq-remote login service         no launchd agent for amq-remote under ~/Library/LaunchAgents; remote access stops at logout or reboot
+warn    amq-remote login service state   amq-remote login service is absent for root /private/tmp/ctl972ctl-codex-noinit.6SzIqX/home/.amq/remote/root: nothing restarts the endpoint after a reboot; run amq-remote service install --root /private/tmp/ctl972ctl-codex-noinit.6SzIqX/home/.amq/remote/root
+warn    codex trust                      codex-cli does not trust /private/tmp/ctl972ctl-codex-noinit.6SzIqX/proj; a Codex seat stops on its folder-trust prompt. Run 'amq-squad trust /private/tmp/ctl972ctl-codex-noinit.6SzIqX/proj' for the owner-run steps
+ok      codex notify fan-out             absent (candidate, plan 16.8; 'amq-squad trust' prints the line)
+ok      codex wake dialog hook           AMQ's Codex dialog hook is in <home>/.codex/hooks.json for all 6 events, so Codex seats launch with an AMQ wake; 'amq doctor --ops' reads whether Codex trusts it
+warn    codex activity hook trust        codex seats will not renew on their own until you trust the amq-squad hooks: launch one Codex seat, run /hooks, and trust the three /<session-flags>/config.toml amq-squad activity entries. The trust covers these exact command strings: /<session-flags>/config.toml:post_tool_use:0:0 = '/private/tmp/ctl972ctl-codex-noinit.6SzIqX/bin/amq-squad' evidence ingest --me "$AM_ME"; /<session-flags>/config.toml:stop:0:0 = '/private/tmp/ctl972ctl-codex-noinit.6SzIqX/bin/amq-squad' evidence ingest --me "$AM_ME"; /<session-flags>/config.toml:stop:0:1 = AMQ_DIALOG_HOOK=1 [ -n "${AM_ME-}" ] && { case "${AM_ROOT-}" in */./*|*/../*|*/.|*/..) false ;; /*[[:alnum:]._/-]) ;; *) false ;; esac && case "$AM_ME" in *[![:alnum:]_-]*) false ;; esac && [ -d "$AM_ROOT/agents/$AM_ME" ] && [ ! -e "$AM_ROOT/agents/$AM_ME/.wake.dialog" ] && [ ! -L "$AM_ROOT/agents/$AM_ME/.wake.dialog" ]; } && exit 0; [ -n "${AM_ME-}" ] || [ -d '/private/tmp/ctl972ctl-codex-noinit.6SzIqX/home/.amq/codex-threads/current' ] || exit 0; '<home>/go/bin/amq' --no-update-check wake dialog --harness codex close || true. Reinstalling amq-squad or amq at another path changes the command string and drops that trust.
+ok      shell profile                    no exported *_API_KEY, *_TOKEN or *_SECRET names
+ok      grants                           default+/private/tmp/ctl972ctl-codex-noinit.6SzIqX/proj/squad.yaml (owner file /private/tmp/ctl972ctl-codex-noinit.6SzIqX/home/.amq-squad/grants.yaml, mode absent); mode auto; seat cap 12 per session
+ok      routing                          default table: 6 classes, 11 chain entries, exploration_share 0.05
+warn    gh pin                           tool_unpinned: the registry pins no gh (PRs and https pushes use only a pinned gh, never PATH); to pin it, add to /private/tmp/ctl972ctl-codex-noinit.6SzIqX/home/.amq-squad/registry.yaml: pins: - name: gh, path: /opt/homebrew/Cellar/gh/2.100.0/bin/gh, sha256: 1179745d43ea43dff3fa1f0e34bfb204e8f99232204f106c71ca8c2e0f6cb41a
+warn    claude seat token                Claude seats are refused (claude_token_insecure): /private/tmp/ctl972ctl-codex-noinit.6SzIqX/home/.amq-squad/claude-token: lstat /private/tmp/ctl972ctl-codex-noinit.6SzIqX/home/.amq-squad/claude-token: no such file or directory (the owner runs `claude setup-token` and writes the token there, mode 0600)
+ok      status contract                  schema 1: the golden fixture round-trips through this build and a produced document is additive against it
+ok      squad.yaml golden                schema 1: the golden fixture parses to the expected structure
+ok      pi runtime versions              0 kept under /private/tmp/ctl972ctl-codex-noinit.6SzIqX/home/.amq-squad/runtime
+error: doctor: 2 check(s) failed

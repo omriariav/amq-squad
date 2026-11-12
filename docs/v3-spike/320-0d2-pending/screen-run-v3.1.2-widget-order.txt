@@ -1,0 +1,10 @@
+PASS fixture-v3.1.2-widget-order.json
+tasks (76)
+  t7 cancelled: 3.0.x: redact linearity test as an in-process ratio (no w...
+  t24 cancelled: 3.0.2 blocker: the commit step pushes the seat branch bef...
+  t9 cancelled: 3.0.x: seats are launched with AMQ wake enabled so the sc...
+  ... (widget truncated)
+
+t72 is task row 41: t72 waiting: t71 hold its files
+t73 is task row 42: t73 waiting: t71 hold its files
+t74 is task row 43: t74 waiting: t71 hold its files

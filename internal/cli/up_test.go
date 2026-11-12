@@ -273,6 +273,25 @@ func TestUpOnAProjectWithNoAMQRootCreatesItAndLaunches(t *testing.T) {
 	}
 }
 
+func TestUpCompilesBeforeCreatingAnAbsentInstallTarget(t *testing.T) {
+	f, _ := upWorld(t)
+	target := filepath.Join(t.TempDir(), "amq-squad")
+	source := filepath.Join(f.proj, "build", "pi", "amq-squad")
+	r, err := runUpJSON(t, f.proj, "--binary", source, "--to", target)
+	if err != nil {
+		t.Fatalf("up to an absent target: %v\n%+v", err, r.Steps)
+	}
+	if got := stepNames(r); got != "compile:ok install:ok session:ok doctor:ok lead:ok tmux:ok roster:ok" {
+		t.Fatalf("steps %s", got)
+	}
+	if raw, err := os.ReadFile(target); err != nil || string(raw) != "#!/bin/sh\necho tagged build\n" {
+		t.Fatalf("installed target = %q, err %v", raw, err)
+	}
+	if len(f.newCmd) != 3 || f.newCmd[0] != target {
+		t.Fatalf("lead command = %q, want resolved installed target %q", f.newCmd, target)
+	}
+}
+
 // Row 13: the seven steps run in order against the fake tmux and AMQ; the
 // install copies the tagged build to a temporary name and renames it over
 // the installed binary, never writing the old file in place (its inode is

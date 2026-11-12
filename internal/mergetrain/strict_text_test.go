@@ -17,14 +17,14 @@ func TestStrictPlanOwnerTextIsWordsFirst(t *testing.T) {
 		Protection: mergetrain.Protection{Strict: true},
 		PRs: []mergetrain.PlanPR{
 			{Number: 1, Head: head, Status: "planned", RebaseForCI: true, RebaseRule: mergetrain.RuleStrictUpToDate, RebaseReason: "GitHub requires the branch to be up to date before merging"},
-			{Number: 2, Head: head, Status: "refused", Refusals: []mergetrain.Refusal{{Rule: mergetrain.RuleStrictUpToDate, Detail: "the branch is behind and the train cannot bring it up to date: the PR conflicts with the current base"}}},
+			{Number: 2, Head: head, Status: "refused", Refusals: []mergetrain.Refusal{{Rule: mergetrain.RuleStrictUpToDate, Detail: "GitHub requires the branch to be up to date before merging, and the train could not bring it up to date. No gate overrides GitHub's rule. Run the train again; if it repeats, the lead closes the PR and redoes the task on the current base. (the PR conflicts with the current base)"}}},
 		},
 	}
 	text := cli.FormatMergeTrain(result)
 	for _, want := range []string{
 		"GitHub requires each branch to be up to date, so every PR after the first is brought up to date and waits for its checks (1 more check run)",
 		"GitHub requires the branch to be up to date before merging; the train brings it up to date and waits for CI",
-		"refused: the branch is behind and the train cannot bring it up to date: the PR conflicts with the current base",
+		"refused: GitHub requires the branch to be up to date before merging, and the train could not bring it up to date. No gate overrides GitHub's rule. Run the train again; if it repeats, the lead closes the PR and redoes the task on the current base. (the PR conflicts with the current base)",
 		"rule: " + mergetrain.RuleStrictUpToDate,
 		"head: " + head,
 	} {
@@ -61,5 +61,25 @@ func TestChangedPatchRefusalTextPutsProofBelowRule(t *testing.T) {
 	above, _, _ := strings.Cut(text, "\n\trule:")
 	if regexp.MustCompile(`[0-9a-f]{8,}|rebase_patch_changed`).MatchString(strings.Split(above, "\n")[2]) {
 		t.Fatalf("patch refusal summary carries a code or head: %q", strings.Split(above, "\n")[2])
+	}
+}
+
+func TestUnliftableRefusalsPrintTheActionableWordsWithoutAGate(t *testing.T) {
+	strict := "GitHub requires the branch to be up to date before merging, and the train could not bring it up to date. No gate overrides GitHub's rule. Run the train again; if it repeats, the lead closes the PR and redoes the task on the current base."
+	conflict := "The branch conflicts with the base, so the train cannot update it. No gate overrides GitHub's rule. The lead closes the PR and redoes the task on the current base (a seat never merges the base by hand)."
+	merged := "PR #3 was already merged at another head (merge abc123, bound head def456); nothing to land; the lead checks task t3's record against what merged."
+	result := mergetrain.Result{Run: "run", Repository: "o/r", Base: "main", PRs: []mergetrain.PlanPR{
+		{Number: 1, Head: "h1", Status: "refused", Refusals: []mergetrain.Refusal{{Rule: mergetrain.RuleStrictUpToDate, Detail: strict}}},
+		{Number: 2, Head: "h2", Status: "refused", Refusals: []mergetrain.Refusal{{Rule: mergetrain.RuleUpdateConflict, Detail: conflict}}},
+		{Number: 3, Task: "t3", Head: "h3", Status: "refused", Refusals: []mergetrain.Refusal{{Rule: mergetrain.RulePRState, Detail: merged}}},
+	}}
+	text := cli.FormatMergeTrain(result)
+	for _, want := range []string{strict, conflict, merged} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("owner text missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "\n\tgate ") {
+		t.Fatalf("unliftable refusal printed a gate:\n%s", text)
 	}
 }

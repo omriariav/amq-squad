@@ -1,0 +1,41 @@
+{"at":"2026-11-05T12:26:07.775203Z","kind":"seat_adopted","seat":"dev","pool":"codex:gpt-5.6-terra:medium","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-05T12:26:07.775251Z","kind":"seat_adopted","seat":"reviewer","pool":"codex:gpt-5.6-sol:high","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-05T12:26:07.77526Z","kind":"scheduler_started","reason":"incarnation e8d657db060c"}
+{"at":"2026-11-05T12:26:09.362983Z","kind":"seat_cleaned","seat":"reviewer","reason":"an earlier attempt's uncommitted diff kept on the ledger and removed from the worktree"}
+{"at":"2026-11-05T12:26:10.449937Z","kind":"roster_adopted","seat":"dev,reviewer","reason":"every roster seat is live from the previous incarnation; no launch"}
+{"at":"2026-11-05T12:26:10.449952Z","kind":"dispatched","task_id":"t70","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-05T12:26:10.45026Z","kind":"decision_socket_open","reason":"/Users/omri/code/amq-squad/.agent-mail/v31/extensions/amq-squad/launch/scheduler-decide.sock"}
+{"at":"2026-11-05T12:26:10.497657Z","kind":"scheduler_stopped"}
+{"at":"2026-11-05T12:27:18.099609Z","kind":"seat_adopted","seat":"dev","pool":"codex:gpt-5.6-terra:medium","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-05T12:27:18.099665Z","kind":"seat_adopted","seat":"reviewer","pool":"codex:gpt-5.6-sol:high","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-05T12:27:18.099675Z","kind":"scheduler_started","reason":"incarnation 27d56d896552"}
+{"at":"2026-11-05T12:27:18.32162Z","kind":"roster_adopted","seat":"dev,reviewer","reason":"every roster seat is live from the previous incarnation; no launch"}
+{"at":"2026-11-05T12:27:18.321956Z","kind":"decision_socket_open","reason":"/Users/omri/code/amq-squad/.agent-mail/v31/extensions/amq-squad/launch/scheduler-decide.sock"}
+{"at":"2026-11-05T12:27:18.719829Z","kind":"scheduler_stopped"}
+{"at":"2026-11-05T12:28:14.653519Z","kind":"seat_adopted","seat":"dev","pool":"codex:gpt-5.6-terra:medium","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-05T12:28:14.653566Z","kind":"seat_adopted","seat":"reviewer","pool":"codex:gpt-5.6-sol:high","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-05T12:28:14.653573Z","kind":"scheduler_started","reason":"incarnation a50f0aa880ed"}
+{"at":"2026-11-05T12:28:14.907198Z","kind":"exit_refused","task_id":"t64","seat":"reviewer","reason":"ledger_tampered at expired"}
+{"at":"2026-11-05T12:28:14.907216Z","kind":"roster_incomplete","seat":"reviewer","reason":"adopted dev; no launch: AMQ refuses a fresh seat into the present binding (binding_present_without_resumable_conversation), so a task for a missing seat's pool blocks for the lead's relaunch (amq-squad scheduler relaunch)"}
+{"at":"2026-11-05T12:28:14.907221Z","kind":"seat_closed","seat":"reviewer","reason":"exit_refused"}
+{"at":"2026-11-05T12:28:14.907628Z","kind":"decision_socket_open","reason":"/Users/omri/code/amq-squad/.agent-mail/v31/extensions/amq-squad/launch/scheduler-decide.sock"}
+{"at":"2026-11-05T12:37:31.318483Z","kind":"lease_expired","task_id":"t70","seat":"reviewer","reason":"expired"}
+{"at":"2026-11-05T12:37:31.321491Z","kind":"exit_refused","task_id":"t70","seat":"reviewer","reason":"ledger_tampered at expired"}
+{"at":"2026-11-05T12:37:31.326881Z","kind":"seat_request_failed","task_id":"t70","pool":"claude:opus:high","reason":"no free seat in the squad's seat list for pool claude:opus:high (no roster seat serves it)"}
+{"at":"2026-11-05T12:43:50.153827Z","kind":"roster_relaunch_requested","reason":"reviewer seat is gone and t70 is waiting on it"}
+{"at":"2026-11-05T12:43:50.153847Z","kind":"seat_closed","seat":"dev","reason":"roster_relaunch"}
+{"at":"2026-11-05T12:43:50.153852Z","kind":"roster_reloaded","reason":"squad.yaml compiled again at the relaunch's drain: a roster of 2 seats; added none; removed none (each closed in the drain, not launched again); at most 3 leases at once"}
+{"at":"2026-11-05T12:43:50.153855Z","kind":"roster_launched","reason":"launch 3a01e588a4e0517e9e53959ff7ea312e: 2 seats in one apply"}
+{"at":"2026-11-05T12:43:50.153858Z","kind":"seat_up","seat":"dev","pool":"codex:gpt-5.6-terra:medium"}
+{"at":"2026-11-05T12:43:50.153861Z","kind":"seat_up","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-05T12:44:32.803075Z","kind":"seat_request_failed","task_id":"t70","pool":"claude:opus:high","reason":"no free seat in the squad's seat list for pool claude:opus:high (no roster seat serves it)"}
+{"at":"2026-11-05T12:45:08.818662Z","kind":"seat_first_message","seat":"dev","reason":"2026-11-05T12:45:07.27595Z"}
+{"at":"2026-11-05T12:45:14.797574Z","kind":"seat_prepare_failed","task_id":"t71","seat":"reviewer","reason":"the commit ledger of seat reviewer: commit ledger reviewer: ledger_tampered: the tag of commits.reviewer link 150 fails"}
+{"at":"2026-11-05T13:50:10.848042Z","kind":"seat_prepare_failed","task_id":"t71","seat":"reviewer","reason":"the commit ledger of seat reviewer: commit ledger reviewer: ledger_tampered: the tag of commits.reviewer link 150 fails"}
+{"at":"2026-11-05T13:50:12.543289Z","kind":"scheduler_stopped"}
+{"at":"2026-11-05T13:50:14.714573Z","kind":"seat_adopted","seat":"dev","pool":"codex:gpt-5.6-terra:medium","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-05T13:50:14.714621Z","kind":"seat_adopted","seat":"reviewer","pool":"codex:gpt-5.6-sol:high","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-05T13:50:14.714632Z","kind":"scheduler_started","reason":"incarnation 5ecd55eb4fda"}
+{"at":"2026-11-05T13:50:17.020252Z","kind":"roster_adopted","seat":"dev,reviewer","reason":"every roster seat is live from the previous incarnation; no launch"}
+{"at":"2026-11-05T13:50:17.020276Z","kind":"dispatched","task_id":"t71","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-05T13:50:17.020687Z","kind":"decision_socket_open","reason":"/Users/omri/code/amq-squad/.agent-mail/v31/extensions/amq-squad/launch/scheduler-decide.sock"}

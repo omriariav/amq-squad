@@ -1,0 +1,9 @@
+2026-11-07T16:39:19Z stopped v31 attach pid 12715
+2026-11-07T16:39:23Z started v320rc1 attach pid 62631
+2026-11-07T16:44:04Z stopped v320rc1 attach pid 62631
+2026-11-07T16:44:07Z restored v31 attach pid 66439
+2026-11-07T16:46:03Z SIGTERM to the 3.1.2 lead pid 50589 (owner approved the restart; working 0)
+2026-11-07T16:53:51Z reviewer worktree: git update-index --refresh (the relaunch's roster plan refused: Entry MIGRATION.md not uptodate; status clean; same fix as 2026-11-05)
+2026-11-07T16:55:32Z SIGTERM to the rc.1 lead pid 69669 (its scheduler had stopped after the relaunch's failed roster launch; restart under the owner's restart and relaunch approvals)
+2026-11-07T16:59:54Z Codex hook trust done by this session through tmux under the owner's delegation: dev (pane %136) and reviewer (pane %137), /hooks review, trusted exactly 3 session-flag entries each: PostToolUse and Stop "'/Users/omri/go/bin/amq-squad' evidence ingest --me \"$AM_ME\"" and the Stop AMQ_DIALOG_HOOK dialog-close copy; Stop 3/3 and PostToolUse 1/1 active after
+2026-11-07T17:41:12Z pre-relaunch: git update-index --refresh in the clean dev and reviewer worktrees (avoid the stat-only not-uptodate refusal)

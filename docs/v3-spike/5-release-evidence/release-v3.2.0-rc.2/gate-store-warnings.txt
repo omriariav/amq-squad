@@ -1,0 +1,4 @@
+warnings[] of `amq-squad status --session v31 --json`, generated_at 2026-11-11T13:54:53.399917Z, producer_version v3.2.0-rc.2: 3 lines, whole.
+gate store: gate clear-0a227ca8d88dc97c65c540a4d0fa18a7 is a legacy quarantine_clear gate (a kind this build no longer carries); skipped
+gate store: gate clear-a48ee38fac1fd3503e010e1c66554a58 is a legacy quarantine_clear gate (a kind this build no longer carries); skipped
+gate store: gate clear-a93731e99c650d475b3a19ed6854f9a6 is a legacy quarantine_clear gate (a kind this build no longer carries); skipped

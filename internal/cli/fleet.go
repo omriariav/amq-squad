@@ -145,7 +145,7 @@ func fleetStatus(path, version string) (fleet.Registry, status.Fleet, error) {
 			if err != nil {
 				why = err.Error()
 			}
-			st.Warnings = append(st.Warnings, fleet.WarningRootUnavailable+": squad "+s.Name+" root "+s.Root+": "+why)
+			st.Warnings = append(st.Warnings, status.PlainText(fleet.WarningRootUnavailable+": squad "+s.Name+" root "+s.Root+": "+why, false))
 		}
 		return st
 	}

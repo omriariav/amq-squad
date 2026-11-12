@@ -1,0 +1,24 @@
+ -g extended-keys on` to ~/.tmux.conf and restart tmux.
+────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+amq-squad: lead cto (pid 15222, pane %149) · root /Users/omri/code/amq-squad...
+seats (3)
+  cto  -  stopped
+  dev  codex gpt-5.6-terra medium  idle  · up in 3.4s, first message 39007.6s
+  reviewer  codex gpt-5.6-sol high  waiting: on your answer to its question  ...
+  the roster came up without seat dev2; ask the lead to relaunch the roster
+tasks (161)
+  161 closed
+train
+  running: none
+  last run: merged a PR, 3h ago; PRs #961; 1 merged
+waiting on you (0)
+  Nothing is waiting on you.
+  ! the gate store could not be read; its error is below the line
+----------
+  roster_incomplete: dev2 adopted dev,reviewer; no launch: AMQ refuses a fres...
+  train last run: mt-20261111T104912Z-0a791de1 merge
+  gate store: gate clear-0a227ca8d88dc97c65c540a4d0fa18a7 is a legacy quarant...
+~/code/amq-squad (v3)
+0.0%/131k (auto)                                            qwen3.6:27b • medium

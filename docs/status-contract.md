@@ -41,7 +41,7 @@ anywhere else, or a null document, fails the check.
 | `gates[]` | gate records of the gate store: `id`, `action_class` (the operatorauth action), `target_digest`, `state` (`open`, `accepted`, `denied`, `expired`), `raised_by`, `question` (additive, brief 3.1.1-1: the question's plain lines, the text above its rule as the owner reads it on the phone, lines joined by `\n`; `""` for a gate raised before 3.1.1; the lead's screen shows it verbatim) |
 | `actions.new_task` | the "new task" action |
 | `scheduler` | `max_seats`, `live_seats`, `usage_limit_since`, `usage_limit_until`; and from the scheduler's launch record (brief 31-1): `pid`, `started_at` (its own admission, null before a scheduler ran), `launch_start` (the squad launch's start, `AMQ_SQUAD_START`: the launch budget's first mark; null when the scheduler was started by hand), `live` (its pid answers) |
-| `warnings[]` | read problems, one line each; a partial status is still valid |
+| `warnings[]` | read problems, one line each; a partial status is still valid. Two forms name the gate store. `gate store: <error>` is a failed read of the store's directory. `gate store legacy: gate <id> is a legacy <kind> gate (a kind this build no longer carries); skipped` is one stored record that was read and skipped, one line per record (3.2.0; from 3.1.0 through 3.2.0-rc.2 this line carried the `gate store: ` prefix). The lead's screen says the store could not be read for the first form only, and counts the second below its rule |
 | `lead` | the holder of the root's lead lock, from `lead.json` (brief 31-1), null when no lead took it: `handle`, `pid`, `start` (its raw start stamp), `pane` (its tmux pane, empty outside tmux), `recorded_at`, `live` (the pid answers with its recorded start stamp), `attach` (`tmux attach -t <pane>`, empty without a pane) |
 | `decisions[]` | the scheduler's decisions log, its last 30 lines oldest first: `at`, `kind`, `seat`, `task_id`, `reason`, `reason_code`, `stage`. Refusals are among them (`exit_refused`, `roster_launch_failed`, `seat_not_up`, `commit_refused`, `up_stopped_lead`, ...) |
 | `train` | the merge train's audit log: `runs[]`, its last two runs newest first (`run`, `started_at`, `last_at`, `last_kind`, `repository`, `base`, `prs`, `merged`, `refusal`, the run's newest refusal or stop, `done`: it stopped, it was a plan, or every PR of its batch merged, `dry_run`); `alerts[]`, the owner alerts (`id`, `kind`, `detail`, `gate_id`, `at`) |
@@ -98,15 +98,20 @@ launch budget:
 
 Task row: `id`, `title`, `class`, `task_state` (the store state), `state`,
 `reason_code`, `bucket`, `bucket_marker`, `pool` (`{runtime, model,
-effort}` or null), `lease_holder`, `lease_expires_at`, `lease_claimed`,
-`attempt`, `wait_reason`, `block_reason`, `depends_on`, `project_path`,
+effort}` or null), `lease_holder`, `lease_expires_at`, `budget` (nanoseconds),
+`budget_ends_at`, `lease_claimed`, `attempt`, `wait_reason`, `block_reason`, `depends_on`, `project_path`,
 `created_at`, `updated_at`; and (brief 31-1) `evidence`, `pr_repository`,
 `pr_number`, `pr_head` (the PR the commit step, or the train's rebase,
 bound to it; empty and 0 when none); `wait_holders`, for a pending task
 whose `wait_reason` is `file_lock`, the ids of the tasks holding the lock by
 the task store's rule (in progress or blocked, declared files overlapping),
 `[]` otherwise; empty under `file_lock` means no task holds it any more (a
-stale wait). Brief 3.1.1-2 adds `wait_pool`: for a pending task whose
+stale wait). `waits_for` is `[]` otherwise; for a pending task whose
+`wait_reason` is `file_lock`, it has one `{task_id, path}` per holder in
+`wait_holders`, sorted by `task_id`, where `path` is one declaration of the
+first overlapping pair (`task.OverlapDeclaration`): the shared one when the
+two are equal, else the literal one, else the pending task's. Brief 3.1.1-2
+adds `wait_pool`: for a pending task whose
 `wait_reason` is `no_roster_seat` (its route names a pool no roster seat
 serves; the scheduler waits it by name instead of logging a
 `seat_request_failed` every tick), that pool as `runtime:model:effort`, from

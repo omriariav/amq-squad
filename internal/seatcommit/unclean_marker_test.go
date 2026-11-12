@@ -22,12 +22,9 @@ func (f *fixture) gitStandin(name, action string) string {
 	return p
 }
 
-// v3-5-verifier, the fourth round's item 1: a lapsed marker never makes the
-// seat leasable. A clean interrupted mid-checkout leaves the seat unclean;
-// past the TTL a direct claim is still refused (seat_unclean); the next
-// CleanSeat (the scheduler's prepare) takes the marker over, cleans, and the
-// lease follows.
-func TestInterruptedCleanLeavesTheSeatUnclean(t *testing.T) {
+// 3.2.0-2b-1: ReleaseSeat is deferred on every clean path, including a git
+// failure, so a failed cleaner never strands its own marker.
+func TestInterruptedCleanReleasesItsMarker(t *testing.T) {
 	f := newFixture(t)
 	write(t, filepath.Join(f.wt, "cmd", "root.go"), "package cmd\n\n// interrupted\n")
 	tk, err := f.store.Add(task.AddInput{Title: "after the clean", Class: "summarize"}, f.now)
@@ -37,15 +34,8 @@ func TestInterruptedCleanLeavesTheSeatUnclean(t *testing.T) {
 	if _, err := CleanSeat(f.root, f.handle, f.gitStandin("git-dies", "exit 1"), nil, f.now); err == nil {
 		t.Fatal("the interrupted clean succeeded")
 	}
-	later := f.now.Add(task.SeatReservationTTL + time.Minute)
-	if _, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, later); !errors.Is(err, task.ErrSeatUnclean) {
-		t.Fatalf("a direct claim past the TTL: %v", err)
-	}
-	if _, err := CleanSeat(f.root, f.handle, gitBin(t), nil, later); err != nil {
-		t.Fatalf("the next clean: %v", err)
-	}
-	if _, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, later); err != nil {
-		t.Fatalf("the lease after the clean: %v", err)
+	if _, err := f.store.Claim(tk.ID, f.handle, nil, time.Hour, f.now); err != nil {
+		t.Fatalf("the failed cleaner stranded its marker: %v", err)
 	}
 }
 

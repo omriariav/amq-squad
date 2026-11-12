@@ -1,0 +1,10 @@
+run	exit	seconds	load_before	load_after	hang_point	companion_exit	log
+1	1	313	{ 0.99 1.77 2.66 }	{ 3.34 3.26 3.15 }	the attach verifies the thread answer	0	D-1.log
+2	1	312	{ 1.61 2.74 2.96 }	{ 4.60 3.48 3.22 }	the attach verifies the thread answer	0	D-2.log
+3	0	312	{ 3.64 3.34 3.17 }	{ 4.07 3.55 3.32 }	-	0	D-3.log
+4	0	311	{ 2.88 3.31 3.24 }	{ 3.65 3.72 3.47 }	-	0	D-4.log
+5	0	316	{ 2.28 3.35 3.34 }	{ 5.04 4.09 3.69 }	-	0	D-5.log
+6	0	312	{ 4.35 3.97 3.65 }	{ 3.89 3.61 3.57 }	-	0	D-6.log
+7	0	300	{ 3.25 3.48 3.53 }	{ 2.98 3.60 3.60 }	-	0	D-7.log
+8	0	301	{ 2.38 3.44 3.55 }	{ 3.48 3.38 3.47 }	-	0	D-8.log
+9	1	331	{ 2.79 3.22 3.41 }	{ 5.44 3.82 3.61 }	the attach verifies the thread answer	0	D-9.log

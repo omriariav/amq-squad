@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/flock"
@@ -56,8 +57,12 @@ type Options struct {
 	// Decisions, when set, serves the lead's decisions over the scheduler's
 	// own socket (R4); Root and Lead are filled in by Run.
 	Decisions *DecideOptions
-	Config    scheduler.Config
-	Tick      time.Duration
+	// Recover writes the new chain of a seat's quarantined commits ledger
+	// for the lead's recovery decision (3.2.0-0c-B; the verb passes
+	// Recovery.Apply with the launch's target); nil refuses every recovery.
+	Recover RecoverApply
+	Config  scheduler.Config
+	Tick    time.Duration
 	// Wake triggers an early tick (an AMQ message).
 	Wake <-chan struct{}
 	// Log receives one JSON line per decision; nil writes
@@ -147,12 +152,11 @@ func Run(ctx context.Context, o Options) error {
 		o.Router = scheduler.DefaultRouter{}
 	}
 	if o.Log == nil {
-		f, err := os.OpenFile(filepath.Join(Dir(o.Root), "decisions.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
+		path := DecisionsPath(o.Root)
+		if err := flock.WithJSONLFile(path, func(*os.File) error { return nil }); err != nil {
 			return err
 		}
-		defer f.Close()
-		o.Log = f
+		o.Log = flock.JSONLWriter{Path: path}
 	}
 	limits := o.Limits
 	if limits != nil {
@@ -176,8 +180,15 @@ func Run(ctx context.Context, o Options) error {
 	// them.
 	if st, err := scheduler.ReadState(o.Config.StatePath); err != nil {
 		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "launch_failures_unread", Reason: err.Error()})
-	} else if f, b := s.RestoreLaunchFailures(st); f+b > 0 {
-		logLine(o.Log, o.Now(), scheduler.Decision{Kind: "launch_failures_restored", Reason: fmt.Sprintf("%d launch failures and %d tasks blocked on one, from the previous incarnation's state", f, b)})
+	} else {
+		if f, b := s.RestoreLaunchFailures(st); f+b > 0 {
+			logLine(o.Log, o.Now(), scheduler.Decision{Kind: "launch_failures_restored", Reason: fmt.Sprintf("%d launch failures and %d tasks blocked on one, from the previous incarnation's state", f, b)})
+		}
+		// A tamper alarm holds its seat across a restart (3.2.0-0c-B): the
+		// alarm is raised once, never once per incarnation.
+		if n := s.RestoreLedgerTampers(st); n > 0 {
+			logLine(o.Log, o.Now(), scheduler.Decision{Kind: "ledger_tampers_restored", Reason: fmt.Sprintf("%d seats held by a tamper alarm until the lead's recovery, from the previous incarnation's state", n)})
+		}
 	}
 	if p, ok := o.Preparer.(interface {
 		SetLog(io.Writer, func() time.Time)
@@ -199,6 +210,7 @@ func Run(ctx context.Context, o Options) error {
 	timer := time.NewTicker(o.Tick)
 	defer timer.Stop()
 	leadUnknown := false
+	var schedulerMu sync.Mutex
 	for {
 		if o.LeadState != nil {
 			switch st, why := o.LeadState(); st {
@@ -214,7 +226,9 @@ func Run(ctx context.Context, o Options) error {
 				leadUnknown = false
 			}
 		}
+		schedulerMu.Lock()
 		ds, err := s.Tick()
+		schedulerMu.Unlock()
 		if f, ok := o.Router.(Flusher); ok {
 			if err := f.Flush(); err != nil {
 				logLine(o.Log, o.Now(), scheduler.Decision{Kind: "routing_flush_failed", Reason: err.Error()})
@@ -245,8 +259,19 @@ func Run(ctx context.Context, o Options) error {
 		if o.Decisions != nil && srv == nil && s.Ready() {
 			d := *o.Decisions
 			d.Root, d.Lead = o.Root, o.Config.Lead
+			if d.Clean == nil {
+				clean := manualCleanDecision(s.Store, o.Liveness, o.Preparer)
+				d.Clean = func(lead string, req CleanRequest) DecideReply {
+					schedulerMu.Lock()
+					defer schedulerMu.Unlock()
+					return clean(lead, req)
+				}
+			}
 			if d.Relaunch == nil && len(o.Config.Roster) > 0 {
 				d.Relaunch = relaunchDecision(s, d.Reload, o.Start)
+			}
+			if d.Recover == nil && o.Recover != nil {
+				d.Recover = recoverDecision(s, o.Root, o.Recover, o.Now)
 			}
 			opened, serr := ServeDecisions(d)
 			if serr != nil {
@@ -269,10 +294,60 @@ func Run(ctx context.Context, o Options) error {
 	}
 }
 
-func logLine(w io.Writer, at time.Time, d scheduler.Decision) {
+type stoppedSeatCleaner interface {
+	CleanStopped(handle string) (bool, error)
+}
+
+// manualCleanDecision is the lead's `seat clean` (3.2.0-2b-1 items 3 and
+// 9), applied after the decision socket proved the sender: refused in
+// words while the seat holds a lease or its process runs (the liveness
+// check's proof; an unreadable one refuses too), else the preparer's
+// CleanStopped archives the seat's latest ended attempt and cleans. The
+// reply's code sits below the rule in the CLI's words.
+func manualCleanDecision(store task.Store, live scheduler.SeatLiveness, preparer scheduler.SeatPreparer) func(string, CleanRequest) DecideReply {
+	return func(_ string, req CleanRequest) DecideReply {
+		handle, err := task.SeatHandle(req.Seat)
+		if err != nil {
+			return DecideReply{Code: "seat_invalid", Detail: err.Error()}
+		}
+		list, err := store.List()
+		if err != nil {
+			return DecideReply{Code: "seat_clean_failed", Detail: err.Error()}
+		}
+		if held := task.HeldBy(handle, list); held != nil {
+			return DecideReply{Code: "seat_running", Detail: fmt.Sprintf("seat %s is still running (it holds %s); stop it first", handle, held.ID)}
+		}
+		if live == nil {
+			return DecideReply{Code: "seat_liveness_unknown", Detail: fmt.Sprintf("seat %s's process identity cannot be checked; refused", handle)}
+		}
+		gone, detail, err := live.SeatProcess(handle, "")
+		if err != nil {
+			return DecideReply{Code: "seat_liveness_unknown", Detail: err.Error()}
+		}
+		if !gone {
+			return DecideReply{Code: "seat_running", Detail: fmt.Sprintf("seat %s is still running; stop it first", handle)}
+		}
+		cleaner, ok := preparer.(stoppedSeatCleaner)
+		if !ok {
+			return DecideReply{Code: "seat_clean_unsupported", Detail: "this scheduler has no seat cleaner"}
+		}
+		discarded, err := cleaner.CleanStopped(handle)
+		if err != nil {
+			return DecideReply{Code: "seat_clean_failed", Detail: err.Error()}
+		}
+		b, _ := json.Marshal(struct {
+			Discarded bool   `json:"discarded"`
+			Liveness  string `json:"liveness,omitempty"`
+		}{discarded, detail})
+		return DecideReply{OK: true, Detail: fmt.Sprintf("seat %s's worktree was cleaned", handle), Data: b}
+	}
+}
+
+func logLine(w io.Writer, at time.Time, d scheduler.Decision) error {
 	b, _ := json.Marshal(struct {
 		At string `json:"at"`
 		scheduler.Decision
 	}{at.UTC().Format(time.RFC3339Nano), d})
-	fmt.Fprintln(w, string(b))
+	_, err := fmt.Fprintln(w, string(b))
+	return err
 }

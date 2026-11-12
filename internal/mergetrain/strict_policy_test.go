@@ -118,7 +118,7 @@ func TestStrictOffDoesNotCallFailingCompare(t *testing.T) {
 	}
 }
 
-func TestLaterStrictCompareErrorStopsInWords(t *testing.T) {
+func TestLaterStrictCompareErrorSkipsOnlyThatPR(t *testing.T) {
 	f := newFixture(t)
 	setStrict(f)
 	f.bindTask(1, f.head("pr1"), []string{"pkg/a.go"})
@@ -128,12 +128,12 @@ func TestLaterStrictCompareErrorStopsInWords(t *testing.T) {
 	forge := &failBehindForge{Forge: f.gh, failAt: 4}
 	f.train.Forge = forge
 	res, err := f.train.Run(context.Background(), req)
-	if err == nil || res.PRs[0].Status != "merged" || !strings.HasPrefix(res.Stopped, "#2: the train stopped while comparing PR #2 with the current base\nrule: branch freshness\ncompare error: HTTP 429") {
-		t.Fatalf("later compare stop: err=%v stopped=%q prs=%+v calls=%d", err, res.Stopped, res.PRs, forge.calls)
+	if err != nil || res.PRs[0].Status != "merged" || res.PRs[1].Status != "skipped" || res.Stopped != "" {
+		t.Fatalf("later compare skip: err=%v stopped=%q prs=%+v calls=%d", err, res.Stopped, res.PRs, forge.calls)
 	}
 	entries, readErr := f.train.Audit.Read()
-	if readErr != nil || len(entries) == 0 || entries[len(entries)-1].Kind != "stop" || entries[len(entries)-1].Detail != res.Stopped {
-		t.Fatalf("compare stop journal: %v %+v", readErr, entries)
+	if readErr != nil || !slices.ContainsFunc(entries, func(e Entry) bool { return e.Kind == "reconcile_read_failed" && e.PR == 2 }) {
+		t.Fatalf("compare skip journal: %v %+v", readErr, entries)
 	}
 }
 
@@ -208,7 +208,7 @@ func TestStrictBehindConflictDryRunRefuses(t *testing.T) {
 	f.train.DryRun = true
 	plan, err := f.train.Run(context.Background(), f.req)
 	if err != nil || plan.PRs[0].Status != "refused" || !slices.ContainsFunc(plan.PRs[0].Refusals, func(r Refusal) bool {
-		return r.Rule == RuleStrictUpToDate && r.Detail == "the branch is behind and the train cannot bring it up to date: the PR conflicts with the current base" && !strings.Contains(r.Detail, RuleStrictUpToDate)
+		return r.Rule == RuleUpdateConflict && r.Detail == updateConflictDetail && !strings.Contains(r.Detail, RuleUpdateConflict)
 	}) {
 		t.Fatalf("strict conflict plan: %v %+v", err, plan.PRs)
 	}

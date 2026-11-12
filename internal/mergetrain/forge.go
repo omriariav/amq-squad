@@ -35,11 +35,15 @@ type RequiredCheck struct {
 	AppID   int    `json:"app_id,omitempty"` // 0: the rule pins no app
 }
 
-// ForcePush is one head_ref_force_pushed event on a PR.
+// ForcePush is one head_ref_force_pushed event on a PR. At is the event's
+// time as the timeline reports it (RFC3339): the recovery of an update the
+// train requested and did not record counts the force pushes after its
+// journaled request (brief 3.2.0-3a item 3).
 type ForcePush struct {
 	Before string `json:"before"`
 	After  string `json:"after"`
 	Actor  string `json:"actor,omitempty"`
+	At     string `json:"at,omitempty"`
 }
 
 // PRInfo is what the train reads about one PR at one head. Files is the diff
@@ -94,6 +98,9 @@ type Forge interface {
 	PatchID(ctx context.Context, repository, base, head string) (string, error)
 	Checks(ctx context.Context, repository, sha string) ([]CheckRun, error)
 	BranchHead(ctx context.Context, repository, branch string) (string, error)
+	// FirstParent is the first parent of a commit: the tip a rebased
+	// single-commit head sits on (the commit step makes one commit per task).
+	FirstParent(ctx context.Context, repository, sha string) (string, error)
 	Protection(ctx context.Context, repository, branch string) (Protection, error)
 	Ready(ctx context.Context, repository string, number int) error
 	// Rebase rebases the PR's head onto its base on the server, only if the

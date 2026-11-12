@@ -98,6 +98,12 @@ type Options struct {
 	// calls it only for a squad with a Codex seat, on the Codex home the
 	// seats read ($CODEX_HOME of Env, else Home/.codex).
 	CodexDialogHook func(codexDir string) seatexec.CodexDialogHook
+	// CodexActivityTrust reads the owner's exact-hash approvals for the
+	// per-seat -c activity overlay. Admission reports the launch-time result
+	// per Codex seat to the scheduler; Warn says the owner step when missing.
+	CodexActivityTrust     func(codexDir, squadBin, amqBin, home string) seatexec.CodexActivityTrust
+	CodexActivityAdmission func(handle string, trusted bool, launched time.Time)
+	Warn                   func(string)
 }
 
 // SeatState is one seat's state after the launch.
@@ -164,6 +170,12 @@ func (o Options) withDefaults() Options {
 	if o.CodexDialogHook == nil {
 		o.CodexDialogHook = seatexec.ReadCodexDialogHook
 	}
+	if o.CodexActivityTrust == nil {
+		o.CodexActivityTrust = seatexec.ReadCodexActivityTrust
+	}
+	if o.Warn == nil {
+		o.Warn = func(s string) { fmt.Fprintln(os.Stderr, "warning:", s) }
+	}
 	return o
 }
 
@@ -193,7 +205,18 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	// A Codex seat's wake needs AMQ's Codex dialog hook (Q3 of brief 31-1):
 	// read once, only for a squad with a Codex seat.
 	if slices.ContainsFunc(q.Seats, func(s Seat) bool { return s.Runtime == "codex" }) {
-		q.CodexHookMissing = codexHookWhy(o.CodexDialogHook(seatexec.CodexDir(o.Home, seatexec.Getenv(o.Env, "CODEX_HOME"))))
+		codexDir := seatexec.CodexDir(o.Home, seatexec.Getenv(o.Env, "CODEX_HOME"))
+		q.CodexHookMissing = codexHookWhy(o.CodexDialogHook(codexDir))
+		trusted := o.CodexActivityTrust(codexDir, q.Wrapper, q.AMQPath, o.Home).Ready()
+		launched := o.Now().UTC()
+		for _, seat := range q.Seats {
+			if seat.Runtime == "codex" && o.CodexActivityAdmission != nil {
+				o.CodexActivityAdmission(seat.Handle, trusted, launched)
+			}
+		}
+		if !trusted {
+			o.Warn(seatexec.CodexActivityTrustWarning(q.Wrapper, q.AMQPath, o.Home))
+		}
 	}
 	c, err := Compile(q, rulesSHA, o.LookPath, o.Now())
 	if err != nil {

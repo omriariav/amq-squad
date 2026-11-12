@@ -34,6 +34,11 @@ const ReasonGrowthGateRequired = "growth_gate_required"
 // measured in docs/v3-spike/2b1-execution.md).
 const DefaultLeaseDuration = 10 * time.Minute
 
+// DefaultTaskBudget is the lead's default time allowance for one task
+// attempt. A squad.yaml may choose another default and task add may override
+// it, but every renewal path is bounded by the value persisted on the task.
+const DefaultTaskBudget = 90 * time.Minute
+
 // ErrNotFound is returned for an unknown task id.
 var ErrNotFound = errors.New("task not found")
 
@@ -60,10 +65,14 @@ type Task struct {
 	Lease         *Lease    `json:"lease"`
 	Attempt       int       `json:"attempt"`
 	Attempts      []Attempt `json:"attempts,omitempty"`
-	WaitReason    string    `json:"wait_reason,omitempty"`
-	BlockReason   string    `json:"block_reason,omitempty"`
-	BlockRoute    string    `json:"block_route,omitempty"`
-	BlockDetail   string    `json:"block_detail,omitempty"`
+	// Budget is the maximum elapsed time of one attempt. Zero in a task
+	// written by an older build reads as DefaultTaskBudget.
+	Budget           time.Duration     `json:"budget,omitempty"`
+	BudgetExtensions []BudgetExtension `json:"budget_extensions,omitempty"`
+	WaitReason       string            `json:"wait_reason,omitempty"`
+	BlockReason      string            `json:"block_reason,omitempty"`
+	BlockRoute       string            `json:"block_route,omitempty"`
+	BlockDetail      string            `json:"block_detail,omitempty"`
 	// BlockAttempt binds a typed widen request to the live attempt that made
 	// it. Pending tasks cannot manufacture this binding from old history.
 	BlockAttempt int `json:"block_attempt,omitempty"`
@@ -97,12 +106,19 @@ type Task struct {
 // Lease is the current holder's lease. An unclaimed lease (ClaimedAt nil)
 // is an assignment the seat has not acknowledged; it is never renewed.
 type Lease struct {
-	Holder    string     `json:"holder"`
-	GrantedAt time.Time  `json:"granted_at"`
-	ExpiresAt time.Time  `json:"expires_at"`
-	ClaimedAt *time.Time `json:"claimed_at"`
-	RenewedAt *time.Time `json:"renewed_at"`
-	Renewals  int        `json:"renewals"`
+	Holder           string     `json:"holder"`
+	GrantedAt        time.Time  `json:"granted_at"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	ClaimedAt        *time.Time `json:"claimed_at"`
+	RenewedAt        *time.Time `json:"renewed_at"`
+	Renewals         int        `json:"renewals"`
+	ActivityRenewals int        `json:"activity_renewals,omitempty"`
+	ManualRenewals   int        `json:"manual_renewals,omitempty"`
+	LastRenewal      string     `json:"last_renewal,omitempty"`
+	// Attempt binds observed activity to the lease incarnation. BudgetEndsAt
+	// is persisted so all renewal callers enforce the same absolute bound.
+	Attempt      int       `json:"attempt"`
+	BudgetEndsAt time.Time `json:"budget_ends_at"`
 	// Snapshot is the tree the harness's verifier runs on in this attempt
 	// (RecordSnapshot: the commit step's snapshot, the probe's checkout).
 	Snapshot string `json:"snapshot,omitempty"`
@@ -118,6 +134,14 @@ type Lease struct {
 	Verdict *Verdict `json:"verdict,omitempty"`
 }
 
+// BudgetExtension is the recorded lead decision that lengthened a task's
+// allowance. It is data, not an owner gate.
+type BudgetExtension struct {
+	Actor string        `json:"actor"`
+	At    time.Time     `json:"at"`
+	By    time.Duration `json:"by"`
+}
+
 // Attempt is one ended lease.
 type Attempt struct {
 	N         int       `json:"n"`
@@ -125,9 +149,13 @@ type Attempt struct {
 	Pool      *Pool     `json:"pool"`
 	GrantedAt time.Time `json:"granted_at"`
 	EndedAt   time.Time `json:"ended_at"`
-	Outcome   string    `json:"outcome"`
-	Detail    string    `json:"detail,omitempty"`
-	Verdict   *Verdict  `json:"verdict,omitempty"` // the harness's verdict, when one was recorded
+	// CleanedAt is the durable cancellation-clean boundary. A scheduler
+	// restart skips a cancelled attempt only after its archive and worktree
+	// cleanup completed and this timestamp was committed to the task store.
+	CleanedAt *time.Time `json:"cleaned_at,omitempty"`
+	Outcome   string     `json:"outcome"`
+	Detail    string     `json:"detail,omitempty"`
+	Verdict   *Verdict   `json:"verdict,omitempty"` // the harness's verdict, when one was recorded
 }
 
 // Report is the holder's done report, kept until the commit step decides.
@@ -156,6 +184,9 @@ func Terminal(state string) bool { return state == StateCompleted || state == St
 // Store is one squad's task store.
 type Store struct {
 	Dir string
+	// claimServingBeforeCheck is a test seam inside ClaimServing's locked
+	// update. It proves a pool change after selection is checked before grant.
+	claimServingBeforeCheck func(*Task)
 	// Verifiers says whether a task's class is in the verifier gate and with
 	// which command: the owner grant, with the task's squad.yaml adding
 	// classes, never the seat's tree (phase 5 re-pass, ruling on ruling 1).
@@ -196,22 +227,39 @@ type AddInput struct {
 	Priority      int
 	ProjectPath   string
 	CreatedBy     string
+	Budget        time.Duration
+}
+
+// FileWait is one task whose declared files overlap a newly added task.
+// Path is a deterministic declaration covered by both sets.
+type FileWait struct {
+	TaskID string `json:"task_id"`
+	Path   string `json:"path"`
 }
 
 // Add creates a pending task.
 func (s Store) Add(in AddInput, now time.Time) (Task, error) {
+	created, _, err := s.AddWithFileWaits(in, now)
+	return created, err
+}
+
+// AddWithFileWaits creates a pending task and reports the pending or active
+// tasks whose declarations overlap it. The report is taken in the same
+// locked transaction as the add, so it describes add time.
+func (s Store) AddWithFileWaits(in AddInput, now time.Time) (Task, []FileWait, error) {
 	in.Title, in.Class = strings.TrimSpace(in.Title), strings.TrimSpace(in.Class)
 	if in.Title == "" {
-		return Task{}, fmt.Errorf("task title is required")
+		return Task{}, nil, fmt.Errorf("task title is required")
 	}
 	if !ValidClass(in.Class) {
-		return Task{}, fmt.Errorf("task class %q is not in the closed list %s", in.Class, strings.Join(Classes, ", "))
+		return Task{}, nil, fmt.Errorf("task class %q is not in the closed list %s", in.Class, strings.Join(Classes, ", "))
 	}
 	files, err := CleanDeclaredFiles(in.DeclaredFiles)
 	if err != nil {
-		return Task{}, err
+		return Task{}, nil, err
 	}
 	var created Task
+	var waits []FileWait
 	err = s.update(now, func(all *tasks) error {
 		deps := dedupe(in.DependsOn)
 		for _, d := range deps {
@@ -219,17 +267,29 @@ func (s Store) Add(in AddInput, now time.Time) (Task, error) {
 				return fmt.Errorf("depends-on task %q does not exist", d)
 			}
 		}
+		budget := in.Budget
+		if budget <= 0 {
+			budget = DefaultTaskBudget
+		}
 		created = Task{
 			Schema: Schema, ID: all.nextID(), Title: in.Title, Description: strings.TrimSpace(in.Description),
 			Class: in.Class, State: StatePending, Priority: in.Priority, DependsOn: deps, DeclaredFiles: files,
-			ProjectPath: strings.TrimSpace(in.ProjectPath), Pool: in.Pool, CreatedBy: strings.TrimSpace(in.CreatedBy),
+			ProjectPath: strings.TrimSpace(in.ProjectPath), Pool: in.Pool, CreatedBy: strings.TrimSpace(in.CreatedBy), Budget: budget,
 			CreatedAt: now, UpdatedAt: now,
+		}
+		for _, other := range all.list {
+			if other.State != StatePending && other.State != StateInProgress && other.State != StateBlocked {
+				continue
+			}
+			if path, ok := OverlapDeclaration(created.DeclaredFiles, other.DeclaredFiles); ok {
+				waits = append(waits, FileWait{TaskID: other.ID, Path: path})
+			}
 		}
 		all.list = append(all.list, created)
 		all.touch(created.ID)
 		return nil
 	})
-	return created, err
+	return created, waits, err
 }
 
 // List returns every task in id order, under the lock (a committed journal

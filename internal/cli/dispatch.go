@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -180,9 +181,19 @@ Examples:
 	}
 	var leased *taskstore.Task
 	if taskID != "" || *createTaskFlag {
-		store, err := taskstore.Open(absAMQRoot(projectDir, ctx.Root))
+		root := absAMQRoot(projectDir, ctx.Root)
+		store, err := taskstore.Open(root)
 		if err != nil {
 			return err
+		}
+		// The scheduler liveness seam is read once per dispatch. Both the
+		// early refusal and the locked grant use that same answer, so the
+		// compatibility path cannot change halfway through the operation.
+		schedulerLive := taskSchedulerLive(root)
+		if schedulerLive {
+			if err := refuseUncleanedSeat(store, member.Handle); err != nil {
+				return err
+			}
 		}
 		if *createTaskFlag {
 			created, addErr := store.Add(taskstore.AddInput{
@@ -198,7 +209,15 @@ Examples:
 		} else if dispatchClassRequiresImplementation(current.Class) && !currentActorImplementationAllowed {
 			return dispatchActorIntentRefusal("task "+current.ID, current.Class, currentActorContract, currentActorMode)
 		}
-		got, leaseErr := leaseDispatchedTask(store, taskID, member.Handle, taskNow())
+		got, leaseErr := leaseDispatchedTask(store, taskID, member.Handle, taskNow(), schedulerLive)
+		var uncleaned *taskstore.UncleanedSeatError
+		var reserved *taskstore.ReservedSeatError
+		switch {
+		case errors.As(leaseErr, &uncleaned):
+			return uncleaned // the reviewer's words, unwrapped
+		case errors.As(leaseErr, &reserved):
+			return reserved
+		}
 		if leaseErr != nil {
 			return fmt.Errorf("lease task %s before dispatch: %w", taskID, leaseErr)
 		}
@@ -276,15 +295,29 @@ func dispatchActorIntentRefusal(subject, class string, actor actorExecutionData,
 	return fmt.Errorf("%s dispatch refused: class %s requires current_actor_implementation_allowed=true; actor %s/%s has EffectiveActorMode=%s and current_actor_implementation_allowed=false; route implementation work to an implementation actor", subject, class, actor.ActorRole, actor.ActorHandle, actorMode)
 }
 
+// refuseUncleanedSeat refuses a lease for a seat whose cancelled attempt
+// is not archived and cleaned yet (Codex's P2 on the #909 re-pass): the
+// worktree may still hold that attempt's bytes, and a lease granted here,
+// outside the scheduler's PrepareSeat, would let the new task write over
+// them. It is the early refusal, before --create-task makes a task; the
+// grant itself (GrantClean, in leaseDispatchedTask) checks again inside
+// its locked mutation, so a check and a grant are never split.
+func refuseUncleanedSeat(store taskstore.Store, handle string) error {
+	return store.DispatchRefusal(handle)
+}
+
 // leaseDispatchedTask grants a pending task's lease to the assignee, or
 // accepts a lease the assignee already holds. Any other state refuses.
-func leaseDispatchedTask(store taskstore.Store, id, assignee string, now time.Time) (taskstore.Task, error) {
+func leaseDispatchedTask(store taskstore.Store, id, assignee string, now time.Time, schedulerLive bool) (taskstore.Task, error) {
 	current, err := store.Get(id)
 	if err != nil {
 		return taskstore.Task{}, err
 	}
 	switch {
 	case current.State == taskstore.StatePending:
+		if schedulerLive {
+			return store.GrantClean(id, assignee, nil, taskLeaseDuration, now)
+		}
 		return store.Grant(id, assignee, nil, taskLeaseDuration, now)
 	case current.State == taskstore.StateInProgress && current.Lease != nil && current.Lease.Holder == assignee:
 		return current, nil

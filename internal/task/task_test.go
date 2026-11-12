@@ -92,7 +92,7 @@ func TestLeaseLifecycle(t *testing.T) {
 	if g.State != StateInProgress || g.Lease.Holder != "impl-1" || g.Lease.ClaimedAt != nil || g.Attempt != 1 || g.Pool.Key() != "claude:sonnet:medium" {
 		t.Fatalf("grant: %+v", g)
 	}
-	if _, _, err := s.Renew("impl-1", time.Minute, 0, t0.Add(time.Second)); !errors.Is(err, ErrNoLease) {
+	if _, _, err := s.RenewAttempt("impl-1", g.Attempt, time.Minute, 0, t0.Add(time.Second)); !errors.Is(err, ErrNoLease) {
 		t.Fatalf("an unclaimed lease was renewed: %v", err)
 	}
 	if _, err := s.Claim(a.ID, "impl-2", nil, time.Minute, t0); err == nil {
@@ -102,10 +102,10 @@ func TestLeaseLifecycle(t *testing.T) {
 	if err != nil || c.Lease.ClaimedAt == nil || !c.Lease.ExpiresAt.Equal(t0.Add(62*time.Second)) {
 		t.Fatalf("claim: %+v %v", c.Lease, err)
 	}
-	if _, renewed, err := s.Renew("impl-1", time.Minute, 10*time.Second, t0.Add(5*time.Second)); err != nil || renewed {
+	if _, renewed, err := s.RenewAttempt("impl-1", c.Attempt, time.Minute, 10*time.Second, t0.Add(5*time.Second)); err != nil || renewed {
 		t.Fatalf("a renewal inside the minimum interval wrote: %v %v", renewed, err)
 	}
-	r, renewed, err := s.Renew("impl-1", time.Minute, 10*time.Second, t0.Add(30*time.Second))
+	r, renewed, err := s.RenewAttempt("impl-1", c.Attempt, time.Minute, 10*time.Second, t0.Add(30*time.Second))
 	if err != nil || !renewed || r.Lease.Renewals != 1 || !r.Lease.ExpiresAt.Equal(t0.Add(90*time.Second)) {
 		t.Fatalf("renew: %+v %v %v", r.Lease, renewed, err)
 	}

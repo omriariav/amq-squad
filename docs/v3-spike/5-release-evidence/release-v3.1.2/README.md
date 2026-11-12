@@ -1,0 +1,154 @@
+# amq-squad v3.1.2 release evidence (2026-11-05)
+
+- Tag: v3.1.2 -> 5bd394e6dcf9fd06254f80ebc846d92130dc9048, the merge commit of the hotfix PR #883 (parents e10bbef4, #882's merge on v3, and d0ba09a1, #883's head). The tag commit and #883's merge commit are the same commit: the release was tagged on the merge, with no bump PR of its own, because #883 carried the 3.1.2 bump. `git rev-parse 'v3.1.2^{}'` after `git fetch --tags` prints that commit. Cut by the installed binary, `/Users/omri/go/bin/amq-squad version`, which printed at prepare and at publish:
+
+  ```
+  amq-squad v3.1.0-rc.1
+  ```
+
+  That binary ran both prepare and publish (R54: the installed binary cuts). It was rc.1 because the squad had run on rc.1 since the rollback from 3.1.1: the lead of 3.1.0 and 3.1.1 did not start (docs/v3.1.2-release-notes.md).
+- Release: https://github.com/omriariav/amq-squad/releases/tag/v3.1.2, GitHub's own values (`gh api repos/omriariav/amq-squad/releases/tags/v3.1.2`, release-api.json): created_at 2026-11-05T13:26:18Z and published_at 2026-11-05T13:47:27Z, draft false, prerelease false, target_commitish 5bd394e6dcf9fd06254f80ebc846d92130dc9048. created_at equals the target commit's date (5bd394e6's author and committer time is 2026-11-05T13:26:18Z); it is GitHub's value, not the publish time. The publish at 13:47:27Z came 28 s after the second approval, inside the gates' window. `gh api releases/latest` returns v3.1.2, so it is the latest release.
+- Before prepare: `make release-check VERSION=v3.1.2` at the tag commit, in the scratch worktree /Users/omri/scratch-v312, without the marketplace flag: "release metadata matches v3.1.2". The main join had not happened (`git merge-base --is-ancestor origin/v3 origin/main` false), as for 3.1.0 and 3.1.1.
+- The notes file is docs/v3.1.2-release-notes.md at the tag, sha256 85753101403e757224b77a552eebeb35029373c2fa6a878375b35f59b257cbe3 (notes-body.sha256), 4802 bytes. It was both prepare's and publish's `--notes-file`, with the gate note "release body set from docs/v3.1.2-release-notes.md at 5bd394e6; notes sha256 85753101403e757224b77a552eebeb35029373c2fa6a878375b35f59b257cbe3". `git show 5bd394e6:docs/v3.1.2-release-notes.md | shasum -a 256` prints the same digest.
+
+## One gate series
+
+- Series v312. The session root `/Users/omri/code/amq-squad/.agent-mail/v312` was created before prepare, identity `root-sha256:40cdbe00f4023bddc337014fb837a976f522b4f1d9364004d6e3304fccc14c06` (squadid-expected.txt). release-prepare.json: release id release-v1-b363535d8722c2f5860064afb943fcadb4f81dc9dfd969142fd83fbae2d5b3af, state active, gates rel-tag-20b52d1d21e64a8c3472 ("git tag v3.1.2 5bd394e6dcf9fd06254f80ebc846d92130dc9048 on omriariav/amq-squad") and rel-gh-b6fa8a1269d1cbefdf9c ("gh release create v3.1.2 on omriariav/amq-squad"), both with question_sent true. The questions were raised at about 13:46:30Z with a 31-minute window, by the lead session's account; release-prepare.json carries no times.
+- The owner's approvals (attach-v312.jsonl, the attach on the mailbox "user"), each a reply in its gate's thread:
+  - rel-tag approved at 13:46:47Z ("accepted rel-tag-20b52d1d21e64a8c3472 tag", event 3607aaebad098210b3f21a1f6767face5b8266153632f491ab49703f601f4579, authorization authz-v1-41b413c3946f4b21f2cd1e3be010a9e435f486b511a13c1c4c05f2ac9d04c73c);
+  - rel-gh approved at 13:46:59Z ("accepted rel-gh-b6fa8a1269d1cbefdf9c github_release", event cb7395a3c3af7cdbf0055d859685edce93cff1dc26edb9ab28be3b00e2e6d620, authorization authz-v1-4b3b184de6dd3845af9f1b993812b8034e6fb842446d91d5cc4a5d6ee79e6ffe).
+
+  Both came within about 30 s of the questions, inside the window. No reply was refused and no second series was needed (3.1.1 needed two: a plain DM and a lapsed window).
+
+## The attach and the owner's approvals
+
+- The attach swap, as it ran (attach-swap.txt). One attach may hold the mailbox. The v31 attach (pid 95237) was stopped at 13:46:13Z, and the v312 attach (pid 10605) started the same second: attach-v312.jsonl's first line is its "attached" record at 13:46:13Z (mailbox user, operator true). After publish the v312 attach was stopped at 13:48:03Z (its "detached" record) and the usual v31 attach was started again at 13:48:03Z (pid 12715). The amq-remote endpoint (pids 20200 and 20202; the gate replies' message ids carry pid20202) ran throughout, so no `amq-remote up` was needed.
+- The owner's approvals of the route, quoted from the lead session's AskUserQuestion at 13:46:13Z (its own chat, not a squad log; owner-approvals.txt records the time and the two choices). The two gate acceptances approve the tag and the release; these answers approve the route.
+  - The question: "Do you approve the swap and are you at Buzz now?" The owner chose "Approve: do the swap now (Recommended)", described as: "I stop pid 95237, start the v312 attach, run prepare, and tell you when the two gate questions are on Buzz. You reply yes in each thread. Publish follows on the accepted gates; the v31 attach is restored right after."
+  - The question: "Do you approve installing 3.1.2 over the amq-squad on PATH and restarting the squad on it (`up --binary`, which stops the rc.1 lead, the scheduler and both codex seats; …)?" (the "…" is the lead session's elision of the question's rest). The owner chose "Approve the restart (Recommended)", described as: "I run up --binary from the tag build; the squad comes back on 3.1.2; the lead's first screen goes into the release evidence as step 6."
+- The publish run: from the lead session, as the lead's own step, exit 0, with nothing on stderr. The tag step ran (result 5bd394e6dcf9fd06254f80ebc846d92130dc9048) and the github_release step ran (result https://github.com/omriariav/amq-squad/releases/tag/v3.1.2). release-publish.json holds the output; its error field is empty.
+
+## The published body
+
+Checked after publish with `gh api repos/omriariav/amq-squad/releases/tags/v3.1.2` (the `body` field, decoded as UTF-8; the response is release-api.json): 4870 bytes. The first 4802 bytes are the notes file at the tag byte for byte (`cmp` equal). The 68 bytes after them are two newlines and the release flow's own marker line `<!-- amq-squad-release-nonce: <32 hex> -->` of 66 bytes, with no newline at its end. Nothing else differs.
+
+## The known-issue line on 3.1.0 and 3.1.1
+
+Covered by the owner's choice A. The 495-byte line in known-issue-312.md ("Known issue (2026-11-05): on this release the lead does not start …", with the link to v3.1.2 and the rc.1 workaround) was prepended to the bodies of the v3.1.0 and v3.1.1 releases with `gh release edit`:
+
+| Release | Body before | Body after | Check |
+| --- | --- | --- | --- |
+| v3.1.0 | 43280 bytes | 43775 bytes | the published body equals the after file; its first 495 bytes are known-issue-312.md and the rest is the before body byte for byte; the nonce line is kept |
+| v3.1.1 | 37605 bytes | 38100 bytes | the same |
+
+The first `gh release edit`, at about 13:47Z, rewrote each body unchanged, because the line file was at the wrong path. The second, at about 13:48Z, applied it. The before, after and published bodies were compared in the job's scratch records and are not copied here: each is a whole release body, and the table states every byte that changed.
+
+## The build
+
+Built from the tag in the scratch worktree /Users/omri/scratch-v312 with `scripts/build-pi-runtime.sh all` (build.log): the pi-1.3.0-node-22.21.1-darwin-arm64 payload, exit 0, payload sha256 31613f1e96b91f8713ad3def5baa03afcf413d0d84fd1b1deaf102251fb1d75c and manifest sha256 78652b333d893f8c6d9ac96e18dacef1a88886c8e12ac5ecc9e556db3d1f7f89, the same digests as the hotfix branch's build (docs/v3-spike/312-evidence/hotfix-hostfacts.md); binary 72345074 bytes at `build/pi/amq-squad`; `amq-squad version` from it prints `amq-squad v3.1.2`.
+
+`make release-smoke VERSION=v3.1.2` (release-smoke.log): the release check and its tests OK, then `go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.1.2` into a temporary GOBIN, whose binary prints `amq-squad v3.1.2`.
+
+## Step 6: the installed lead's first screen
+
+RELEASING.md step 6, its first run on a cut.
+
+- 13:48:58Z, `up --binary` from the tag build (up-312.json): compile ok (3 seats, lead cto, session v31); install ok ("installed /Users/omri/scratch-v312/build/pi/amq-squad (v3.1.2) at /Users/omri/go/bin/amq-squad by temp name and rename"); session skipped (the root exists); doctor ok (39 checks, none failed, 5 warnings); lead refused `lead_running` ("a lead of /Users/omri/code/amq-squad/.agent-mail/v31 is running (pid 42373, tmux pane %125); one lead per root"). That lead was the rc.1 lead. `up` never stops a live lead.
+- 13:49:23Z, the same refusal again (up-312-2.json, the same steps and detail, start 13:49:23Z). At the same time `amq-squad down` was tried and refused, "unknown command: \"down\"" (down-v31.err): 3.x has no down verb.
+- 13:50:12Z, with the owner's restart approval quoted above, SIGTERM to the rc.1 lead, pid 42373. The lead and its scheduler (pid 42375) ended, and its tmux pane closed.
+- 13:50:13Z, `up --binary` again (up-312-3.json), exit 0, nothing on stderr: compile, install, doctor ok as before; lead ok ("no recorded lead or scheduler is running"); tmux ok ("tmux session squad-lead-amq-squad-f42a4 runs /Users/omri/go/bin/amq-squad lead --team in /Users/omri/code/amq-squad"); roster ok ("roster_adopted: every roster seat is live from the previous incarnation; no launch"), so both codex seats kept running. The lead started at 13:50:17Z.
+- 13:50:34Z, 17 s after the lead started, the pane's first screen (lead-first-screen.txt, trimmed below; the file has the whole capture):
+
+  ```
+   amq-squad: lead cto (pid 15270, pane %128) · root
+   /Users/omri/code/amq-squad/.agent-mail/v31
+   seats (3)
+     cto  -  stopped
+     dev  codex gpt-5.6-terra medium  idle  · up in 3.7s, first message 80.9s
+     reviewer  codex gpt-5.6-sol high  starting on t71: 3.2.0-1: a seat's lease
+   renews from the seat's own activi...  · up in 3.6s
+     seat reviewer could not be prepared for t71; ask the lead to relaunch the
+   roster
+   tasks (71)
+   ...
+  ~/code/amq-squad (v3)
+  0.0%/131k (auto)                                            qwen3.6:27b • medium
+  ```
+
+  The team screen is up and there is no "Failed to load extension" line. The lead (pid 15270) and its scheduler (pid 15272) both run /Users/omri/go/bin/amq-squad, which prints `amq-squad v3.1.2` (the lead session's process listing). The 3.1.0 and 3.1.1 lead exited before this screen.
+- The screen's line "seat reviewer could not be prepared for t71; ask the lead to relaunch the roster" is recorded under Things seen, item 1. The pane's tmux "extended-keys is off" warning is the owner's tmux configuration.
+
+## The main join
+
+PR #884 (https://github.com/omriariav/amq-squad/pull/884), "Join v3.1.2 into main", from branch main-312 into main, after the tag, as #881 was for 3.1.1. Head a831b0ac2f2c37169bc134a5b16383d00f2c6b12, a merge commit of v3.1.2 into main with parents e9950d00ac9123811ea058083f82a25ce6ed1a7a (origin/main, #881's merge) and 5bd394e6dcf9fd06254f80ebc846d92130dc9048 (`v3.1.2^{}`). Its tree is 6726bd2d0c8b94433400f01df97d61b83d7c60ea, equal to the tree of v3.1.2 (`git rev-parse 'origin/main-312^{tree}' 'v3.1.2^{tree}'` prints that one value twice), so main carries the tagged tree. `make release-check VERSION=v3.1.2 MARKETPLACE_REF=HEAD` on that head prints "release metadata matches v3.1.2".
+
+#884 merged into main at 2026-11-05T14:00:51Z as 2fbcd9e46e4cd66a7f771b7e74654e185b97bb3e, with parents e9950d00ac9123811ea058083f82a25ce6ed1a7a (#881's merge) and a831b0ac2f2c37169bc134a5b16383d00f2c6b12 (#884's head). Its tree is 6726bd2d0c8b94433400f01df97d61b83d7c60ea, the tree of v3.1.2. `git merge-base --is-ancestor 'v3.1.2^{}' origin/main` is true, so main carries the tag.
+
+## Things seen
+
+### 1. The rc.1 scheduler raised ledger_tampered on reviewer links (150, and at expiry for t64 and t70) that the 3.1.2 scheduler accepts; cause open.
+
+The timeline as seen in the v31 session's decision log (`.agent-mail/v31/extensions/amq-squad/scheduler/decisions.jsonl`, read only; decisions-excerpt.jsonl has every entry from 12:26Z on, 41 of 2198 lines, with the two repeated runs cut to their first and last lines):
+
+| Time (UTC, 2026-11-05) | Entry |
+| --- | --- |
+| 12:26:07.775Z | scheduler_started, incarnation e8d657db060c; scheduler_stopped 12:26:10.498Z |
+| 12:27:18.100Z | scheduler_started, incarnation 27d56d896552; scheduler_stopped 12:27:18.720Z |
+| 12:28:14.654Z | scheduler_started, incarnation a50f0aa880ed (dev and reviewer adopted) |
+| 12:28:14.907Z | exit_refused t64 reviewer "ledger_tampered at expired"; seat_closed reviewer (exit_refused) |
+| 12:37:31.318Z | lease_expired t70 reviewer |
+| 12:37:31.321Z | exit_refused t70 reviewer "ledger_tampered at expired" |
+| 12:37:31.327Z to 12:44:32.803Z | seat_request_failed t70, 212 lines, "no free seat in the squad's seat list for pool claude:opus:high (no roster seat serves it)" |
+| 12:43:50.154Z | roster_relaunch_requested ("reviewer seat is gone and t70 is waiting on it"), roster_reloaded, roster_launched, seat_up dev and reviewer |
+| 12:45:13.647Z | t71 created (its task record's created_at) |
+| 12:45:14.798Z to 13:50:10.848Z | seat_prepare_failed t71 reviewer, 1949 lines, one per tick (about 2 s), each "the commit ledger of seat reviewer: commit ledger reviewer: ledger_tampered: the tag of commits.reviewer link 150 fails" |
+| 13:50:12.543Z | scheduler_stopped (the SIGTERM of step 6) |
+| 13:50:14.715Z | seat_adopted dev and reviewer; scheduler_started, incarnation 5ecd55eb4fda (the 3.1.2 scheduler) |
+| 13:50:16.628Z | the head of commits.reviewer is seq 152 (routing-head-commits.reviewer.json) |
+| 13:50:17.020Z | roster_adopted; dispatched t71 to reviewer |
+
+No ledger_tampered entry follows 13:50:17Z. Under the 3.1.2 scheduler the same chain was accepted.
+
+Which binary ran each incarnation, from the `up` records (up-311-4.json, up-rc1-back.json and up-312-3.json, each `up` starting the scheduler beside its lead) and the log:
+
+| Incarnation | Ran | Binary | Record |
+| --- | --- | --- | --- |
+| e8d657db060c | 12:26:07.775Z to 12:26:10.498Z | 3.1.1 | up-311-4.json (start 12:26:07.046Z), install "skipped: /Users/omri/go/bin/amq-squad already reports v3.1.1", roster_adopted; stopped when the 3.1.1 lead died |
+| 27d56d896552 | 12:27:18.100Z to 12:27:18.720Z | 3.1.1 | no `up` record; by the lead session's account the lead-diag run; lead-diag.log, written 12:27:18Z, holds the 3.1.1 lead's ParseError |
+| a50f0aa880ed | 12:28:14.654Z to 13:50:12.543Z | 3.1.0-rc.1 | up-rc1-back.json (start 12:28:12.605Z), install "installed /Users/omri/go/bin/amq-squad.v3.1.0-rc.1 (v3.1.0-rc.1) at /Users/omri/go/bin/amq-squad by temp name and rename", roster_incomplete; the rc.1 scheduler (pid 42375) beside the rc.1 lead (pid 42373), until the SIGTERM |
+| 5ecd55eb4fda | from 13:50:14.715Z | 3.1.2 | up-312-3.json, install of the tag build (v3.1.2) |
+
+So the 3.1.1 scheduler ran for about 3 s in all, over its two incarnations. Inside the first it wrote the ledger once, the 12:26:09.363Z seat_cleaned reviewer ("an earlier attempt's uncommitted diff kept on the ledger and removed from the worktree"), and at 12:26:10.450Z it dispatched t70 to reviewer. The rc.1 scheduler raised the rest: the t64 exit_refused "ledger_tampered at expired" at 12:28:14.907Z, the t70 exit_refused at 12:37:31.321Z, the roster relaunch at 12:43:50Z (the owner-approved line typed into the lead's pane, a relaunch inside the same incarnation) and all 1949 t71 seat_prepare_failed lines. The 3.1.2 scheduler accepted the same chain.
+
+One of the two verifiers is wrong about link 150, and which one is open. The restart may have hidden the alarm rather than cleared it. Code facts: `git diff --stat v3.1.0-rc.1..v3.1.2 -- internal/sealchain` is empty, and the only commit on internal/scheduler/exits.go or internal/routing/chain.go in that range is 3b4260b9 (#855, t43). The cause is not established.
+
+Two observations, as seen:
+
+- **The prepare loop.** 1949 identical lines over 65 minutes, one per tick, with no escalation, and t71 stayed pending. It is the same flood shape as #854's seat_request_failed (here also: 212 identical seat_request_failed lines for t70).
+- **The screen's advice.** "ask the lead to relaunch the roster" was wrong for this reason: a relaunch does not change a ledger that fails its tag.
+
+**The refused body is lost.** The ledger document `commits/reviewer.json` carries one `seal` {prev, seq, tag} over its current body, and every write re-seals the whole document. Seq 150 was the body the rc.1 scheduler refused for 65 minutes. The 3.1.2 scheduler's first writes, at 13:50:14Z to 13:50:16Z (seat_adopted, roster_adopted), re-sealed the document as 151 and then 152. That was 2 to 4 s after the SIGTERM at 13:50:12.543Z, and 4 to 6 s after the last refusal at 13:50:10.848Z. So the next writer overwrote the refused body, and it exists only as the error string in the decision log. Read now, the document's seal is seq 152, with the head's link tag (`7150f4ba…`, routing-head-commits.reviewer.json), and the file was last written at 13:50:16Z.
+
+The lead session's read-only search, at about 14:1xZ, found no copy. Nothing under `.agent-mail/v31` or `~/.amq-squad` carries a seal of seq 150 or 151. The seats' session logs mention the ledger only through the dev seat's own t76 reads of the lead's snapshot, which is seq 152. `tmutil listlocalsnapshots /` lists no snapshot; I re-ran it for this note, with the same result. The investigation's first attempt, t76, blocked on this at 14:10:43Z (snapshot_ledger_history_missing), and it was re-added, narrowed, as t77.
+
+For 3.2.0: on any ledger_tampered, before any writer re-seals, the scheduler and the seat-side writer refuse to write. They copy the refused body and its head to a quarantine file under the session root, named by handle and seq. That is the next brief after t77.
+
+For 3.2.0, the first item, ahead of the other defects: a read-only investigation of the chain. Run the rc.1, 3.1.1 and 3.1.2 verifiers on one scratch copy of the chain, through a test harness, never the live session.
+
+### 2. Step 6 needed a SIGTERM
+
+`up` refuses a running lead (`lead_running`), and 3.x has no verb to stop one (`amq-squad down`: unknown command). The owner approved the restart, and the rc.1 lead was stopped with SIGTERM. For 3.2.0: a lead stop or replace verb that `up --binary` can use. The cut procedure must not depend on a kill.
+
+### 3. The first known-issue edit did nothing
+
+The first `gh release edit` of the 3.1.0 and 3.1.1 bodies, at about 13:47Z, rewrote each body unchanged, because the line file was at the wrong path. The second, at about 13:48Z, applied it (the table above).
+
+### 4. The cut ran on rc.1
+
+Under R54 the installed binary cuts, and at prepare and at publish it printed `amq-squad v3.1.0-rc.1`. With 3.1.2 installed by step 6, the next cut runs on 3.1.2.
+
+## The files
+
+All copied from the job's scratch records through `go run ./scripts/redact-evidence` (rule 18; it replaced no value, and `-check` is clean):
+
+attach-swap.txt, attach-v312.jsonl, build.log, down-v31.err, known-issue-312.md, lead-first-screen.txt, notes-body.sha256, owner-approvals.txt, release-api.json, release-prepare.json, release-publish.json, release-smoke.log, squadid-expected.txt, up-312.json, up-312-2.json, up-312-3.json; and from the 3.1.1 rollback's records, up-311-4.json, up-rc1-back.json and lead-diag.log. decisions-excerpt.jsonl and routing-head-commits.reviewer.json were read from the live v31 session root (`decisions.jsonl` and `routing/heads/commits.reviewer.json`), read only, and copied the same way. release-view.json was empty in the records and is not copied; its values (targetCommitish, draft, prerelease) are in release-api.json.

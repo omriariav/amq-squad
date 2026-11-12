@@ -13,6 +13,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
+	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -75,7 +76,10 @@ func (p *plan) close() {
 }
 
 var (
-	sealedNames = map[string]bool{"commits": true, "ledger": true, "routing": true}
+	// quarantine (3.2.0-0c-B rule 6) goes with the commits ledger: the
+	// refused documents the tamper alarm copied are evidence, listed beside
+	// the ledger and removed only with it (--purge), never on their own.
+	sealedNames = map[string]bool{"commits": true, "quarantine": true, "ledger": true, "routing": true}
 	gateNames   = map[string]bool{"gates": true, "answers": true, "denials": true, "reasks": true, "consumed": true, "clears": true}
 	// ownerFiles are the files of ~/.amq-squad this verb removes with
 	// --owner-files; the first two are secrets.
@@ -248,9 +252,10 @@ func discover(o Options) (*plan, error) {
 }
 
 var sealNote = map[string]string{
-	"commits": "the commits ledger (sealed)",
-	"ledger":  "the hook ledger",
-	"routing": "the outcome log and the session seed that seals the ledgers",
+	"commits":    "the commits ledger (sealed)",
+	"quarantine": "the commits ledger's quarantine (the refused documents a tamper alarm copied; evidence, kept with the ledger)",
+	"ledger":     "the hook ledger",
+	"routing":    "the outcome log and the session seed that seals the ledgers",
 }
 
 // children adds one op per entry of x/name.
@@ -335,8 +340,16 @@ func (p *plan) commits(x *fsanchor.AnchoredDir) []wtCand {
 	defer cd.Close()
 	var cands []wtCand
 	for _, n := range sortedNames(cd) {
+		raw, err := fsanchor.ReadEntry(cd, n)
+		if err != nil {
+			continue
+		}
+		body := raw
+		if split, _, splitErr := sealchain.SplitRaw(raw); splitErr == nil {
+			body = split
+		}
 		var l seatcommit.Ledger
-		if readJSON(cd, n, &l) && l.Worktree != "" {
+		if json.Unmarshal(body, &l) == nil && l.Worktree != "" {
 			cands = append(cands, wtCand{l.Handle, l.Worktree})
 		}
 	}

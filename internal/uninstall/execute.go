@@ -20,7 +20,7 @@ var groupOrder = []struct{ id, title string }{
 	{GroupTools, "the core tools dir (the gh and claude copies)"},
 	{GroupWorktree, "worktrees the core created under .claude/worktrees"},
 	{GroupOwner, "owner files under ~/.amq-squad"},
-	{GroupSealed, "sealed ledgers (commits ledger, exits queue, outcome log, hook ledger, session seed)"},
+	{GroupSealed, "sealed ledgers (commits ledger and its quarantine, exits queue, outcome log, hook ledger, session seed)"},
 	{GroupEvidence, "evidence refs under refs/amq-squad/evidence in the seat repositories"},
 	{GroupGate, "clear records and the gate store"},
 }

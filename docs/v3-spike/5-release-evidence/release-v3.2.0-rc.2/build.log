@@ -1,0 +1,9 @@
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+added 118 packages in 1s
+fetch ok: @earendil-works/pi-coding-agent@1.3.0, node v22.21.1, fd 10.5.0, rg 15.2.0
+npm warn deprecated node-domexception@1.0.0: Use your platform's native DOMException instead
+
+added 118 packages in 1s
+{"files":6448,"manifest_sha256":"266cfb9f8e54f2b191843bf7ba90bc5782d519a5926a5c1ea1e71a83e048a92a","payload_bytes":55715157,"payload_sha256":"1c14cc226626231e26ac27e10c02dbee1d62fe514fc250c339653cd2657b43f4","unpacked_bytes":179516637,"version":"pi-1.3.0-node-22.21.1-darwin-arm64"}
+{"binary":"/Users/omri/scratch-v320rc2/build/pi/amq-squad","binary_bytes":73209858}

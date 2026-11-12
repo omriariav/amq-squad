@@ -106,7 +106,20 @@ type run struct {
 // One budget (runBudget, from after the build) ends a hung run and names
 // the step; the behaviour checks run after each signal and no duration
 // fails the test.
+type ownerDryRunOptions struct {
+	plantRejections bool
+	runRehearsal    bool
+}
+
 func TestOwnerScriptDryRun(t *testing.T) {
+	testOwnerScriptDryRun(t, ownerDryRunOptions{runRehearsal: true})
+}
+
+func TestOwnerScriptDryRunRejectsThenSendsAgain(t *testing.T) {
+	testOwnerScriptDryRun(t, ownerDryRunOptions{plantRejections: true})
+}
+
+func testOwnerScriptDryRun(t *testing.T, opts ownerDryRunOptions) {
 	if testing.Short() {
 		t.Skip("-short")
 	}
@@ -119,6 +132,7 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the owner script is bash")
 	}
+	scrubAMQIdentity(t)
 	home := shortTempDir(t) // the endpoint socket path must fit sun_path (104 bytes)
 	pm := realTempDir(t)    // the password manager stand-in, outside HOME
 	bin := filepath.Join(home, "bin")
@@ -177,10 +191,25 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	t.Cleanup(func() { stopPID(filepath.Join(buzzDir, "enroll-up.pid")) })
 	t.Cleanup(func() {
 		if t.Failed() {
-			for _, p := range []string{filepath.Join(shareRoot, "attach", "up.log"), filepath.Join(buzzDir, "doctor.json")} {
-				data, _ := os.ReadFile(p)
-				t.Logf("%s:\n%s", p, data)
+			rows, err := (AMQInbox{Root: shareRoot, Handle: MailboxHandle}).New(context.Background())
+			t.Logf("failure-time attach inbox list: %+v, %v", rows, err)
+			for _, dir := range []string{
+				filepath.Join(shareRoot, "agents", MailboxHandle, "inbox", "new"),
+				filepath.Join(shareRoot, "agents", MailboxHandle, "inbox", "cur"),
+				filepath.Join(shareRoot, "agents", MailboxHandle, "dlq", "new"),
+				filepath.Join(shareRoot, "agents", MailboxHandle, "dlq", "cur"),
+				filepath.Join(shareRoot, "agents", CarrierHandle, "inbox", "new"),
+				filepath.Join(shareRoot, "agents", CarrierHandle, "inbox", "cur"),
+				filepath.Join(shareRoot, "extensions", "remote", "mailbox", DefaultShareSession),
+			} {
+				entries, readErr := os.ReadDir(dir)
+				var names []string
+				for _, entry := range entries {
+					names = append(names, entry.Name())
+				}
+				t.Logf("failure-time directory %s: %v, %v", dir, names, readErr)
 			}
+			captureOwnerHang(t, "failure-time", shareRoot, buzzDir, relay, 0)
 		}
 	})
 
@@ -361,25 +390,53 @@ func TestOwnerScriptDryRun(t *testing.T) {
 		t.Fatalf("apply live for the serve rows: %q %v", act, err)
 	}
 	await(ctx, t, &relay.bell, "online before the DMs", func() bool { return lastStatus(relay, body) == "online" })
-	ownerDM := func(content, thread string) string {
-		tags := [][]string{{"h", pin.Channel}, {"p", body}}
-		if thread != "" {
-			tags = append(tags, []string{"e", thread, "", "reply"})
+	ownerSender := ownerDMSender{owner: owner, relay: relay, channel: pin.Channel, body: body}
+	ownerDM := func(content, thread string) string { return ownerSender.send(ctx, t, content, thread) }
+	failOwnerSend := func(message string) {
+		if strings.HasPrefix(message, "hung: no signal") {
+			captureOwnerHang(t, "owner send hang", shareRoot, buzzDir, relay, 0)
 		}
-		e := nostr.Event{CreatedAt: time.Now().Unix(), Kind: 9, Tags: tags, Content: content}
-		_ = owner.sk.Sign(&e)
-		_ = relay.mem.Publish(ctx, e.Marshal())
-		return e.ID
+		t.Fatal(message)
 	}
+	plantedVerdicts := map[string]int{}
+	logLines := map[string]int{}
+	rejectedFor := func(kind string) func(string) ownerReject {
+		return func(id string) ownerReject {
+			if event, ok := serveRejectedEvent(relay, body, id); ok {
+				if relay.rejectionWasPlanted(id) {
+					plantedVerdicts[kind]++
+					return ownerRejectedByPlant
+				}
+				if os.Getenv(evidencePollIntervalEnv) != "" {
+					t.Logf("real rejected row: kind=%d tags=%v", event.Kind, event.Tags)
+				}
+				return ownerRejectedForReal
+			}
+			return ownerNotRejected
+		}
+	}
+	logOwnerLine := func(kind string) func(string) {
+		return func(line string) {
+			logLines[kind]++
+			t.Log(line)
+		}
+	}
+	realResends := 0
+	approvedOutcomes := 0
 	inbox := AMQInbox{Root: shareRoot, Handle: MailboxHandle}
 	h := &Handler{Core: core, Dial: VerifyDialer(b, pin), Inbox: inbox, Mail: AMQMailer{}, Target: target}
 	prefix := strings.TrimPrefix(rec.Digest, "sha256:")[:16]
 	// one request at a time: the answer first, then the route
 	tAnswer := time.Now()
-	answerID := ownerDM("Approve rel-dry release "+prefix, q.EventID)
+	if opts.plantRejections {
+		relay.rejectNextOwnerEvent(owner.pubHex(), body, func(e nostr.Event) bool { return strings.HasPrefix(e.Content, "Approve rel-dry release ") })
+	}
+	answerID, answerResends := sendOwnerUntilDone(ctx, &relay.bell, "answer", "serve delivers the answer into the attach inbox",
+		func() string { return ownerDM("Approve rel-dry release "+prefix, q.EventID) },
+		func(id string) bool { return serveAdmitted(relay, body, id) }, rejectedFor("answer"), failOwnerSend, logOwnerLine("answer"))
+	realResends += answerResends
 	// serve's running row for the answer: the delivery into the attach
 	// inbox is done (serveAdmitted)
-	await(ctx, t, &relay.bell, "serve delivers the answer into the attach inbox", func() bool { return serveAdmitted(relay, body, answerID) })
 	tDelivered := time.Since(tAnswer)
 	delivered, err := inbox.New(ctx)
 	if err != nil || len(delivered) != 1 {
@@ -394,6 +451,11 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	handled, err := h.Step(ctx)
 	if err != nil || len(handled) != 1 || handled[0].Gate == nil || handled[0].Gate.Outcome != "approved" || handled[0].Reply != "accepted rel-dry tag" {
 		t.Fatalf("answer: %+v, %v", handled, err)
+	}
+	for _, record := range handled {
+		if record.Gate != nil && record.Gate.Outcome == "approved" {
+			approvedOutcomes++
+		}
 	}
 	stepTook := time.Since(tStep)
 	idsSeen := relay.idsREQs()
@@ -415,8 +477,13 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if _, err := store.ReadAnswer("rel-dry"); err != nil {
 		t.Fatalf("no answer file: %v", err)
 	}
-	routeID := ownerDM("@lead-b please rebase #12", "")
-	await(ctx, t, &relay.bell, "serve delivers the route", func() bool { return serveAdmitted(relay, body, routeID) })
+	if opts.plantRejections {
+		relay.rejectNextOwnerEvent(owner.pubHex(), body, func(e nostr.Event) bool { return e.Content == "@lead-b please rebase #12" })
+	}
+	routeID, routeResends := sendOwnerUntilDone(ctx, &relay.bell, "route", "serve delivers the route",
+		func() string { return ownerDM("@lead-b please rebase #12", "") },
+		func(id string) bool { return serveAdmitted(relay, body, id) }, rejectedFor("route"), failOwnerSend, logOwnerLine("route"))
+	realResends += routeResends
 	if delivered, err = inbox.New(ctx); err != nil || len(delivered) != 1 {
 		t.Fatalf("the attach inbox after serve's delivery of the route: %+v, %v", delivered, err)
 	}
@@ -424,10 +491,42 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	if err != nil || len(handled) != 1 || handled[0].Delivery == nil || handled[0].Delivery.Lead != "lead-b" || !routedTo(handled[0].Reply, "lead-b") {
 		t.Fatalf("route: %+v, %v", handled, err)
 	}
+	for _, record := range handled {
+		if record.Gate != nil && record.Gate.Outcome == "approved" {
+			approvedOutcomes++
+		}
+	}
 	if !inboxHas(t, squad, "lead-a", "nostr:"+routeID) || !inboxHas(t, squad, "lead-b", "nostr:"+routeID) {
 		t.Fatal("the routed message is not in lead-a's and lead-b's inboxes")
 	}
 	await(ctx, t, &relay.bell, "serve posts the routed result row", func() bool { return bodyPosted(relay, body, "routed lead-b") })
+	t.Logf("real resends: %d", realResends)
+	checkApprovedOutcomes("dry run", approvedOutcomes, func(message string) { t.Fatal(message) })
+	t.Logf("approved outcomes: %d", approvedOutcomes)
+	if opts.plantRejections && relay.plantedRejectionCount() != 2 {
+		t.Fatalf("planted rejections = %d, want answer and route", relay.plantedRejectionCount())
+	}
+	if opts.plantRejections {
+		if answerReal := logLines["answer"] - answerResends; answerReal != 1 {
+			t.Fatalf("answer lines minus real resends = %d, want one planted line", answerReal)
+		}
+		if routeReal := logLines["route"] - routeResends; routeReal != 1 {
+			t.Fatalf("route lines minus real resends = %d, want one planted line", routeReal)
+		}
+		if total := logLines["answer"] + logLines["route"] - realResends; total != 2 {
+			t.Fatalf("owner lines minus real resends = %d, want two planted lines", total)
+		}
+		if plantedVerdicts["answer"] != 1 || plantedVerdicts["route"] != 1 {
+			t.Fatalf("planted classifier verdicts = answer %d route %d, want one each", plantedVerdicts["answer"], plantedVerdicts["route"])
+		}
+		// The ruling's plant writes where the dry-run end count reads: its
+		// test-owned tally of every Handler.Step record in the flow.
+		var countFailures []string
+		checkApprovedOutcomes("dry run", approvedOutcomes+1, func(message string) { countFailures = append(countFailures, message) })
+		if !slices.Equal(countFailures, []string{"dry run recorded 2 approved outcomes, want exactly one"}) {
+			t.Fatalf("planted end-of-flow count = %d, failures=%v", approvedOutcomes+1, countFailures)
+		}
+	}
 	for _, e := range append(relay.mem.events(9, body), relay.mem.events(40003, body)...) {
 		if strings.Contains(e.Content, "please rebase") || strings.Contains(e.Content, "Approve rel-dry") {
 			t.Fatalf("a body post echoes the owner's text: %q", e.Content)
@@ -444,7 +543,9 @@ func TestOwnerScriptDryRun(t *testing.T) {
 	// through the binary with the throwaway key: team init, gate raise,
 	// remote attach, the thread answer, gate status, verify action, the
 	// routed message in fullstack's inbox, presence on and off
-	runs = append(runs, rehearseOwnerRun(ctx, t, env, amqSquad, home, relay, owner, body)...)
+	if opts.runRehearsal {
+		runs = append(runs, rehearseOwnerRun(ctx, t, env, amqSquad, home, relay, owner, body)...)
+	}
 
 	// acceptance 2: the canary is in no output channel
 	var scanned, bytesScanned int
@@ -640,6 +741,34 @@ func amqBinaries(t *testing.T) {
 	t.Helper()
 	if dir := os.Getenv("AMQ_SQUAD_TEST_AMQ_BIN"); dir != "" {
 		t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	if poll := evidencePollInterval(); poll != "" {
+		if d, err := time.ParseDuration(poll); err != nil || d <= 0 {
+			t.Fatalf("%s=%q is not a positive duration", evidencePollIntervalEnv, poll)
+		}
+		realRemote, err := exec.LookPath("amq-remote")
+		if err != nil {
+			t.Skip("amq-remote not installed")
+		}
+		wrapper := t.TempDir()
+		for _, name := range []string{"amq", "amq-owner-sign"} {
+			real, err := exec.LookPath(name)
+			if err != nil {
+				t.Skipf("%s not installed", name)
+			}
+			if err := os.Symlink(real, filepath.Join(wrapper, name)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		quotedRemote := "'" + strings.ReplaceAll(realRemote, "'", `'\''`) + "'"
+		quotedPoll := "'" + strings.ReplaceAll(poll, "'", `'\''`) + "'"
+		script := "#!/bin/sh\nif [ \"$1\" = up ] || [ \"$1\" = serve ]; then\n  verb=$1; shift\n  exec " + quotedRemote + " \"$verb\" --poll " + quotedPoll + " \"$@\"\nfi\nexec " + quotedRemote + " \"$@\"\n"
+		if err := os.WriteFile(filepath.Join(wrapper, "amq-remote"), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("AMQ_SQUAD_TEST_AMQ_BIN", wrapper)
+		t.Setenv("PATH", wrapper+string(os.PathListSeparator)+os.Getenv("PATH"))
+		t.Logf("evidence poll wrapper: amq-remote %s with --poll %s", realRemote, poll)
 	}
 	for _, bin := range []string{"amq", "amq-remote", "amq-owner-sign"} {
 		p, err := exec.LookPath(bin)

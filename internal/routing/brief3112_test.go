@@ -51,6 +51,11 @@ func TestPolicyRefusalIsNotAFailedAttempt(t *testing.T) {
 			t.Fatalf("%s: after %d refusals the retry is %+v (%+v), want tier %s entry %s", code, len(tk.Attempts), d, route, first.UsedTier, first.Entry.Key())
 		}
 	}
+	for _, code := range []string{seatcommit.ReasonNewerWriter, seatcommit.ReasonSchemaMismatch} {
+		if got := effect(refused(first.Entry.Key(), 1, code)); got.escalate || got.count {
+			t.Errorf("%s = %+v; writer compatibility is not the seat's work", code, got)
+		}
+	}
 }
 
 // Row 2: a work failure still escalates: a verdict_failed refusal, a

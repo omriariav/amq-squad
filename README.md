@@ -26,7 +26,7 @@ The model in five lines:
 
 ## Contents
 
-- [What's new in 3.0](#whats-new-in-30)
+- [What's new in 3.2.0](#whats-new-in-320)
 - [Install](#install)
 - [Requirements](#requirements)
 - [First run](#first-run)
@@ -38,39 +38,49 @@ The model in five lines:
 - [Upgrading from v2](#upgrading-from-v2)
 - [Where the plan and evidence live](#where-the-plan-and-evidence-live)
 
-## What's new in 3.0
+## What's new in 3.2.0
 
-Everything: [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) lists
-the release by phase. 3.0.1 is the first fix release, from the first squad run
-on this repository: [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md).
-3.0.2 is the second, from the second day of that run and the 3.0.1 release:
-[docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md). 3.1.0 is the
-release of 3.1, which puts launch speed and the lead's screen first:
-[docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md). 3.1.1 makes the
-squad readable, with the lead's screen in words, one command per action and
-plain gate questions on the phone:
-[docs/v3.1.1-release-notes.md](docs/v3.1.1-release-notes.md). 3.1.2 is a fix
-release: the lead does not start on 3.1.0 or 3.1.1, and 3.1.2 makes it start
-again: [docs/v3.1.2-release-notes.md](docs/v3.1.2-release-notes.md). In short:
+3.2.0 fixes how the squad keeps working on its own:
+[docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md).
+In short:
 
-- `squad.yaml` schema 1 replaces the v2 profile, through `team propose` and
-  `team apply` ([docs/squad-yaml.md](docs/squad-yaml.md)).
-- A task store with leases and pools, and a scheduler process beside the lead.
-- `seat-exec` in front of every seat: a scrubbed environment, the identity from
-  the launch record, a read-only identity proof.
-- The harness commit step, the merge train under the standing merge grant, and
-  the release flow behind the `tag` and `github_release` gates.
-- A runtime registry with the owner's pins, re-hashed at every launch.
-- The Claude Code hooks plugin ([docs/claude-hooks.md](docs/claude-hooks.md)),
-  the built-in pi package, and the Buzz attachment on amq-remote's mailbox
-  adapter.
-- `amq-squad migrate` for v2 profiles and `amq-squad uninstall`
-  ([docs/uninstall.md](docs/uninstall.md)).
+- A seat's lease is renewed from its own work, never past its task's budget,
+  with no `task renew` call needed. The budget is squad.yaml's `task_budget`
+  (90 minutes by default) or `task add --budget`; the lead lengthens it with
+  `task extend ID --by DURATION`. A lease from 3.1.2 gets a budget end at
+  least one lease after the restart; its own expiry is unchanged.
+- Codex seats need one owner step: after installing, launch one Codex seat,
+  run Codex's `/hooks` and trust the amq-squad activity entries at the
+  installed path. Nothing writes that trust for you. Until then doctor warns
+  and a Codex seat renews by hand.
+- A commit ledger refused as tampered is copied to a quarantine directory
+  before anything else writes. A tamper alarm holds that seat once per alarm,
+  and the lead recovers the exact slot with `amq-squad scheduler recover`.
+- Commit and exits ledgers seal their exact bytes and their heads, and
+  migrate on their next write. After that, v3.1.2 and v3.2.0-rc.1 report the
+  ledgers as tampered, and `up --binary` refuses to install either.
+- A cancelled seat is closed, its work archived and its worktree cleaned
+  before the slot is released; `amq-squad seat clean` cleans a stopped seat.
+- With a live scheduler, `task claim` takes the scheduler's offer, and a
+  claim checks the seat's serving pool.
+- The lead's screen cuts every line to the pane's width. A seat handle with a
+  control character is refused, and status and the task listings replace
+  control characters.
+- The merge train waits for GitHub's branch update, asks the owner only
+  actionable questions, reads a diff with escape bytes, and skips legacy gate
+  records. Until a 3.2.x fix, the lead lands a PR through the train only when
+  its task has no live lease and no queued commit result.
+- The notes list 3.2.0's known limits, among them a Buzz answer that may need
+  sending again; what waits is in the 3.2.x list of
+  [docs/v3-followups.md](docs/v3-followups.md).
+
+Earlier releases are in their notes, listed under
+[Where the plan and evidence live](#where-the-plan-and-evidence-live).
 
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.1.2
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.2.0
 amq-squad version
 ```
 
@@ -671,7 +681,7 @@ amq-squad migrate .amq-squad/team.json
 | The 3.0 plan, its rulings, phases and recorded limits | [docs/v3-plan.md](docs/v3-plan.md) |
 | The phase briefs and their rulings | [docs/v3-phase2-briefs.md](docs/v3-phase2-briefs.md) |
 | Execution logs and evidence per brief | [docs/v3-spike/](docs/v3-spike/) |
-| Release notes | [docs/v3.1.2-release-notes.md](docs/v3.1.2-release-notes.md), [docs/v3.1.1-release-notes.md](docs/v3.1.1-release-notes.md), [docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md), [docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md), [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
+| Release notes | [docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md), [docs/v3.1.2-release-notes.md](docs/v3.1.2-release-notes.md), [docs/v3.1.1-release-notes.md](docs/v3.1.1-release-notes.md), [docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md), [docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md), [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
 | squad.yaml schema 1 | [docs/squad-yaml.md](docs/squad-yaml.md) |
 | Status contract, schema 1 | [docs/status-contract.md](docs/status-contract.md) |
 | Claude Code seat hooks | [docs/claude-hooks.md](docs/claude-hooks.md) |

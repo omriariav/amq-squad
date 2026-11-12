@@ -100,7 +100,7 @@ func TestStatusFleetJSONIsTheFleetDocument(t *testing.T) {
 func TestStatusFleetMissingRootWarns(t *testing.T) {
 	dir := fleetTempDir(t)
 	file := filepath.Join(dir, "fleet.yaml")
-	gone := filepath.Join(dir, "gone", ".agent-mail", "gone")
+	gone := filepath.Join(dir, "gone", ".agent-mail", "gone\u009bx")
 	if _, _, err := captureOutput(t, func() error {
 		return runFleet([]string{"add", "--fleet-file", file, "--name", "gone", "--root", gone,
 			"--project-path", filepath.Join(dir, "gone"), "--repository", "owner/gone", "--lead", "lead"})
@@ -117,12 +117,17 @@ func TestStatusFleetMissingRootWarns(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &f); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.Squads) != 1 || f.Squads[0].Root != gone {
+	if len(f.Squads) != 1 || f.Squads[0].Root != status.PlainText(gone, false) {
 		t.Fatalf("the squad row is gone: %+v", f.Squads)
 	}
 	warned := false
 	for _, w := range f.Squads[0].Warnings {
 		warned = warned || strings.HasPrefix(w, fleet.WarningRootUnavailable+": squad gone")
+		for _, r := range w {
+			if r < 0x20 || r >= 0x7f && r <= 0x9f {
+				t.Fatalf("warning has control %#x: %q", r, w)
+			}
+		}
 	}
 	if !warned {
 		t.Fatalf("no root_unavailable warning: %q", f.Squads[0].Warnings)

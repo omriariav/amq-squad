@@ -73,14 +73,24 @@ func (o Options) withDefaults() Options {
 		o.SendProof = sendProofDefault(o.UID)
 	}
 	if o.Self == "" {
-		if self, err := os.Executable(); err == nil {
-			if real, err := filepath.EvalSymlinks(self); err == nil {
-				self = real
-			}
+		if self, err := ResolveExecutable(""); err == nil {
 			o.Self = self
 		}
 	}
 	return o
+}
+
+// ResolveExecutable returns the real path used in seat argv and Codex hook
+// command hashes. An empty input means the current amq-squad executable.
+func ResolveExecutable(path string) (string, error) {
+	var err error
+	if path == "" {
+		path, err = os.Executable()
+		if err != nil {
+			return "", err
+		}
+	}
+	return filepath.EvalSymlinks(path)
 }
 
 var handlePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)

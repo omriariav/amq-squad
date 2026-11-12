@@ -4,9 +4,9 @@ Release changes must go through a PR and `make ci` before merge. `make ci`
 includes a README.html freshness check, so a release that touches `README.md`
 cannot merge without the matching regenerated `README.html` (see step 1).
 
-The supported AMQ series is 0.60.x and the fail-closed minimum is 0.60.0.
+The fail-closed AMQ minimum is 0.116.2 (`internal/cli/doctor.go`, `doctorMinAMQVersion`).
 Release validation must keep the doctor floor, active README/CLI-skill policy,
-and both real-AMQ CI matrices aligned on pinned `v0.60.0` plus `latest`.
+and both real-AMQ CI matrices aligned on pinned `v0.116.2` plus `latest`.
 
 ## Patch Release Checklist
 
@@ -24,17 +24,30 @@ and both real-AMQ CI matrices aligned on pinned `v0.60.0` plus `latest`.
    `make skills-generate` is sufficient. `make ci` (`skills-check`) fails if a mirror
    drifts from its manifest.
    Confirm the doctor minimum, README and CLI-skill support text, release-policy
-   checker, and both real-AMQ matrices still agree on AMQ 0.60.0 / `v0.60.0`
+   checker, and both real-AMQ matrices still agree on AMQ 0.116.2 / `v0.116.2`
    plus the `latest` canary.
-2. Merge the release PR.
-3. Tag the merge commit:
+Who does each step: the lead runs the cut. A release agent the lead starts may
+prepare and check (the notes, the skew check, the tag build, the evidence) but never
+publishes. The publish (steps 3 and 4, through `amq-squad release publish` once the
+owner has answered the `tag` and `github_release` gates) is the lead's own step. A
+refused or failed step goes back to the owner in words, never to another session to
+retry.
+
+2. Merge the release PR (the lead).
+3. Tag the merge commit (the lead, through `release publish` with the owner's
+   verified `tag` answer). The lead first runs `release prepare`, which raises
+   the `tag` and `github_release` gates; once the owner has answered both, the
+   lead runs `release publish` with the same arguments. Never tag by hand.
 
    ```sh
-   git tag -a v0.5.1 -m "amq-squad v0.5.1"
-   git push origin v0.5.1
+   amq-squad release prepare --repository omriariav/amq-squad --tag v0.5.1 \
+     --commit <merge SHA> --notes-file docs/v0.5.1-release-notes.md
+   amq-squad release publish --repository omriariav/amq-squad --tag v0.5.1 \
+     --commit <merge SHA> --notes-file docs/v0.5.1-release-notes.md
    ```
 
-4. Create the GitHub release for the tag.
+4. Create the GitHub release for the tag (the lead: the same `release publish`
+   creates it after the tag, with the owner's verified `github_release` answer).
 5. Smoke test the published install path:
 
    ```sh
@@ -51,8 +64,8 @@ version.
    done. Install the binary built from the tag (`scripts/build-pi-runtime.sh
    all`, the one attached to the release). Then either restart the squad's own
    lead on it, or run `amq-squad lead --team -- --offline` in a scratch
-   repository (`git init` in an empty directory, no `squad.yaml`, a scratch
-   `HOME`). Record the lead's first screen, a tmux `capture-pane` at about
+   repository (`git init` in an empty directory, then `amq coop init`; no
+   `squad.yaml`; a scratch `HOME`). Record the lead's first screen, a tmux `capture-pane` at about
    10 s, in the release evidence (`docs/v3-spike/5-release-evidence/release-<tag>/`).
    A dead pane or any `Failed to load extension` line means the release is
    not done. `make release-smoke` checks only the version, and CI stages no pi

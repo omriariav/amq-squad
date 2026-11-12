@@ -1,0 +1,4 @@
+# ./internal/buzz
+open /Users/omri/Library/Caches/go-build/b4/b4bb09d7f7ddc47d1bbb2ec66e48fc96c32495a7ec1320fcf5d540370a8128cf-a: operation not permitted
+FAIL	./internal/buzz [setup failed]
+FAIL
