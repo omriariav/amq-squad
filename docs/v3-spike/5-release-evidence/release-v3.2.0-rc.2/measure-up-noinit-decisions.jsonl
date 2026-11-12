@@ -1,0 +1,5 @@
+{"at":"2026-11-11T18:28:18.975596Z","kind":"session_created","reason":"up: amq coop init --root .agent-mail; amq session create upm1 --root /private/tmp/upmup-codex-noinit.ZL1c3o/proj/.agent-mail"}
+{"at":"2026-11-11T18:28:19.475757Z","kind":"scheduler_started","reason":"incarnation 008ec58534f5"}
+{"at":"2026-11-11T18:28:20.070047Z","kind":"roster_launched","reason":"launch 1e7002ab54fce146d5b48e010cc8221f: 1 seats in one apply"}
+{"at":"2026-11-11T18:28:20.073486Z","kind":"seat_up","seat":"dev","pool":"codex:gpt-5.6-terra:medium"}
+{"at":"2026-11-11T18:28:20.07716Z","kind":"decision_socket_open","reason":"/private/tmp/amqsq-1968790448/scheduler-decide.sock"}

@@ -1,0 +1,97 @@
+{"at":"2026-11-11T13:53:57.611166Z","kind":"ledger_layout_migrated","ledger_kind":"exits","seq":409881,"reason":"legacy exits ledger migrated to raw-bytes-v1 at link 409881"}
+{"at":"2026-11-11T13:53:57.635341Z","kind":"seat_adopted","seat":"dev","pool":"codex:gpt-5.6-terra:medium","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-11T13:53:57.639076Z","kind":"seat_adopted","seat":"reviewer","pool":"codex:gpt-5.6-sol:high","reason":"alive from a previous incarnation; its accepted proof's pid and start stamp match the live process"}
+{"at":"2026-11-11T13:53:57.642097Z","kind":"scheduler_started","reason":"incarnation 6aaf2fd93ca7"}
+{"at":"2026-11-11T13:53:59.109212Z","kind":"seat_clean_superseded","task_id":"t11","seat":"dev","reason":"seat dev holds a later lease (t7); the queued item for t11 attempt 1 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.113292Z","kind":"seat_clean_superseded","task_id":"t22","seat":"reviewer","reason":"seat reviewer holds a later lease (t24); the queued item for t22 attempt 1 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.117282Z","kind":"seat_clean_superseded","task_id":"t24","seat":"reviewer","reason":"seat reviewer holds a later lease (t26); the queued item for t24 attempt 1 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.120273Z","kind":"seat_clean_superseded","task_id":"t54","seat":"reviewer","reason":"seat reviewer holds a later lease (t55); the queued item for t54 attempt 1 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.12337Z","kind":"seat_clean_superseded","task_id":"t58","seat":"reviewer","reason":"seat reviewer holds a later lease (t59); the queued item for t58 attempt 1 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.126255Z","kind":"seat_clean_superseded","task_id":"t64","seat":"dev","reason":"seat dev holds a later lease (t70); the queued item for t64 attempt 2 is dropped, and nothing is closed or cleaned for it"}
+{"at":"2026-11-11T13:53:59.129387Z","kind":"roster_incomplete","seat":"dev2","reason":"adopted dev,reviewer; no launch: AMQ refuses a fresh seat into the present binding (binding_present_without_resumable_conversation), so a task for a missing seat's pool blocks for the lead's relaunch (amq-squad scheduler relaunch)"}
+{"at":"2026-11-11T13:53:59.133623Z","kind":"decision_socket_open","reason":"<home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/launch/scheduler-decide.sock"}
+{"at":"2026-11-11T14:05:35.731785Z","kind":"ledger_layout_migrated","ledger_kind":"commits","seat":"reviewer","seq":454,"reason":"legacy commit ledger migrated to raw-bytes-v1 at link 454"}
+{"at":"2026-11-11T14:05:36.252341Z","kind":"dispatched","task_id":"t162","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-11T14:09:59.819561Z","kind":"lease_renewed","task_id":"t162","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-11T14:21:05.889176Z","kind":"commit_running","task_id":"t162","seat":"reviewer","reason":"running"}
+{"at":"2026-11-11T14:21:09.912627Z","kind":"completed","task_id":"t162","seat":"reviewer"}
+{"at":"2026-11-11T14:21:09.916769Z","kind":"pr_bound","task_id":"t162","seat":"reviewer","reason":"omriariav/amq-squad pr 966 head 239eb6f7bbc29aef59fde6bb56313ee861ada041"}
+{"at":"2026-11-11T14:46:58.531211Z","kind":"dispatched","task_id":"t163","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-11T14:59:41.340026Z","kind":"lease_renewed","task_id":"t163","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-11T15:02:39.87503Z","kind":"commit_running","task_id":"t163","seat":"reviewer","reason":"running"}
+{"at":"2026-11-11T15:02:45.933071Z","kind":"completed","task_id":"t163","seat":"reviewer"}
+{"at":"2026-11-11T15:02:45.937231Z","kind":"pr_bound","task_id":"t163","seat":"reviewer","reason":"omriariav/amq-squad pr 967 head d1b4c18db59a82f23ff80387c8f66bd144ea30a4"}
+{"at":"2026-11-11T15:40:57.707614Z","kind":"dispatched","task_id":"t164","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-11T15:45:17.229901Z","kind":"lease_renewed","task_id":"t164","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-11T15:51:53.81436Z","kind":"commit_running","task_id":"t164","seat":"reviewer","reason":"running"}
+{"at":"2026-11-11T15:51:59.91733Z","kind":"completed","task_id":"t164","seat":"reviewer"}
+{"at":"2026-11-11T15:51:59.921085Z","kind":"pr_bound","task_id":"t164","seat":"reviewer","reason":"omriariav/amq-squad pr 969 head da0c96b42a7d4b419d5cb42d0a2d77409d10d719"}
+{"at":"2026-11-11T15:54:56.155108Z","kind":"dispatched","task_id":"t165","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-11T16:01:18.135658Z","kind":"lease_renewed","task_id":"t165","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-11T16:18:06.585438Z","kind":"commit_running","task_id":"t165","seat":"reviewer","reason":"running"}
+{"at":"2026-11-11T16:18:11.890137Z","kind":"completed","task_id":"t165","seat":"reviewer"}
+{"at":"2026-11-11T16:18:11.893836Z","kind":"pr_bound","task_id":"t165","seat":"reviewer","reason":"omriariav/amq-squad pr 970 head 1ddd90a994ada60aea51f18a11ad447e54ed84ad"}
+{"at":"2026-11-11T16:47:34.544996Z","kind":"dispatched","task_id":"t166","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-11T16:51:56.406512Z","kind":"lease_renewed","task_id":"t166","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-11T17:10:48.564087Z","kind":"commit_running","task_id":"t166","seat":"reviewer","reason":"running"}
+{"at":"2026-11-11T17:10:53.867751Z","kind":"completed","task_id":"t166","seat":"reviewer"}
+{"at":"2026-11-11T17:10:53.871438Z","kind":"pr_bound","task_id":"t166","seat":"reviewer","reason":"omriariav/amq-squad pr 971 head 873da94f8006017f7b5c788e9d4b12b504e9ad45"}
+{"at":"2026-11-11T17:32:18.603163Z","kind":"dispatched","task_id":"t167","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-11T17:37:46.215104Z","kind":"lease_renewed","task_id":"t167","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-11T17:47:23.858372Z","kind":"commit_running","task_id":"t167","seat":"reviewer","reason":"running"}
+{"at":"2026-11-11T17:47:32.787452Z","kind":"completed","task_id":"t167","seat":"reviewer"}
+{"at":"2026-11-11T17:47:32.791262Z","kind":"pr_bound","task_id":"t167","seat":"reviewer","reason":"omriariav/amq-squad pr 972 head 3876ee265401f08adf7f1e6d08d97b5286791c03"}
+{"at":"2026-11-11T17:50:08.320755Z","kind":"dispatched","task_id":"t168","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-11T17:53:22.568847Z","kind":"lease_renewed","task_id":"t168","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-11T18:11:00.648604Z","kind":"commit_running","task_id":"t168","seat":"reviewer","reason":"running"}
+{"at":"2026-11-11T18:11:08.648403Z","kind":"completed","task_id":"t168","seat":"reviewer"}
+{"at":"2026-11-11T18:11:08.65233Z","kind":"pr_bound","task_id":"t168","seat":"reviewer","reason":"omriariav/amq-squad pr 973 head abafeaf440b98f960bcf848bc18e5f9a437fcfad"}
+{"at":"2026-11-11T18:49:40.700369Z","kind":"dispatched","task_id":"t169","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-11T18:51:49.377473Z","kind":"lease_renewed","task_id":"t169","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-11T19:08:09.958453Z","kind":"commit_running","task_id":"t169","seat":"reviewer","reason":"running"}
+{"at":"2026-11-11T19:08:40.048317Z","kind":"completed","task_id":"t169","seat":"reviewer"}
+{"at":"2026-11-11T19:08:40.056172Z","kind":"pr_bound","task_id":"t169","seat":"reviewer","reason":"omriariav/amq-squad pr 974 head 3f77ee2361dada2fee8ceee9b5cdc040397db3f9"}
+{"at":"2026-11-11T19:38:00.71021Z","kind":"dispatched","task_id":"t170","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-11T19:42:37.951637Z","kind":"lease_renewed","task_id":"t170","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-11T19:44:27.848047Z","kind":"commit_running","task_id":"t170","seat":"reviewer","reason":"running"}
+{"at":"2026-11-11T19:44:33.882185Z","kind":"completed","task_id":"t170","seat":"reviewer"}
+{"at":"2026-11-11T19:44:33.886198Z","kind":"pr_bound","task_id":"t170","seat":"reviewer","reason":"omriariav/amq-squad pr 975 head 5f109c694b09e02ecccbb6c40645b1c1c7457dfa"}
+{"at":"2026-11-11T20:58:44.823796Z","kind":"dispatched","task_id":"t171","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-11T21:02:19.782528Z","kind":"lease_renewed","task_id":"t171","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-11T21:27:01.973833Z","kind":"commit_running","task_id":"t171","seat":"reviewer","reason":"running"}
+{"at":"2026-11-11T21:27:06.986673Z","kind":"completed","task_id":"t171","seat":"reviewer"}
+{"at":"2026-11-11T21:27:06.990681Z","kind":"pr_bound","task_id":"t171","seat":"reviewer","reason":"omriariav/amq-squad pr 976 head cdb73422886899560bc9449f7cbdf556fc6338d8"}
+{"at":"2026-11-11T22:15:21.069878Z","kind":"dispatched","task_id":"t172","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-11T22:22:21.99568Z","kind":"commit_running","task_id":"t172","seat":"reviewer","reason":"running"}
+{"at":"2026-11-11T22:22:27.992864Z","kind":"completed","task_id":"t172","seat":"reviewer"}
+{"at":"2026-11-11T22:22:27.996859Z","kind":"pr_bound","task_id":"t172","seat":"reviewer","reason":"omriariav/amq-squad pr 977 head e658efe11e72ec0f9de701386466144404cdadc3"}
+{"at":"2026-11-12T00:00:00.821421Z","kind":"dispatched","task_id":"t173","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-12T00:05:04.132927Z","kind":"lease_renewed","task_id":"t173","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-12T00:29:03.976991Z","kind":"commit_running","task_id":"t173","seat":"reviewer","reason":"running"}
+{"at":"2026-11-12T00:29:09.968091Z","kind":"completed","task_id":"t173","seat":"reviewer"}
+{"at":"2026-11-12T00:29:09.971839Z","kind":"pr_bound","task_id":"t173","seat":"reviewer","reason":"omriariav/amq-squad pr 979 head e58e1da54459718f95a1aebc8ab17e65bc1a4290"}
+{"at":"2026-11-12T02:58:15.010247Z","kind":"dispatched","task_id":"t174","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-12T03:15:46.77146Z","kind":"lease_renewed","task_id":"t174","seat":"reviewer","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-12T03:22:56.058574Z","kind":"commit_running","task_id":"t174","seat":"reviewer","reason":"running"}
+{"at":"2026-11-12T03:23:02.084098Z","kind":"completed","task_id":"t174","seat":"reviewer"}
+{"at":"2026-11-12T03:23:02.088852Z","kind":"pr_bound","task_id":"t174","seat":"reviewer","reason":"omriariav/amq-squad pr 980 head 27578be04b7adc2de7df109eb906cec60aa13593"}
+{"at":"2026-11-12T05:32:01.398754Z","kind":"seat_index_refreshed","seat":"dev","reason":"seat dev's index was stale; refreshed"}
+{"at":"2026-11-12T05:32:02.808035Z","kind":"seat_index_refreshed","seat":"reviewer","reason":"seat reviewer's index was stale; refreshed"}
+{"at":"2026-11-12T05:32:05.35008Z","kind":"roster_relaunch_requested","reason":"rc.2 launch path for the soak"}
+{"at":"2026-11-12T05:32:05.354479Z","kind":"seat_closed","seat":"dev","reason":"roster_relaunch"}
+{"at":"2026-11-12T05:32:05.35843Z","kind":"seat_closed","seat":"reviewer","reason":"roster_relaunch"}
+{"at":"2026-11-12T05:32:05.362538Z","kind":"roster_reloaded","reason":"squad.yaml compiled again at the relaunch's drain: a roster of 3 seats; added none; removed none (each closed in the drain, not launched again); at most 4 leases at once"}
+{"at":"2026-11-12T05:32:05.366312Z","kind":"roster_launched","reason":"launch 36f9c35929a8ea0700347c769800365c: 3 seats in one apply"}
+{"at":"2026-11-12T05:32:05.369311Z","kind":"seat_up","seat":"dev","pool":"codex:gpt-5.6-terra:medium"}
+{"at":"2026-11-12T05:32:05.372307Z","kind":"seat_up","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-12T05:32:05.375383Z","kind":"seat_up","seat":"dev2","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-12T06:44:05.619207Z","kind":"dispatched","task_id":"t175","seat":"dev2","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-12T06:45:38.069212Z","kind":"lease_renewed","task_id":"t175","seat":"dev2","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-12T07:19:50.054093Z","kind":"commit_running","task_id":"t175","seat":"dev2","reason":"running"}
+{"at":"2026-11-12T07:19:58.033503Z","kind":"completed","task_id":"t175","seat":"dev2"}
+{"at":"2026-11-12T07:19:58.03736Z","kind":"pr_bound","task_id":"t175","seat":"dev2","reason":"omriariav/amq-squad pr 981 head b1910543f07a8703f29615123b670bbbdce464bb"}
+{"at":"2026-11-12T07:52:47.607713Z","kind":"dispatched","task_id":"t176","seat":"dev2","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-12T07:54:32.371777Z","kind":"lease_renewed","task_id":"t176","seat":"dev2","reason":"first activity renewal of attempt 1"}
+{"at":"2026-11-12T07:58:41.967364Z","kind":"commit_running","task_id":"t176","seat":"dev2","reason":"running"}
+{"at":"2026-11-12T07:58:47.998618Z","kind":"completed","task_id":"t176","seat":"dev2"}
+{"at":"2026-11-12T07:58:48.002711Z","kind":"pr_bound","task_id":"t176","seat":"dev2","reason":"omriariav/amq-squad pr 982 head 150120b6406b5a5f866efb8f397c34795e4c7268"}

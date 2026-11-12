@@ -1,0 +1,4 @@
+{"at":"2026-11-11T18:29:31.822644Z","kind":"scheduler_started","reason":"incarnation 34159ed15cca"}
+{"at":"2026-11-11T18:29:32.10773Z","kind":"roster_launch_failed","reason":"the roster launch failed at stage apply_failed, reason launch_action_required: launch_action_required"}
+{"at":"2026-11-11T18:29:32.112288Z","kind":"seat_launch_failed","seat":"dev","pool":"claude:sonnet:medium","reason":"launch_action_required","stage":"apply_failed","reason_code":"launch_action_required"}
+{"at":"2026-11-11T18:29:32.116582Z","kind":"scheduler_stopped","reason":"the roster launch failed at stage apply_failed, reason launch_action_required: launch_action_required"}
