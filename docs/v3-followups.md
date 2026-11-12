@@ -384,7 +384,9 @@ as #962 corrected it.
   remote does not hold is refused with the same words. Source: the 3.2.0
   notes, Known limit 35. The fix is on v3 (#995) and ships in 3.3.0, on the
   owner's word of 2026-11-12; there is no 3.2.1, so a squad on 3.2.0 keeps
-  the limit and clears a refused seat with a roster relaunch.
+  the limit and clears a refused seat with a roster relaunch, after the
+  seat's worktree is emptied when it holds a leftover (measured once at the
+  3.2.0 cut, the evidence note).
 
 ### The merge train
 
@@ -470,10 +472,9 @@ as #962 corrected it.
   (`internal/mergetrain/train.go:702-709`, `ErrIncompleteDiff`). Seen on
   #991 on 2026-11-12: a 110 KB note with 962 changed lines, for which `gh
   api repos/<owner>/<repo>/compare/<base>...<head>` gave the file no
-  `patch`. The fix: prove the update from fetched git objects. For 3.3.0, on
-  the owner's word of 2026-11-12. Until it lands the lead merges nothing into
-  the base under an open seat PR unless that compare shows a patch for every
-  file.
+  `patch`. The fix: prove the update from fetched git objects. Named for
+  3.3.0. Until it lands the lead merges nothing into the base under an open
+  seat PR unless that compare shows a patch for every file.
 
 ### Control bytes and status text
 
