@@ -593,7 +593,7 @@ entries:
   target_lines: 87
   cluster: cli
   extract: ""
-  reason: "5-amq-A: doctor's installed AMQ floor (amq, amq-remote, amq-owner-sign --version at or above v0.116.2, the install line below it)"
+  reason: "5-amq-A: doctor's installed AMQ floor (amq, amq-remote, amq-owner-sign --version at or above v0.116.2, the install line below it) (the floor moved to 0.140.0 at #972)"
   status: new
 - path: internal/cli/doctor_host.go
   v2_lines: 0

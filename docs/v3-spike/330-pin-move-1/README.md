@@ -210,8 +210,9 @@ $ git diff --binary | shasum -a 256
 | `git diff --stat 6a0fe4b1742f5c331d8e3c87d6cf9a6c603a1e41` | exit 0; 26 tracked files, 123 insertions, 263 deletions before this note's final result-row update |
 | `git diff --no-index --stat /dev/null docs/v3-spike/330-pin-move-1/README.md` | expected exit 1; one new file, 225 insertions |
 
-The table above holds no `go test ./...`, no `make ci` and no documentation
-render (the lead's locked runs on the head are in the merge record of #972).
+The table above lists 12 command rows: zero whole-tree `go test ./...`
+commands, zero `make ci` commands and zero documentation renders (the lead's
+locked runs on the head are in the merge record of #972).
 
 ## 8. Not measured here
 
@@ -261,9 +262,11 @@ Each sentence corrected above carries "(see Corrections)" or is named here.
   shows three changed lines: the comment's `v0.116.2` to `v0.140.0`, the
   pinned lane's `amq-version` the same way, and the `CLI_TESTS` pattern
   without that one name.
-- Section 6 said each revert "first changed only its named target". The note
-  records a non-empty `git diff --stat` and no file list. The lead re-ran the
-  five on `3876ee265401f08adf7f1e6d08d97b5286791c03` with section 6's commands
+- Section 6 said each revert "first changed only its named target". Section 6
+  lists five reverts and names `git diff --stat` once, in its first sentence,
+  as non-empty for each; it prints zero stat outputs and zero file lists. The
+  lead re-ran the five on `3876ee265401f08adf7f1e6d08d97b5286791c03` with
+  section 6's commands
   (2026-11-11): `git diff --stat` named one file for each of rows 1 to 4
   (`internal/registry/versions.go`, `internal/adoptionseam/floor.go`,
   `internal/registry/versions.go`, `internal/cli/doctor.go`), and
@@ -275,6 +278,36 @@ Each sentence corrected above carries "(see Corrections)" or is named here.
   directory". The note records the `PYTHONPATH` the command ran with and no
   install command.
 - Section 7 said no whole-tree `go test ./...`, `make ci` or documentation
-  render was run by the seat. The section's table holds none of the three; the
-  lead's locked `make ci` and `make docs-html-check` on #972's head both
-  exited 0.
+  render was run by the seat. Section 7 lists 12 command rows: zero whole-tree
+  `go test ./...` commands, zero `make ci` commands and zero documentation
+  renders; the lead's locked `make ci` and `make docs-html-check` on #972's
+  head both exited 0.
+
+## Corrections (2026-11-12, the docs record)
+
+Lead edits, by hand (the plan reviewer's ruling on #977, item 4).
+
+- Three sentences stood without a count beside them: the sentence under
+  section 7's table, and the Section 6 entry and the last Section 7 entry of
+  the Corrections above. Each now carries its count. The counts are the lead's,
+  from these commands on this file as this PR leaves it (`F` is this file):
+
+  ```text
+  $ awk '/^## 7\. /{f=1;next} /^## 8\. /{f=0} f' F | grep -c '^| `'
+  12
+  $ awk '/^## 7\. /{f=1;next} /^## 8\. /{f=0} f' F | grep -c -F '| `go test ./...`'
+  0
+  $ awk '/^## 7\. /{f=1;next} /^## 8\. /{f=0} f' F | grep '^| `' | grep -c -F 'make ci'
+  0
+  $ awk '/^## 7\. /{f=1;next} /^## 8\. /{f=0} f' F | grep '^| `' | grep -c -E 'pandoc|docs-html|make docs|\.html'
+  0
+  $ awk '/^## 6\. /{f=1;next} /^## 7\. /{f=0} f' F | grep -c -E '^[0-9]+\. '
+  5
+  $ awk '/^## 6\. /{f=1;next} /^## 7\. /{f=0} f' F | grep -c -F 'git diff --stat'
+  1
+  $ awk '/^## 6\. /{f=1;next} /^## 7\. /{f=0} f' F | grep -c -E 'files? changed| \| +[0-9]+ [+-]+'
+  0
+  ```
+
+  A `grep -c` that prints 0 exits 1. The fourth pattern is what the lead took
+  a documentation render's command to hold; the twelve rows were also read.

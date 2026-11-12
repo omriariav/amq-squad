@@ -8,6 +8,10 @@ Task t172 at TIP `6dc265323928136ab9bd4993d09c0243927ca3a5`: fifteen lead inputs
 da1375e2e15c485b7b3e100b11951b548d65df71695880771cc907be04a621db  MANIFEST.sha256
 ```
 
+Correction (2026-11-12, a lead edit by hand; the plan reviewer's ruling on
+#977): the directory was cut from the printed line above, and the hash is the
+file's.
+
 `(cd $IN/tree && shasum -a 256 -c ../MANIFEST.sha256)` — exit 0:
 
 ```text
