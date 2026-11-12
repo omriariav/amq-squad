@@ -154,3 +154,188 @@ All Go commands used a temporary HOME, `GOPROXY=off`, the existing module cache,
 The required host-path count command printed `0` and exited 1 because grep found no matching line.
 
 `git status --porcelain` exited 0 and listed exactly the seven declared paths: the status contract, rollback row, status implementation, new status-warning rows, screen implementation, screen rows, and this note.
+
+## Row S-alert
+
+The row is `a gate alert and legacy warnings print the alert line and the count below the rule`, placed at `pi/test/screen.test.ts:258-272`.
+
+A1 asserts that exactly one line above the rule equals `  ! a gate needs a look; its alert is below the line`.
+
+A2 asserts that a record below the rule, trimmed, equals `merge_gate_drift: gate g9: the recorded head moved`.
+
+A3 asserts that a record below the rule, trimmed, equals `2 legacy gate records skipped`.
+
+A4 asserts that no screen line contains `clear-`.
+
+The screen code is unchanged; the row pins what `pi/extensions/lib/screen.ts` already does when a gate alert and legacy gate warnings are both present.
+
+### The reverts
+
+RA1 edited `pi/extensions/lib/screen.ts:347`.
+
+Before: `if (legacyGateWarnings.length) {`
+
+After: `if (!gateAlert && legacyGateWarnings.length) {`
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+✖ a gate alert and legacy warnings print the alert line and the count below the rule
+ℹ tests 33
+ℹ pass 32
+ℹ fail 1
+```
+
+Exit code: 1.
+
+```console
+$ git show HEAD:pi/extensions/lib/screen.ts > pi/extensions/lib/screen.ts
+$ git diff --quiet -- pi/extensions/lib/screen.ts; echo $?
+0
+```
+
+RA2 edited `pi/extensions/lib/screen.ts:340`.
+
+Before: `if (gateAlert) {`
+
+After: `if (gateAlert && !legacyGateWarnings.length) {`
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+✖ a gate alert and legacy warnings print the alert line and the count below the rule
+ℹ tests 33
+ℹ pass 32
+ℹ fail 1
+```
+
+Exit code: 1.
+
+```console
+$ git show HEAD:pi/extensions/lib/screen.ts > pi/extensions/lib/screen.ts
+$ git diff --quiet -- pi/extensions/lib/screen.ts; echo $?
+0
+```
+
+RA3 added one line after `pi/extensions/lib/screen.ts:348`.
+
+Before: no line after the count record.
+
+After: `for (const w of legacyGateWarnings) rec(short(w, 200));`
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+✖ three legacy gate warnings print one count below the rule and no read failure or gate id
+✖ a gate alert and legacy warnings print the alert line and the count below the rule
+ℹ tests 33
+ℹ pass 31
+ℹ fail 2
+```
+
+Exit code: 1.
+
+```console
+$ git show HEAD:pi/extensions/lib/screen.ts > pi/extensions/lib/screen.ts
+$ git diff --quiet -- pi/extensions/lib/screen.ts; echo $?
+0
+```
+
+RA4 edited `pi/extensions/lib/screen.ts:342`.
+
+Before: ``rec(`${gateAlert.kind}: ${short(gateAlert.subject)}`);``
+
+After: line removed.
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+✖ a gate alert and legacy warnings print the alert line and the count below the rule
+ℹ tests 33
+ℹ pass 32
+ℹ fail 1
+```
+
+Exit code: 1.
+
+```console
+$ git show HEAD:pi/extensions/lib/screen.ts > pi/extensions/lib/screen.ts
+$ git diff --quiet -- pi/extensions/lib/screen.ts; echo $?
+0
+```
+
+### What ran
+
+```console
+$ cd pi && npm ci --ignore-scripts --offline
+added 118 packages, and audited 119 packages in 1s
+found 0 vulnerabilities
+```
+
+Exit code: 0.
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+ℹ tests 33
+ℹ pass 33
+ℹ fail 0
+ℹ skipped 0
+```
+
+Exit code: 0.
+
+```console
+$ cd pi && npm test
+ℹ tests 147
+ℹ pass 146
+ℹ fail 0
+ℹ skipped 1
+```
+
+Exit code: 0.
+
+```console
+$ cd pi && node scripts/lint.mjs
+lint ok: 32 files, pi 1.3.0
+```
+
+Exit code: 0.
+
+```console
+$ go run ./scripts/redact-evidence -check docs/v3-spike/320-gate-legacy-words/
+```
+
+Exit code: 0.
+
+```console
+$ git diff --check
+```
+
+Exit code: 0.
+
+```console
+$ grep -c '/Us''ers/' docs/v3-spike/320-gate-legacy-words/README.md
+0
+```
+
+Exit code: 1, as expected for no matching line.
+
+```console
+$ grep -cE '[[:space:]]+$' docs/v3-spike/320-gate-legacy-words/README.md
+0
+```
+
+Exit code: 1, as expected for no matching line.
+
+```console
+$ git status --porcelain --untracked-files=all
+ M docs/v3-spike/320-gate-legacy-words/README.md
+ M pi/test/screen.test.ts
+```
+
+Exit code: 0.
+
+```console
+$ git diff --stat
+ docs/v3-spike/320-gate-legacy-words/README.md | 185 ++++++++++++++++++++++++++
+ pi/test/screen.test.ts                        |  16 +++
+ 2 files changed, 201 insertions(+)
+```
+
+Exit code: 0.

@@ -255,6 +255,22 @@ test("an old status warning still takes the read-failure screen path", () => {
 	assert.ok(lines.slice(rule + 1).some((line) => line.includes("gate store: gate clear-")), lines.join("\n"));
 });
 
+test("a gate alert and legacy warnings print the alert line and the count below the rule", () => {
+	const lines = renderScreen({
+		...statusWithGateWarnings([
+			legacyGateWarning("clear-00000000000000000000000000000001"),
+			legacyGateWarning("clear-00000000000000000000000000000002"),
+		]),
+		attention: [{ kind: "merge_gate_drift", subject: "gate g9: the recorded head moved", gate_id: "g9", since: "2026-11-01T09:00:00Z" }],
+	}, now);
+	const rule = lines.indexOf("----------");
+	assert.equal(lines.slice(0, rule).filter((line) => line === "  ! a gate needs a look; its alert is below the line").length, 1);
+	const records = lines.slice(rule + 1).map((line) => line.trim());
+	assert.ok(records.includes("merge_gate_drift: gate g9: the recorded head moved"), lines.join("\n"));
+	assert.ok(records.includes("2 legacy gate records skipped"), lines.join("\n"));
+	assert.ok(!lines.some((line) => line.includes("clear-")), lines.join("\n"));
+});
+
 // Brief 31-4 (the lead side): per phone request, whether the lead's answer
 // was relayed to the owner's DM or refused by the relay; the refusal's name
 // is below the rule.
