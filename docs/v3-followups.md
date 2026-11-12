@@ -472,7 +472,8 @@ as #962 corrected it.
   (`internal/mergetrain/train.go:702-709`, `ErrIncompleteDiff`). Seen on
   #991 on 2026-11-12: a 110 KB note with 962 changed lines, for which `gh
   api repos/<owner>/<repo>/compare/<base>...<head>` gave the file no
-  `patch`. The fix: prove the update from fetched git objects. Named for
+  `patch`. The fix: the train checks the API diff against the compare's file
+  set and line counts itself, in place of the JSON `patch` test. Named for
   3.3.0. Until it lands the lead merges nothing into the base under an open
   seat PR unless that compare shows a patch for every file.
 
