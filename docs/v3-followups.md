@@ -363,6 +363,11 @@ as #962 corrected it.
   code `launch_action_required` and no other reason text in the decision
   log, cause not established (the 3.2.0 notes, Known limit 34). It is a
   Claude-lane item of the 3.3.0 plan.
+- A seat whose task branch was cut from a tip later than the seat's launch
+  base, and whose attempt ends with no commit, is refused at its next prepare
+  with `seat_head_detached_unmerged`; the fix: a head reachable from the
+  remote branch is not a local commit. Source: the 3.2.0 notes, Known limit
+  35.
 
 ### The merge train
 
