@@ -174,6 +174,12 @@ its PR. Nothing here is promised by date.
   3.2.x by name if a later review wants it.
 - **A typed code for a clean on a ledger refused as `newer_writer` or
   `schema_mismatch`** (the #909 port answers with text only, pinned by P6).
+- doctor's "sealed ledger compatibility" check reads the AMQ root
+  ResolveAMQEnv resolves from the project directory, the base root when no
+  session is named (`internal/cli/doctor.go:380-396` at v3.2.0), so its ok
+  says nothing about a session's ledgers; seen at the 3.2.0 cut (the 3.2.0
+  evidence note's doctor-warnings.txt was that run). Not walked: what the
+  check reads when a session is set in the environment.
 
 ### Source guards and test tooling
 
@@ -355,8 +361,8 @@ as #962 corrected it.
 - A seat launch can hang indefinitely while fetching from origin because the
   fetch has no time limit. Reuse the bounded runner already provided by
   `seatcommit`.
-- `lead --team` in a repository where `amq coop init` has not run is refused
-  at the roster launch with `base_root_unauthorized`; today the first host
+- `lead --team` in a repository that has a `squad.yaml` and where `amq coop
+  init` has not run is refused at the roster launch with `base_root_unauthorized`; today the first host
   step (`amq coop init`, README.md:229-230) has to be run first, and `up`
   runs it itself. Source: the 3.2.0 notes, Known limit 33.
 - Not on this list (3.3.0): a Claude seat's launch that fails with the bare
@@ -554,6 +560,9 @@ as #960 corrected it.
   refused in 4 of 9 runs on v0.138.0), and the same code is read in v0.134.0
   and on main at 71ef0f47; the fix belongs upstream and rides the AMQ lane of
   3.3.0. (Ruled onto this list on #945's packet, point 5.)
+- Dated 2026-11-12, resolved by 3.3.0's bump: `docs/skills.md:77-78` and
+  `README.md:83` name the `@v3.2.0` install tag beside v3's AMQ 0.140.0
+  floor; the build that tag installs needs 0.116.2 (the merge-back, #989).
 - **The AMQ pin** (2026-11-11): AMQ v0.139.0 removed `launchapi.Inspect`; the
   pin cannot pass v0.138.0 until 3.3.0's R0. The rc.2 notes carry one
   sentence on the supported pin.

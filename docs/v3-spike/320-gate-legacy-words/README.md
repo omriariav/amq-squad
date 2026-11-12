@@ -24,7 +24,7 @@ The read-failure form is `gate store: <error>`. The legacy-record form is `gate 
 
 The screen prints the could-not-be-read line and its detail only for the read-failure form. It prints one count below the rule for all legacy-record warnings: singular for one, plural for more than one. It never prints the gate id of a legacy warning carrying the new prefix (S-legacy-3); an old-prefix line still prints it (S-old). The count is printed with a read failure (S-both) and, by the code at `pi/extensions/lib/screen.ts:347-349`, with a gate alert; no row asserted the alert case in v3.2.0 (the row S-alert, #982 on v3, added afterwards).
 
-An old status document from rc.2 or earlier still carries a legacy record under the `gate store: ` form. The screen and binary normally ship together, so this is the mixed-version case only, and the screen continues to take its read-failure path.
+An old status document from rc.2 or earlier still carries a legacy record under the `gate store: ` form. The screen and binary normally ship together, so this is the mixed-version case only, and, when no gate alert is present, the screen continues to take its read-failure path.
 
 The warning table in `docs/v3-spike/320-0d-screen/README.md` records the earlier form and is unchanged.
 
@@ -173,7 +173,7 @@ The screen code is unchanged; the row pins what `pi/extensions/lib/screen.ts` al
 
 ### The reverts
 
-The console blocks under The reverts and What ran print the lines the brief asked for, not every line the command printed; the ✖ lines, the exit codes and the counts are complete.
+The console blocks under The reverts and What ran print the lines the brief asked for, not every line the command printed; each failing test's ✖ line is printed once, the reporter's footer and its repeats left out; the exit codes and the counts are complete.
 
 RA1 edited `pi/extensions/lib/screen.ts:347`.
 
