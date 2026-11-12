@@ -41,7 +41,8 @@ The model in five lines:
 ## What's new in 3.2.0
 
 3.2.0 fixes how the squad keeps working on its own:
-[docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md). In short:
+[docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md).
+In short:
 
 - A seat's lease is renewed from its own work, never past its task's budget,
   with no `task renew` call needed. The budget is squad.yaml's `task_budget`
