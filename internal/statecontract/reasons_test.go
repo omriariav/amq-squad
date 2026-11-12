@@ -294,7 +294,7 @@ func reasonCalledFunction(expression ast.Expr, info *types.Info) (*types.Func, b
 			if function == nil {
 				return nil, false, ""
 			}
-			return function, selection.Kind() == types.MethodExpr, reasonSelectedFunctionName(function, selection)
+			return function, selection.Kind() == types.MethodExpr, reasonSelectedFunctionName(function)
 		}
 		function, _ := info.Uses[expression.Sel].(*types.Func)
 		if function == nil {
@@ -306,8 +306,12 @@ func reasonCalledFunction(expression ast.Expr, info *types.Info) (*types.Func, b
 	}
 }
 
-func reasonSelectedFunctionName(function *types.Func, selection *types.Selection) string {
-	receiver := types.Unalias(selection.Recv())
+func reasonSelectedFunctionName(function *types.Func) string {
+	signature, _ := function.Type().(*types.Signature)
+	if signature == nil || signature.Recv() == nil {
+		return reasonFunctionName(function)
+	}
+	receiver := types.Unalias(signature.Recv().Type())
 	if pointer, ok := receiver.(*types.Pointer); ok {
 		receiver = types.Unalias(pointer.Elem())
 	}
