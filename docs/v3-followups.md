@@ -501,7 +501,7 @@ as #962 corrected it.
   did so for a compare under 300 files whose JSON says `renamed`, the
   file-set check would refuse it. Source: the note
   docs/v3-spike/330-train-compare-proof/README.md.
-- **The train fix's one follow-up task** (2026-11-13; #1000), nine items:
+- **The train fix's one follow-up task** (2026-11-13; #1000), eight items:
   (1) a `\ No newline at end of file` line as the diff's first line, before
   any section, panics in `compareDiffMismatch` (a nil pointer dereference;
   found by a read-only Codex pass on #1000 and confirmed by the lead's run):
@@ -515,8 +515,8 @@ as #962 corrected it.
   the later deciding; a `Binary files … differ` line before the index line;
   two spaces or a tab between a hunk header's fields); and the 48 diffs of
   24 real forms measured at the gate into the note; (6) a table case with
-  two hunks holding markers in one section; (7), (8), (9) three wording
-  items of the note and the tests. Its gate: the corpus test, the two
+  two hunks holding markers in one section; (7), (8) two wording items
+  of the note and the tests. Its gate: the corpus test, the two
   history runs, the affected rows, the whole package once, CI green.
 - **The train's fix is on v3 and not on the squad until a 3.3.0 build is
   installed** (2026-11-13): the running squad's binary is 3.2.0, whose train
