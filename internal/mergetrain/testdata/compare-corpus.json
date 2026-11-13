@@ -1,0 +1,428 @@
+{
+ "repository": "omriariav/amq-squad",
+ "cases": [
+  {
+   "name": "GitHub: a compare with an added binary file, whole",
+   "source": "as GitHub served it: the diff media type of compare 1d1e5f7e7a08f70952b4d157eea6f70288f60f30...b5af721a90f148dcc692e584e862b31fb5cdcbba of omriariav/amq-squad, the whole answer",
+   "files": [
+    {
+     "filename": "docs/v3-research/codex-agent-command-center-2026-10-24.png",
+     "previous_filename": "",
+     "status": "added",
+     "additions": 0,
+     "deletions": 0
+    },
+    {
+     "filename": "docs/v3-spike/amendments.md",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 2,
+     "deletions": 0
+    },
+    {
+     "filename": "docs/v3-spike/spike-log.md",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 1,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/docs/v3-research/codex-agent-command-center-2026-10-24.png b/docs/v3-research/codex-agent-command-center-2026-10-24.png\nnew file mode 100644\nindex 000000000..8dbd5ec6b\nBinary files /dev/null and b/docs/v3-research/codex-agent-command-center-2026-10-24.png differ\ndiff --git a/docs/v3-spike/amendments.md b/docs/v3-spike/amendments.md\nindex 9edba06cf..943e4abab 100644\n--- a/docs/v3-spike/amendments.md\n+++ b/docs/v3-spike/amendments.md\n@@ -181,3 +181,5 @@ Items 19 to 22 are integrated in docs/v3-plan.md revision 2.5 (2026-10-22).\n \n 23. Upstream shipped the pi mint-mode launch adapter (PR #1188, 2026-10-23, after v0.107.0): pi seats launch and resume through `amq launch` with `--session-id <launch nonce>`; the S5 `coop exec` path becomes the fallback. Sections 4.1 (pi package and its launch), 4.3, R1, R5, phase 4 row; the embedded pi version is the one upstream verifies. Two facts from PR #1188 to carry: (a) upstream resume is not fail-closed: it runs `pi --session-id <recorded id>` in the recorded cwd and relies on pi's create-if-missing on purpose, because a seat that never took a turn has no session file; our smallest fix, on our side and with no new upstream ask, is that 2b seat-exec (or doctor) refuses a pi resume when the seat's evidence ledger shows at least one tool result and the session file for the recorded id is missing, the only case where create-if-missing loses context silently; (b) pi admits no provider arguments (allowed_argument_forms empty, grammar 1) and managed pi seats are unnamed like Codex, so model and effort for pi seats cannot travel in the launch request or the trust digest yet; plan 4.3's \"model, effort travel as provider arguments\" holds for Claude and Codex only, the pi model restriction stays on our registry side (R16 pi package rule) plus pi's own config, with a watch item for when upstream admits pi forms. Version rule: upstream refuses pi below 1.2.0 or a non-release build; our embedded 1.3.0 passes, so the pinned-version rule of amendment 20(a) is now an upstream check plus our pin. Also v0.107.0 #1176 gives every Codex seat its AMQ identity in shell commands (R52 evidence from the other side). For 2.6.\n \n+24. Owner request (2026-10-24): amq-noc becomes the squad's command center in the shape of Codex's \"Agent command center\" (reference screenshot `docs/v3-research/codex-agent-command-center-2026-10-24.png`). Elements to carry into the phase 4 amq-noc brief: one list of every seat and task across projects, grouped by project path with a count per group; four status buckets with counts as tab filters, \"Needs you\", \"Working\", \"Ready\", \"Inactive\", plus \"All\"; one row per task with its title, status and relative \"updated\" time; a details pane for the selected row with status, model and reasoning effort, project path, token counts in and out, the last message and the prompt state; keyboard navigation (arrows, enter to open, n for new, esc back, ? help, tab to cycle filters); a \"show more\" fold for long groups. Mapping to 3.0: a row is a task in the task store (2b) joined to its seat in the registry (model, effort) and the evidence ledger (tokens, last message); \"Needs you\" is the set of open typed gates and refusals routed to the owner (7.1, 7.2); \"Ready\" is a seat with no task and a live lease; \"Inactive\" is a seat whose lease expired or whose session ended; \"new\" dispatches a task through the kept `dispatch` verb. Sections 13 (phase 4 row: amq-noc 1.0 as renderer), 4.4, the 2b status contract (the renderer reads one JSON status, never the stores directly). Open for the owner: whether this view replaces the current amq-noc board as the default or sits beside it. For 2.6.\n+\ndiff --git a/docs/v3-spike/spike-log.md b/docs/v3-spike/spike-log.md\nindex b22c4656c..c2192af16 100644\n--- a/docs/v3-spike/spike-log.md\n+++ b/docs/v3-spike/spike-log.md\n@@ -255,3 +255,4 @@ orchestrator had overestimated elapsed time by up to three hours.\n - 2026-10-23 1x:xx 2a-2 merged into v3 as 4a0ad3db (31 commits, final head 242c553d): internal/ 42,992 lines, holding 0, tests 1,115; band gate NOT MET by decision (40,561 vs 36,410 top; like for like 6.0 percent over own targets); ledger in three classes carried to 2b; thirteen lead rulings in the log. Both reviewers rebuilt the end state. Next: 2a-3 (the three verbs).\n - 2026-10-24 morning: Aviv closed #1153 with PR 1188 (pi seats start and resume through amq launch; on main after v0.107.0); #1154 released in v0.106.2; v0.107.0 carries #1176 (Codex seat AMQ identity in shell commands) and doorbell holds for trust/sign-in prompts. Six of seven asks shipped; #1159 PR 1186 still open. Amendment 23 queued for 2.6. Local amq 0.106.1. 2a-3 agent resumed after an Opus rate-limit stop with the reviewer six redirects.\n - 2026-10-24 Owner \"upgrade\": amq binaries to 0.107.0 (no endpoint running).\n+- 2026-10-24 Owner: amq-noc to become a command center like Codex Agent command center (screenshot saved under docs/v3-research/); amendment 24 queued for 2.6 as the phase 4 amq-noc brief input.\n",
+   "want": ""
+  },
+  {
+   "name": "GitHub: the added binary file's section",
+   "source": "as GitHub served it: the diff media type of compare 1d1e5f7e7a08f70952b4d157eea6f70288f60f30...b5af721a90f148dcc692e584e862b31fb5cdcbba of omriariav/amq-squad, one section",
+   "files": [
+    {
+     "filename": "docs/v3-research/codex-agent-command-center-2026-10-24.png",
+     "previous_filename": "",
+     "status": "added",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/docs/v3-research/codex-agent-command-center-2026-10-24.png b/docs/v3-research/codex-agent-command-center-2026-10-24.png\nnew file mode 100644\nindex 000000000..8dbd5ec6b\nBinary files /dev/null and b/docs/v3-research/codex-agent-command-center-2026-10-24.png differ\n",
+   "want": ""
+  },
+  {
+   "name": "made from GitHub's sections: the binary section moved to the end",
+   "source": "constructed: the sections of compare 1d1e5f7e7a08f70952b4d157eea6f70288f60f30...b5af721a90f148dcc692e584e862b31fb5cdcbba as GitHub served them, the binary file's section moved to the end; no real diff measured ends in a binary section",
+   "files": [
+    {
+     "filename": "docs/v3-research/codex-agent-command-center-2026-10-24.png",
+     "previous_filename": "",
+     "status": "added",
+     "additions": 0,
+     "deletions": 0
+    },
+    {
+     "filename": "docs/v3-spike/amendments.md",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 2,
+     "deletions": 0
+    },
+    {
+     "filename": "docs/v3-spike/spike-log.md",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 1,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/docs/v3-spike/amendments.md b/docs/v3-spike/amendments.md\nindex 9edba06cf..943e4abab 100644\n--- a/docs/v3-spike/amendments.md\n+++ b/docs/v3-spike/amendments.md\n@@ -181,3 +181,5 @@ Items 19 to 22 are integrated in docs/v3-plan.md revision 2.5 (2026-10-22).\n \n 23. Upstream shipped the pi mint-mode launch adapter (PR #1188, 2026-10-23, after v0.107.0): pi seats launch and resume through `amq launch` with `--session-id <launch nonce>`; the S5 `coop exec` path becomes the fallback. Sections 4.1 (pi package and its launch), 4.3, R1, R5, phase 4 row; the embedded pi version is the one upstream verifies. Two facts from PR #1188 to carry: (a) upstream resume is not fail-closed: it runs `pi --session-id <recorded id>` in the recorded cwd and relies on pi's create-if-missing on purpose, because a seat that never took a turn has no session file; our smallest fix, on our side and with no new upstream ask, is that 2b seat-exec (or doctor) refuses a pi resume when the seat's evidence ledger shows at least one tool result and the session file for the recorded id is missing, the only case where create-if-missing loses context silently; (b) pi admits no provider arguments (allowed_argument_forms empty, grammar 1) and managed pi seats are unnamed like Codex, so model and effort for pi seats cannot travel in the launch request or the trust digest yet; plan 4.3's \"model, effort travel as provider arguments\" holds for Claude and Codex only, the pi model restriction stays on our registry side (R16 pi package rule) plus pi's own config, with a watch item for when upstream admits pi forms. Version rule: upstream refuses pi below 1.2.0 or a non-release build; our embedded 1.3.0 passes, so the pinned-version rule of amendment 20(a) is now an upstream check plus our pin. Also v0.107.0 #1176 gives every Codex seat its AMQ identity in shell commands (R52 evidence from the other side). For 2.6.\n \n+24. Owner request (2026-10-24): amq-noc becomes the squad's command center in the shape of Codex's \"Agent command center\" (reference screenshot `docs/v3-research/codex-agent-command-center-2026-10-24.png`). Elements to carry into the phase 4 amq-noc brief: one list of every seat and task across projects, grouped by project path with a count per group; four status buckets with counts as tab filters, \"Needs you\", \"Working\", \"Ready\", \"Inactive\", plus \"All\"; one row per task with its title, status and relative \"updated\" time; a details pane for the selected row with status, model and reasoning effort, project path, token counts in and out, the last message and the prompt state; keyboard navigation (arrows, enter to open, n for new, esc back, ? help, tab to cycle filters); a \"show more\" fold for long groups. Mapping to 3.0: a row is a task in the task store (2b) joined to its seat in the registry (model, effort) and the evidence ledger (tokens, last message); \"Needs you\" is the set of open typed gates and refusals routed to the owner (7.1, 7.2); \"Ready\" is a seat with no task and a live lease; \"Inactive\" is a seat whose lease expired or whose session ended; \"new\" dispatches a task through the kept `dispatch` verb. Sections 13 (phase 4 row: amq-noc 1.0 as renderer), 4.4, the 2b status contract (the renderer reads one JSON status, never the stores directly). Open for the owner: whether this view replaces the current amq-noc board as the default or sits beside it. For 2.6.\n+\ndiff --git a/docs/v3-spike/spike-log.md b/docs/v3-spike/spike-log.md\nindex b22c4656c..c2192af16 100644\n--- a/docs/v3-spike/spike-log.md\n+++ b/docs/v3-spike/spike-log.md\n@@ -255,3 +255,4 @@ orchestrator had overestimated elapsed time by up to three hours.\n - 2026-10-23 1x:xx 2a-2 merged into v3 as 4a0ad3db (31 commits, final head 242c553d): internal/ 42,992 lines, holding 0, tests 1,115; band gate NOT MET by decision (40,561 vs 36,410 top; like for like 6.0 percent over own targets); ledger in three classes carried to 2b; thirteen lead rulings in the log. Both reviewers rebuilt the end state. Next: 2a-3 (the three verbs).\n - 2026-10-24 morning: Aviv closed #1153 with PR 1188 (pi seats start and resume through amq launch; on main after v0.107.0); #1154 released in v0.106.2; v0.107.0 carries #1176 (Codex seat AMQ identity in shell commands) and doorbell holds for trust/sign-in prompts. Six of seven asks shipped; #1159 PR 1186 still open. Amendment 23 queued for 2.6. Local amq 0.106.1. 2a-3 agent resumed after an Opus rate-limit stop with the reviewer six redirects.\n - 2026-10-24 Owner \"upgrade\": amq binaries to 0.107.0 (no endpoint running).\n+- 2026-10-24 Owner: amq-noc to become a command center like Codex Agent command center (screenshot saved under docs/v3-research/); amendment 24 queued for 2.6 as the phase 4 amq-noc brief input.\ndiff --git a/docs/v3-research/codex-agent-command-center-2026-10-24.png b/docs/v3-research/codex-agent-command-center-2026-10-24.png\nnew file mode 100644\nindex 000000000..8dbd5ec6b\nBinary files /dev/null and b/docs/v3-research/codex-agent-command-center-2026-10-24.png differ\n",
+   "want": ""
+  },
+  {
+   "name": "made from GitHub's sections: the binary section last and cut after its index line",
+   "source": "constructed: the case before, cut at the line boundary after the binary section's index line (git patch-id --stable of the cut differs from the whole diff's)",
+   "files": [
+    {
+     "filename": "docs/v3-research/codex-agent-command-center-2026-10-24.png",
+     "previous_filename": "",
+     "status": "added",
+     "additions": 0,
+     "deletions": 0
+    },
+    {
+     "filename": "docs/v3-spike/amendments.md",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 2,
+     "deletions": 0
+    },
+    {
+     "filename": "docs/v3-spike/spike-log.md",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 1,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/docs/v3-spike/amendments.md b/docs/v3-spike/amendments.md\nindex 9edba06cf..943e4abab 100644\n--- a/docs/v3-spike/amendments.md\n+++ b/docs/v3-spike/amendments.md\n@@ -181,3 +181,5 @@ Items 19 to 22 are integrated in docs/v3-plan.md revision 2.5 (2026-10-22).\n \n 23. Upstream shipped the pi mint-mode launch adapter (PR #1188, 2026-10-23, after v0.107.0): pi seats launch and resume through `amq launch` with `--session-id <launch nonce>`; the S5 `coop exec` path becomes the fallback. Sections 4.1 (pi package and its launch), 4.3, R1, R5, phase 4 row; the embedded pi version is the one upstream verifies. Two facts from PR #1188 to carry: (a) upstream resume is not fail-closed: it runs `pi --session-id <recorded id>` in the recorded cwd and relies on pi's create-if-missing on purpose, because a seat that never took a turn has no session file; our smallest fix, on our side and with no new upstream ask, is that 2b seat-exec (or doctor) refuses a pi resume when the seat's evidence ledger shows at least one tool result and the session file for the recorded id is missing, the only case where create-if-missing loses context silently; (b) pi admits no provider arguments (allowed_argument_forms empty, grammar 1) and managed pi seats are unnamed like Codex, so model and effort for pi seats cannot travel in the launch request or the trust digest yet; plan 4.3's \"model, effort travel as provider arguments\" holds for Claude and Codex only, the pi model restriction stays on our registry side (R16 pi package rule) plus pi's own config, with a watch item for when upstream admits pi forms. Version rule: upstream refuses pi below 1.2.0 or a non-release build; our embedded 1.3.0 passes, so the pinned-version rule of amendment 20(a) is now an upstream check plus our pin. Also v0.107.0 #1176 gives every Codex seat its AMQ identity in shell commands (R52 evidence from the other side). For 2.6.\n \n+24. Owner request (2026-10-24): amq-noc becomes the squad's command center in the shape of Codex's \"Agent command center\" (reference screenshot `docs/v3-research/codex-agent-command-center-2026-10-24.png`). Elements to carry into the phase 4 amq-noc brief: one list of every seat and task across projects, grouped by project path with a count per group; four status buckets with counts as tab filters, \"Needs you\", \"Working\", \"Ready\", \"Inactive\", plus \"All\"; one row per task with its title, status and relative \"updated\" time; a details pane for the selected row with status, model and reasoning effort, project path, token counts in and out, the last message and the prompt state; keyboard navigation (arrows, enter to open, n for new, esc back, ? help, tab to cycle filters); a \"show more\" fold for long groups. Mapping to 3.0: a row is a task in the task store (2b) joined to its seat in the registry (model, effort) and the evidence ledger (tokens, last message); \"Needs you\" is the set of open typed gates and refusals routed to the owner (7.1, 7.2); \"Ready\" is a seat with no task and a live lease; \"Inactive\" is a seat whose lease expired or whose session ended; \"new\" dispatches a task through the kept `dispatch` verb. Sections 13 (phase 4 row: amq-noc 1.0 as renderer), 4.4, the 2b status contract (the renderer reads one JSON status, never the stores directly). Open for the owner: whether this view replaces the current amq-noc board as the default or sits beside it. For 2.6.\n+\ndiff --git a/docs/v3-spike/spike-log.md b/docs/v3-spike/spike-log.md\nindex b22c4656c..c2192af16 100644\n--- a/docs/v3-spike/spike-log.md\n+++ b/docs/v3-spike/spike-log.md\n@@ -255,3 +255,4 @@ orchestrator had overestimated elapsed time by up to three hours.\n - 2026-10-23 1x:xx 2a-2 merged into v3 as 4a0ad3db (31 commits, final head 242c553d): internal/ 42,992 lines, holding 0, tests 1,115; band gate NOT MET by decision (40,561 vs 36,410 top; like for like 6.0 percent over own targets); ledger in three classes carried to 2b; thirteen lead rulings in the log. Both reviewers rebuilt the end state. Next: 2a-3 (the three verbs).\n - 2026-10-24 morning: Aviv closed #1153 with PR 1188 (pi seats start and resume through amq launch; on main after v0.107.0); #1154 released in v0.106.2; v0.107.0 carries #1176 (Codex seat AMQ identity in shell commands) and doorbell holds for trust/sign-in prompts. Six of seven asks shipped; #1159 PR 1186 still open. Amendment 23 queued for 2.6. Local amq 0.106.1. 2a-3 agent resumed after an Opus rate-limit stop with the reviewer six redirects.\n - 2026-10-24 Owner \"upgrade\": amq binaries to 0.107.0 (no endpoint running).\n+- 2026-10-24 Owner: amq-noc to become a command center like Codex Agent command center (screenshot saved under docs/v3-research/); amendment 24 queued for 2.6 as the phase 4 amq-noc brief input.\ndiff --git a/docs/v3-research/codex-agent-command-center-2026-10-24.png b/docs/v3-research/codex-agent-command-center-2026-10-24.png\nnew file mode 100644\nindex 000000000..8dbd5ec6b\n",
+   "want": "a file with no changed line holds an index line and neither a binary part nor an empty file's ids"
+  },
+  {
+   "name": "GitHub: a rename with no change",
+   "source": "as GitHub served it: the diff media type of compare a2d1f87e6cbe87d04aea9de636f2335cd1fd60fd...82b4b6c2b5dfef17ae3eb712687b7665459a35e2 of omriariav/amq-squad, one section",
+   "files": [
+    {
+     "filename": "internal/cli/cli_fixture_support_test.go",
+     "previous_filename": "internal/cli/v3_holding_test.go",
+     "status": "renamed",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/internal/cli/v3_holding_test.go b/internal/cli/cli_fixture_support_test.go\nsimilarity index 100%\nrename from internal/cli/v3_holding_test.go\nrename to internal/cli/cli_fixture_support_test.go\n",
+   "want": ""
+  },
+  {
+   "name": "GitHub: a rename with changes",
+   "source": "as GitHub served it: the diff media type of compare c211200b8d259748360f23c650676597841f578b...be27ebb1ffad716e3b8627991cd91e482a04d360 of omriariav/amq-squad, one section",
+   "files": [
+    {
+     "filename": "internal/cli/v2310_legacy_still_reachable_test.go",
+     "previous_filename": "internal/cli/v2300_removes_nothing_test.go",
+     "status": "renamed",
+     "additions": 42,
+     "deletions": 16
+    }
+   ],
+   "diff": "diff --git a/internal/cli/v2300_removes_nothing_test.go b/internal/cli/v2310_legacy_still_reachable_test.go\nsimilarity index 73%\nrename from internal/cli/v2300_removes_nothing_test.go\nrename to internal/cli/v2310_legacy_still_reachable_test.go\nindex 4704dab5d..253e09223 100644\n--- a/internal/cli/v2300_removes_nothing_test.go\n+++ b/internal/cli/v2310_legacy_still_reachable_test.go\n@@ -11,12 +11,16 @@ import (\n \t\"github.com/omriariav/amq-squad/v2/internal/team\"\n )\n \n-// TestV2300RemovesNothing enforces the v2.30.0 additive-only invariant\n-// mechanically: v2.30.0 adds the opt-in launchapi backend (gh#733) and\n-// nothing else may be removed as a side effect. The repo has no standalone\n-// \"removal register\" issue (the earlier one was dissolved and absorbed into\n-// the v2.31.0 milestone description's \"Deferred-removal register\"), so this\n-// list is derived directly from that description (gh api\n+// TestV2310LegacyStillReachable enforces the additive-only invariant\n+// mechanically across the v2.31.0 default flip (gh#755): v2.30.0 added the\n+// opt-in launchapi backend (gh#733), and v2.31.0 makes it the default on\n+// tmux, but the legacy tmux pane driver and every other register entry below\n+// stay reachable and untouched. Formerly TestV2300RemovesNothing; renamed\n+// for gh#755 since its central assertion is now \"legacy still reachable\n+// under the explicit opt-out\", not \"legacy is still the default\". The repo\n+// has no standalone \"removal register\" issue (the earlier one was dissolved\n+// and absorbed into the v2.31.0 milestone description's \"Deferred-removal\n+// register\"), so this list is derived directly from that description (gh api\n // repos/omriariav/amq-squad/milestones, title=v2.31.0, fetched 2026-08-26):\n //\n //\t\"Deferred-removal register (each gated; nothing removed before its\n@@ -33,13 +37,13 @@ import (\n //\n // Each subtest below pins one register entry (or gh#732's own additive-only\n // non-negotiables) to a concrete, compile-and-run-time-checked surface, with\n-// its v2.31.0 removal prerequisite noted in the subtest's own comment.\n-func TestV2300RemovesNothing(t *testing.T) {\n+// its removal prerequisite noted in the subtest's own comment.\n+func TestV2310LegacyStillReachable(t *testing.T) {\n \tt.Run(\"legacy terminal backends all still registered (pane/tmux plumbing register entry)\", func(t *testing.T) {\n \t\t// Removal prerequisite: Inspect-based liveness landed and consuming\n \t\t// status/health (gh#737). Nothing about that has landed yet, so all\n-\t\t// four pre-v2.30.0 backends plus the new opt-in launchapi one must be\n-\t\t// present -- five total, none missing.\n+\t\t// four pre-v2.30.0 backends plus the launchapi one must be present --\n+\t\t// five total, none missing.\n \t\twant := []string{\"tmux\", \"iterm2\", \"terminal\", \"tmux-session\", \"launchapi\"}\n \t\tfor _, name := range want {\n \t\t\tif _, ok := teamLaunchBackends[name]; !ok {\n@@ -51,16 +55,38 @@ func TestV2300RemovesNothing(t *testing.T) {\n \t\t}\n \t})\n \n-\tt.Run(\"legacy launch selection is unchanged when --launch-via is absent (opt-in-only register entry)\", func(t *testing.T) {\n-\t\t// Removal prerequisite: none -- this is gh#733's own opt-in\n-\t\t// invariant, permanent until the default flip milestone (v2.31.0)\n-\t\t// explicitly promotes launchapi to auto.\n+\tt.Run(\"default launch selection is launchapi when --launch-via is absent (v2.31.0 default flip register entry)\", func(t *testing.T) {\n+\t\t// gh#755: the default flip itself. Absent --launch-via now selects\n+\t\t// launchapi on tmux, not the legacy backend.\n \t\tbackend, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: \"tmux\"})\n \t\tif err != nil {\n-\t\t\tt.Fatalf(\"legacy default selection: %v\", err)\n+\t\t\tt.Fatalf(\"default selection: %v\", err)\n+\t\t}\n+\t\tif backend.Name() != \"launchapi\" {\n+\t\t\tt.Fatalf(\"absent --launch-via selected %q, want launchapi (v2.31.0 default)\", backend.Name())\n+\t\t}\n+\t})\n+\n+\tt.Run(\"legacy backend and its argv are reachable only under the explicit --launch-via legacy opt-out\", func(t *testing.T) {\n+\t\t// Removal prerequisite: none until v2.32.0, which deletes the legacy\n+\t\t// pane driver entirely (gh#755's own deprecation window). Until then\n+\t\t// the legacy backend must still resolve, and must resolve to exactly\n+\t\t// the pre-gh#755 map lookup, but ONLY when explicitly requested.\n+\t\tbackend, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: \"tmux\", LaunchVia: \"legacy\"})\n+\t\tif err != nil {\n+\t\t\tt.Fatalf(\"--launch-via legacy: %v\", err)\n \t\t}\n \t\tif backend.Name() != \"tmux\" {\n-\t\t\tt.Fatalf(\"absent --launch-via selected %q, want tmux\", backend.Name())\n+\t\t\tt.Fatalf(\"--launch-via legacy selected %q, want tmux\", backend.Name())\n+\t\t}\n+\t\tfor _, launchVia := range []string{\"\", \"auto\"} {\n+\t\t\tbackend, err := resolveTeamLaunchBackend(teamLaunchOptions{Terminal: \"tmux\", LaunchVia: launchVia})\n+\t\t\tif err != nil {\n+\t\t\t\tt.Fatalf(\"LaunchVia=%q: %v\", launchVia, err)\n+\t\t\t}\n+\t\t\tif backend.Name() == \"tmux\" {\n+\t\t\t\tt.Fatalf(\"LaunchVia=%q selected the legacy tmux backend without the explicit opt-out\", launchVia)\n+\t\t\t}\n \t\t}\n \t})\n \n",
+   "want": ""
+  },
+  {
+   "name": "GitHub: two added empty files",
+   "source": "as GitHub served it: the diff media type of compare 01d1119002059a38bb4c490142a14bbf56222ee6...465b2651f00491105cdbd2b0efcb295ee797bc90 of omriariav/amq-squad, two sections",
+   "files": [
+    {
+     "filename": "docs/v3-spike/3-2-evidence/s6-dry-run/pass5-amq-noc.txt",
+     "previous_filename": "",
+     "status": "added",
+     "additions": 0,
+     "deletions": 0
+    },
+    {
+     "filename": "docs/v3-spike/3-2-evidence/s6-dry-run/pass5-workspace-cli.txt",
+     "previous_filename": "",
+     "status": "added",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/docs/v3-spike/3-2-evidence/s6-dry-run/pass5-amq-noc.txt b/docs/v3-spike/3-2-evidence/s6-dry-run/pass5-amq-noc.txt\nnew file mode 100644\nindex 000000000..e69de29bb\ndiff --git a/docs/v3-spike/3-2-evidence/s6-dry-run/pass5-workspace-cli.txt b/docs/v3-spike/3-2-evidence/s6-dry-run/pass5-workspace-cli.txt\nnew file mode 100644\nindex 000000000..e69de29bb\n",
+   "want": ""
+  },
+  {
+   "name": "GitHub: removed lines of text that start `--`",
+   "source": "as GitHub served it: the diff media type of compare a2f10bb9d0bb77f32d86950e65ec18aa02056bb6...5b92601b9d03fb5052fb21538e4bd1743e7db2c1 of omriariav/amq-squad, one section (its lines `--- the copy-ready command …` and `---json is …` are removed lines of a hunk, not header lines)",
+   "files": [
+    {
+     "filename": "internal/cli/resume.go",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 40,
+     "deletions": 35
+    }
+   ],
+   "diff": "diff --git a/internal/cli/resume.go b/internal/cli/resume.go\nindex 2f88e88c6..77a3483a1 100644\n--- a/internal/cli/resume.go\n+++ b/internal/cli/resume.go\n@@ -66,7 +66,7 @@ func runResume(args []string) error {\n \tfs := flag.NewFlagSet(\"resume\", flag.ContinueOnError)\n \tsessionFlag := fs.String(\"session\", \"\", \"AMQ workstream session name to resume into (default: team workstream)\")\n \tlastFlag := fs.Bool(\"last\", false, \"resume the profile's most recently active session instead of naming one (auto-picks the only session when there is exactly one)\")\n-\trestoreExisting := fs.Bool(\"restore-existing\", false, \"fail if no team member has restorable launch records for the workstream\")\n+\trestoreExisting := fs.Bool(\"restore-existing\", false, \"fail if no team member has restorable launch records for the workstream (plan-only; refused with --exec)\")\n \tdryRun := fs.Bool(\"dry-run\", false, \"plan-only; default behavior is already plan-only and exists for parity with other commands\")\n \tforceDuplicate := fs.Bool(\"force-duplicate\", false, \"include commands even when a live agent is detected for a member\")\n \tfs.Bool(\"no-bootstrap\", false, \"emit fresh launch commands that skip the generated bootstrap prompt\")\n@@ -81,9 +81,9 @@ func runResume(args []string) error {\n \troleFlag := fs.String(\"role\", \"\", \"comma-separated subset of roles to resume (default: all members)\")\n \texecMode := fs.Bool(\"exec\", false, \"open the planned launch commands in the terminal backend (tmux) instead of printing them\")\n \tskipLeadCheck := fs.Bool(\"skip-lead-check\", false, \"with --exec: launch dependent members without verifying the configured lead's live pane (recovery escape hatch for a stale lead record)\")\n-\tfs.Bool(\"redeliver-goal\", false, \"after a verified fresh lead re-orient, deliver the saved goal as a new claim-once attempt\")\n-\tsuppressGoalPrompt := fs.Bool(\"no-redeliver-goal-prompt\", false, \"preserve an upstream wizard No without prompting again\")\n-\tjsonOut := fs.Bool(\"json\", false, \"emit a schema-versioned resume_plan envelope (liveness + tmux metadata) instead of the human plan\")\n+\tfs.Bool(\"redeliver-goal\", false, \"not yet supported with --exec (refused outright); reserved for a future goal-redelivery fold\")\n+\tsuppressGoalPrompt := fs.Bool(\"no-redeliver-goal-prompt\", false, \"not yet supported with --exec (refused outright); reserved for a future goal-redelivery fold\")\n+\tjsonOut := fs.Bool(\"json\", false, \"emit the same schema-versioned kind=\\\"plan\\\" envelope 'amq-squad plan --json' emits (plan-only; refused with --exec)\")\n \tterminal := fs.String(\"terminal\", \"tmux\", \"terminal backend to use with --exec\")\n \ttarget := fs.String(\"target\", \"current-window\", \"terminal target with --exec (tmux: current-window, new-window, or new-session)\")\n \tlayout := fs.String(\"layout\", \"vertical\", \"terminal layout with --exec (tmux: vertical, horizontal, or tiled)\")\n@@ -100,42 +100,47 @@ Usage:\n                    [--model role=model,...]\n                    [--effort role=level,...]\n                    [--codex-args args] [--claude-args args]\n-                   [--exec [--redeliver-goal] [--terminal tmux] [--target current-window|new-window|new-session]\n+                   [--exec [--terminal tmux] [--target current-window|new-window|new-session]\n                            [--layout vertical|horizontal|tiled]\n                            [--terminal-session name] [--stagger 750ms]\n                            [--skip-lead-check]]\n \n-Resume an existing session. Inspects .amq-squad/team.json plus local launch\n-history and live-agent signals (wake locks, agent PID liveness, presence) to\n-choose a per-member action: restore from launch.json, launch fresh from team\n-intent, skip if live, or refuse if blocked.\n---project targets another team-home without changing directories.\n+Without --exec, resume is a thin, byte-identical alias for\n+'amq-squad plan SESSION': it calls the exact same planPrepareFiltered/\n+printPlanResult seam plan itself uses (compiling the profile and its\n+active brief through launchintent.Compile into a launchapi.PrepareRequestV1,\n+then adoptionseam.Prepare) and prints the resulting PrepareResultV1 --\n+target/outcome/roster/capabilities, plus a reattach note per participant\n+launchapi's own session Inspect reports a saved conversation for (never the\n+raw conversation id). It never writes to disk, AMQ, or launch state.\n+--project targets another team-home without changing directories. --role\n+narrows the previewed roster to a subset (e.g. two workers, without a live\n+lead in the preview). With --json, emits the identical kind=\"plan\" envelope\n+'amq-squad plan --json' emits (the exact PrepareRequestV1 sent, so replaying\n+it through 'amq launch --plan - --prepare --json' reproduces the identical\n+subject_digest/plan_digest); --json is read-only and cannot be combined\n+with --exec. --trust/--model/--effort/--codex-args/--claude-args/\n+--no-bootstrap no longer apply to this plan-only preview (edit team.json\n+for a permanent change); passing any of them without --exec is refused,\n+naming the flag.\n \n-If an agent has a saved conversation, amq-squad reattaches to it. Otherwise it\n-starts the agent fresh and re-orients it: bootstrap is re-run so the agent\n-re-reads its session brief and AMQ history. In the re-orient case prior hidden\n-reasoning is not replayed -- only persisted session files and messages are used.\n-\n-Default behavior is plan-only: prints the per-member action table plus\n-copy-pasteable commands. With --exec, opens those commands through the\n-selected terminal backend (same path as 'up'), skipping members that are\n-already live and refusing to start if any member is in the 'blocked'\n-action without --force-duplicate. Use --role a,b to resume only a subset\n-of members (e.g. bring up two workers without relaunching a live lead).\n-Orchestrated resumes verify the configured lead is live and operator-\n-addressable before launching dependent roles; --skip-lead-check bypasses\n-that gate (with a warning) when a stale lead record blocks recovery.\n-When an orchestrated resume adds members to the current window while the\n-lead is already live (the mid-run member-add flow), the window arranges as\n-main-vertical: the launching pane keeps a full-height left column and the\n-added members stack in rows to its right. Pass --layout explicitly to keep\n-the legacy even-split behavior.\n-With --json, emits a schema-versioned\n-resume_plan envelope for clients: per-member action plus a liveness block\n-(status/detail/signals) consistent with 'status --json', and -- where available\n--- the copy-ready command (omitted for members already live) and tmux runtime\n-metadata including pane_alive (present only for members launched in tmux).\n---json is a read-only preview and cannot be combined with --exec.\n+With --exec, resume drives the same shared launch machinery 'start' uses\n+(runSimpleStartWithRequest, digest-gated the same way 'start --apply' is):\n+members already live are skipped rather than relaunched, and a role stuck\n+on a required action (an orchestrated lead that is not live and\n+operator-addressable, or a dead externally-adopted lead record) refuses\n+the whole run naming it. --skip-lead-check bypasses only the first of\n+those (with a warning) when a stale lead record blocks recovery; the\n+second has no bypass. When an orchestrated resume adds members to the\n+current window while the lead is already live (the mid-run member-add\n+flow), the window arranges as main-vertical: the launching pane keeps a\n+full-height left column and the added members stack in rows to its right.\n+Pass --layout explicitly to keep the legacy even-split behavior. A seat\n+whose prior launch record still names a goal carries it into its relaunch\n+automatically, unless that same seat is reattaching to a saved conversation\n+(the goal already lives in the restored transcript there).\n+--restore-existing, --redeliver-goal, and --no-redeliver-goal-prompt do not\n+yet apply to --exec and are refused outright if passed with it.\n \n Fresh / new-session behavior belongs to an explicitly selected roster session\n followed by 'amq-squad start'.\n",
+   "want": ""
+  },
+  {
+   "name": "history: a marker inside a hunk after a `-` line, `+` lines following",
+   "source": "local git: `git diff -M 91f618abda3fafd42b5f941351f683e6bb85cc4f 41cafd2fa45ba79e181a17a88cff76f244e85432` in omriariav/amq-squad, the section of README.md",
+   "files": [
+    {
+     "filename": "README.md",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 137,
+     "deletions": 1
+    }
+   ],
+   "diff": "diff --git a/README.md b/README.md\nindex 17592166..5f61a043 100644\n--- a/README.md\n+++ b/README.md\n@@ -1 +1,137 @@\n-# amq-squad\n\\ No newline at end of file\n+# amq-squad\n+\n+Role-aware agent team launcher built on top of [AMQ](https://github.com/avivsinai/agent-message-queue).\n+\n+AMQ owns messaging between agents. `amq-squad` owns the layer above: who is in the team, what role each agent plays, and how to bring the whole squad back up after a restart.\n+\n+## Why\n+\n+AMQ's `coop exec` is a generic launcher. It sets up a mailbox and execs into `claude` or `codex`, but it doesn't know:\n+\n+- Which agent is the \"CPO\" vs \"CTO\" vs \"Fullstack\" vs \"QA\" vs \"PM\" vs \"Designer\"\n+- What command you originally used to launch each one (cwd, binary, flags, session)\n+- What slash commands or skills that role leans on\n+- Which peers a given agent actively talks to\n+\n+`amq-squad` captures this at team-setup time (`.amq-squad/team.json`) and per-agent at launch time (`launch.json` + `role.md` inside the AMQ mailbox). AMQ itself stays unchanged.\n+\n+## Install\n+\n+```\n+go install github.com/omriariav/amq-squad/cmd/amq-squad@latest\n+```\n+\n+Requires Go 1.25+ and the `amq` binary in `PATH` (v0.32+). Installing to `$GOBIN` (or `$HOME/go/bin`) is enough; the launch commands `team show` emits use the absolute path to whichever `amq-squad` binary is running, so nothing else needs to be on `PATH`.\n+\n+## Quick start\n+\n+```\n+cd ~/Code/my-project\n+amq coop init          # one time, sets up .amqrc and .agent-mail/\n+amq-squad team         # pick roles, writes .amq-squad/team.json, prints launch commands\n+```\n+\n+First time: you're prompted to pick which of the built-in roles should be on the team. A `.amq-squad/team.json` is written. Every subsequent run prints the launch commands, one per role. Paste each into its own terminal tab.\n+\n+Non-interactive setup:\n+\n+```\n+amq-squad team init --roles cpo,cto,fullstack,qa,pm,designer\n+```\n+\n+With per-role overrides:\n+\n+```\n+amq-squad team init \\\n+  --roles cpo,fullstack,qa \\\n+  --binary fullstack=codex \\\n+  --session cpo=stream1,fullstack=stream2,qa=stream3\n+```\n+\n+Members don't have to share a working directory. The dir where you run `team init` becomes the team-home (where team.json and team-rules.md live); individual members can live in other projects:\n+\n+```\n+cd ~/Code/project-a\n+amq-squad team init \\\n+  --roles cpo,cto,fullstack,qa \\\n+  --cwd qa=~/Code/project-b\n+```\n+\n+`team show` emits a `cd <member-cwd>` per command so every agent boots in the right project. `team sync` walks each unique member cwd and syncs CLAUDE.md + AGENTS.md in all of them.\n+\n+## Built-in roles\n+\n+| ID          | Label                                | Default binary | Notable skills                      |\n+|-------------|--------------------------------------|----------------|-------------------------------------|\n+| `cpo`       | CPO                                  | codex          | `/product-strategy`                 |\n+| `cto`       | CTO                                  | codex          |                                     |\n+| `fullstack` | Fullstack Developer                  | claude         |                                     |\n+| `qa`        | QA Manager                           | claude         |                                     |\n+| `pm`        | Project Manager / Product Owner      | claude         |                                     |\n+| `designer`  | Product Designer                     | claude         | `/frontend-design`, `/canvas-design`|\n+\n+Defaults are starting points. Override binary or session per role via flags at `team init` time, or edit `.amq-squad/team.json` directly.\n+\n+## Shared team rules\n+\n+Team-wide norms (\"every change ships via a PR\", \"CTO approves before merge\") live in a single file:\n+\n+```\n+.amq-squad/team-rules.md\n+```\n+\n+Claude reads `CLAUDE.md`, Codex reads `AGENTS.md`. Rather than maintaining both by hand, you edit `team-rules.md` and `amq-squad team sync` pushes the content into a managed block in both files. Everything outside the markers is yours and stays untouched.\n+\n+```\n+amq-squad team rules init        Seed .amq-squad/team-rules.md with a stub\n+amq-squad team sync              Preview what would change (exit 1 if drift)\n+amq-squad team sync --apply      Write the managed block into CLAUDE.md and AGENTS.md\n+```\n+\n+On first `--apply` with an existing CLAUDE.md, your content is adopted as the user region and the managed block is appended. Subsequent syncs only refresh the managed block.\n+\n+## Commands\n+\n+```\n+amq-squad team                      Smart default: show commands, or init if none exists\n+amq-squad team init [--roles ...]   Set up this project's team\n+amq-squad team show                 Print launch commands for the configured team\n+amq-squad team rules init           Seed .amq-squad/team-rules.md\n+amq-squad team sync [--apply]       Sync CLAUDE.md and AGENTS.md from team-rules.md\n+\n+amq-squad launch --role <r> --session <s> --me <handle> <binary> [-- <flags>]\n+                                    Launch one agent. Writes launch.json + role.md\n+                                    in the AMQ mailbox, then execs 'amq coop exec'.\n+                                    Usually called by the output of 'team show'.\n+\n+amq-squad restore [--project dir1,dir2,...]\n+                                    Reconstruct launch commands from existing\n+                                    launch.json files (post-boot evidence, in\n+                                    contrast to team.json which is pre-boot intent).\n+\n+amq-squad list [--json]             List registered agents across known projects.\n+```\n+\n+## Files it writes\n+\n+```\n+<project>/.amq-squad/team.json           Team intent: which roles are on this squad.\n+<project>/.amq-squad/team-rules.md       Shared norms and workflow (user-edited).\n+<project>/CLAUDE.md, AGENTS.md           Managed block synced from team-rules.md;\n+                                         user content outside markers untouched.\n+<AM_ROOT>/agents/<handle>/launch.json    Per-agent invocation record, written at launch.\n+<AM_ROOT>/agents/<handle>/role.md        Per-agent role doc, seeded from the catalog\n+                                         and never overwritten once it exists.\n+```\n+\n+`<AM_ROOT>` is resolved via `amq env --json` so amq-squad and `amq coop exec` always agree on where the mailbox lives.\n+\n+## Known gaps\n+\n+- Sending a cross-session message from a setup terminal (outside any `amq coop exec`) has no clean idiom upstream. Tracked in [avivsinai/agent-message-queue#96](https://github.com/avivsinai/agent-message-queue/issues/96) with a proposed `--from-session` flag. Current workaround: boot your own session first, then send from inside it.\n+- Multi-cwd teams still need manual `peers` config in each project's `.amqrc` for cross-project AMQ routing. `team sync` doesn't touch `.amqrc`; that's left to the user until we're sure of the shape.\n+\n+## Requires\n+\n+- Go 1.25+\n+- `amq` binary in PATH (v0.32+)\n",
+   "want": ""
+  },
+  {
+   "name": "history: two markers in one hunk, one inside and one after its last line",
+   "source": "local git: `git diff -M 207b66dbfc7bdd6830c16ac74c8e86d75d09a3fd d5dcf85599b9424432bb34586d3865f723630491` in omriariav/amq-squad, the section of docs/v2.0.0-goal-condensed.md",
+   "files": [
+    {
+     "filename": "docs/v2.0.0-goal-condensed.md",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 6,
+     "deletions": 6
+    }
+   ],
+   "diff": "diff --git a/docs/v2.0.0-goal-condensed.md b/docs/v2.0.0-goal-condensed.md\nindex 83ad5fda..5d518a68 100644\n--- a/docs/v2.0.0-goal-condensed.md\n+++ b/docs/v2.0.0-goal-condensed.md\n@@ -1,17 +1,17 @@\n-Ship amq-squad 2.0.0: a lead/orchestrator of ANY binary (Claude OR Codex) composes its team from a goal — spawning/pruning agents at runtime — not a roster designed up front. Manual stays a first-class fallback. Prove it additively in 1.x, THEN cut 2.0 (reframe + deferred breaking cleanup). Source of truth, read first: docs/v2.0.0.md + docs/v2.0.0-goal.md (they govern).\n+Ship amq-squad 2.0.0: a lead/orchestrator of ANY binary (Claude OR Codex) composes its team from a goal — spawning/pruning agents at runtime — not a roster designed up front. Manual stays the fallback. Prove it additively in 1.x, THEN cut 2.0 (reframe + deferred breaking cleanup). Source of truth: docs/v2.0.0.md + docs/v2.0.0-goal.md.\n \n NON-NEGOTIABLES: (1) Binary-neutral — Codex must be able to LEAD, not just be led; no CORE primitive depends on ~/.claude/. (2) Manual is the floor; spectrum manual→seeded(default)→autonomous; 2.0 ships manual+seeded, AUTONOMOUS DEFERRED TO 2.1. (3) Seeded = every spawn is propose-then-approve via the existing gate/<topic> channel (lead --kind question → operator --kind answer; timeout/DENIED=no-spawn) — the gate/ pattern, NOT the #117 directive channel. (4) Caps land with seeded; budget/idle-reaping/recursion-guard/injection-review gate AUTONOMOUS (2.1). (5) Dynamic roster durable — stop/resume round-trips the team the lead BUILT, idempotently (spawn-decision log prevents double-spawn).\n \n-DISCIPLINE every slice: branch + PR per slice (never to main); adversarial reviewer subagent before merge, fold real findings; `make ci` pass with EXIT CODE checked (no grep pipe); BOTH skill mirrors in sync + drift-guard; Co-Authored-By: Claude trailer; squash-merge, sync main, keep PLAN.md current.\n+DISCIPLINE every slice: branch + PR (never to main); adversarial reviewer subagent before merge, fold findings; `make ci` with EXIT CODE checked (no grep pipe); BOTH skill mirrors in sync; squash-merge, sync main, keep PLAN.md current.\n \n PHASE 0 — additive surface (no removed/renamed verbs). The two behavior changes (lead-only seed; resume respects the dynamic roster) are GATED OFF BY DEFAULT in 1.x via an additive omitempty team.json field (\"dynamic\":true) so old files load unchanged. Critical path A→B→C→D, one PR each:\n-- A Mutable roster: `team member add <role> --binary X [--up]` / `team member rm <role> [--stop]` (new case \"member\" in runTeam) via team.WriteProfile + exclusive sidecar file-lock + orchestration re-validation; lead-only seed (relax the ~7 len(Members)==0 guards) behind the opt-in.\n+- A Mutable roster: `team member add <role> --binary X` / `team member rm <role>` via team.WriteProfile + exclusive sidecar file-lock + orchestration re-validation. (--up/--stop deferred.)\n - B Native pull task model: internal/task + .amq-squad/tasks/<session>/ + task add/list/claim/done/fail/block, 5-state machine + dependency gating + file-locking. MUST include `task add` (create) so an any-binary lead decomposes the goal. docs/task-store-design.md first.\n - C Orchestrate (seeded): amq-squad-orchestrator skill gains a compose-from-goal playbook (role library = built-in catalog + .amq-squad/roles/; spawn/decompose/prune heuristics) + the gate/<topic> propose-then-approve loop. SEEDED only, both mirrors.\n-- D DOGFOOD + EVAL GATE (BLOCKING): docs/eval-strategy.md (reference goals + hand-authored reference teams + a scoring script grading a CODEX-LED squad's proposed roster vs a passing bar) AND a live os-omri-pm dogfood (Codex lead, no roster: propose→approve→add worker mid-session→dispatch a dependency-gated task→prune). DO NOT start Phase 1 until both pass and the lead's JUDGMENT (not just verbs) looks right.\n+- D DOGFOOD + EVAL GATE (BLOCKING): docs/eval-strategy.md (reference goals + hand-authored reference teams + a scoring script grading a CODEX-LED squad's proposed roster vs a passing bar) AND a live os-omri-pm dogfood (Codex lead, lead-only seed (one lead member): propose→approve→add worker mid-session→dispatch a dependency-gated task→prune). DO NOT start Phase 1 until both pass and the lead's JUDGMENT (not just verbs) looks right.\n \n-PHASE 1 — the 2.0.0 cut (BREAKING), only after the Slice-D gate is green: flip default to goal-first/seeded; enforce caps; spawn-decision log + idempotent resume; team validate; delete launch/restore/list/team show/team launch stubs + remove `down` with MIGRATION.md + prior 1.x deprecation warnings; `/v2` rename (MANDATORY for Go v2, ~100 .go files, late scripted slice); schema stays v3-loadable; Team.Workstream shim STAYS for 2.1; docs/skills resync + plugin bump + marketplace refresh + release.\n+PHASE 1 — the 2.0.0 cut (BREAKING), only after the Slice-D gate is green (full detail in docs/v2.0.0.md): flip default to goal-first/seeded; caps; spawn-decision log + idempotent resume; delete launch/restore/list/team show/team launch stubs + remove `down` (MIGRATION.md + prior 1.x deprecation warnings); `/v2` rename (~100 .go files, mandatory for Go v2, late scripted slice); schema stays v3-loadable; Team.Workstream shim stays for 2.1; docs/skills resync + plugin bump + release.\n \n DONE: a Codex lead handed an empty team.json proposes a team, gets per-spawn approval on gate/spawn-<role>, spawns within the cap, creates dependency-gated tasks, prunes idle agents, and on stop/resume the lead-built team+tasks rebuild idempotently — via stable amq-squad commands; manual still works; eval passes; deprecated verbs gone w/ migration; module is /v2. Autonomous OUT OF SCOPE for 2.0.\n \n-FIRST: read docs/v2.0.0.md, open Slice A — branch, add `team member add/rm` + tests, `make ci` (exit code), PR, adversarial review, fold, merge. Then B. HOLD at the Slice-D gate before Phase-1 breaking work.\n\\ No newline at end of file\n+STATUS: Slices A,B,C merged + reviewed (Claude + Codex). NEXT = Slice D (blocking): commit docs/eval-strategy.md + a live CODEX-LED dogfood on os-omri-pm from a lead-only seed (one lead member; 0-member empty seed = Phase-1 opt-in). HOLD Phase 1 until the eval passes and the lead's JUDGMENT looks right. Deferred to Phase 1: --up/--stop, --max-agents cap, role-existence validation.\n\\ No newline at end of file\n",
+   "want": ""
+  },
+  {
+   "name": "history: the same section cut just after its in-hunk marker",
+   "source": "local git: `git diff -M 207b66dbfc7bdd6830c16ac74c8e86d75d09a3fd d5dcf85599b9424432bb34586d3865f723630491` in omriariav/amq-squad, the section of docs/v2.0.0-goal-condensed.md, cut at the line boundary after its first marker",
+   "files": [
+    {
+     "filename": "docs/v2.0.0-goal-condensed.md",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 6,
+     "deletions": 6
+    }
+   ],
+   "diff": "diff --git a/docs/v2.0.0-goal-condensed.md b/docs/v2.0.0-goal-condensed.md\nindex 83ad5fda..5d518a68 100644\n--- a/docs/v2.0.0-goal-condensed.md\n+++ b/docs/v2.0.0-goal-condensed.md\n@@ -1,17 +1,17 @@\n-Ship amq-squad 2.0.0: a lead/orchestrator of ANY binary (Claude OR Codex) composes its team from a goal — spawning/pruning agents at runtime — not a roster designed up front. Manual stays a first-class fallback. Prove it additively in 1.x, THEN cut 2.0 (reframe + deferred breaking cleanup). Source of truth, read first: docs/v2.0.0.md + docs/v2.0.0-goal.md (they govern).\n+Ship amq-squad 2.0.0: a lead/orchestrator of ANY binary (Claude OR Codex) composes its team from a goal — spawning/pruning agents at runtime — not a roster designed up front. Manual stays the fallback. Prove it additively in 1.x, THEN cut 2.0 (reframe + deferred breaking cleanup). Source of truth: docs/v2.0.0.md + docs/v2.0.0-goal.md.\n \n NON-NEGOTIABLES: (1) Binary-neutral — Codex must be able to LEAD, not just be led; no CORE primitive depends on ~/.claude/. (2) Manual is the floor; spectrum manual→seeded(default)→autonomous; 2.0 ships manual+seeded, AUTONOMOUS DEFERRED TO 2.1. (3) Seeded = every spawn is propose-then-approve via the existing gate/<topic> channel (lead --kind question → operator --kind answer; timeout/DENIED=no-spawn) — the gate/ pattern, NOT the #117 directive channel. (4) Caps land with seeded; budget/idle-reaping/recursion-guard/injection-review gate AUTONOMOUS (2.1). (5) Dynamic roster durable — stop/resume round-trips the team the lead BUILT, idempotently (spawn-decision log prevents double-spawn).\n \n-DISCIPLINE every slice: branch + PR per slice (never to main); adversarial reviewer subagent before merge, fold real findings; `make ci` pass with EXIT CODE checked (no grep pipe); BOTH skill mirrors in sync + drift-guard; Co-Authored-By: Claude trailer; squash-merge, sync main, keep PLAN.md current.\n+DISCIPLINE every slice: branch + PR (never to main); adversarial reviewer subagent before merge, fold findings; `make ci` with EXIT CODE checked (no grep pipe); BOTH skill mirrors in sync; squash-merge, sync main, keep PLAN.md current.\n \n PHASE 0 — additive surface (no removed/renamed verbs). The two behavior changes (lead-only seed; resume respects the dynamic roster) are GATED OFF BY DEFAULT in 1.x via an additive omitempty team.json field (\"dynamic\":true) so old files load unchanged. Critical path A→B→C→D, one PR each:\n-- A Mutable roster: `team member add <role> --binary X [--up]` / `team member rm <role> [--stop]` (new case \"member\" in runTeam) via team.WriteProfile + exclusive sidecar file-lock + orchestration re-validation; lead-only seed (relax the ~7 len(Members)==0 guards) behind the opt-in.\n+- A Mutable roster: `team member add <role> --binary X` / `team member rm <role>` via team.WriteProfile + exclusive sidecar file-lock + orchestration re-validation. (--up/--stop deferred.)\n - B Native pull task model: internal/task + .amq-squad/tasks/<session>/ + task add/list/claim/done/fail/block, 5-state machine + dependency gating + file-locking. MUST include `task add` (create) so an any-binary lead decomposes the goal. docs/task-store-design.md first.\n - C Orchestrate (seeded): amq-squad-orchestrator skill gains a compose-from-goal playbook (role library = built-in catalog + .amq-squad/roles/; spawn/decompose/prune heuristics) + the gate/<topic> propose-then-approve loop. SEEDED only, both mirrors.\n-- D DOGFOOD + EVAL GATE (BLOCKING): docs/eval-strategy.md (reference goals + hand-authored reference teams + a scoring script grading a CODEX-LED squad's proposed roster vs a passing bar) AND a live os-omri-pm dogfood (Codex lead, no roster: propose→approve→add worker mid-session→dispatch a dependency-gated task→prune). DO NOT start Phase 1 until both pass and the lead's JUDGMENT (not just verbs) looks right.\n+- D DOGFOOD + EVAL GATE (BLOCKING): docs/eval-strategy.md (reference goals + hand-authored reference teams + a scoring script grading a CODEX-LED squad's proposed roster vs a passing bar) AND a live os-omri-pm dogfood (Codex lead, lead-only seed (one lead member): propose→approve→add worker mid-session→dispatch a dependency-gated task→prune). DO NOT start Phase 1 until both pass and the lead's JUDGMENT (not just verbs) looks right.\n \n-PHASE 1 — the 2.0.0 cut (BREAKING), only after the Slice-D gate is green: flip default to goal-first/seeded; enforce caps; spawn-decision log + idempotent resume; team validate; delete launch/restore/list/team show/team launch stubs + remove `down` with MIGRATION.md + prior 1.x deprecation warnings; `/v2` rename (MANDATORY for Go v2, ~100 .go files, late scripted slice); schema stays v3-loadable; Team.Workstream shim STAYS for 2.1; docs/skills resync + plugin bump + marketplace refresh + release.\n+PHASE 1 — the 2.0.0 cut (BREAKING), only after the Slice-D gate is green (full detail in docs/v2.0.0.md): flip default to goal-first/seeded; caps; spawn-decision log + idempotent resume; delete launch/restore/list/team show/team launch stubs + remove `down` (MIGRATION.md + prior 1.x deprecation warnings); `/v2` rename (~100 .go files, mandatory for Go v2, late scripted slice); schema stays v3-loadable; Team.Workstream shim stays for 2.1; docs/skills resync + plugin bump + release.\n \n DONE: a Codex lead handed an empty team.json proposes a team, gets per-spawn approval on gate/spawn-<role>, spawns within the cap, creates dependency-gated tasks, prunes idle agents, and on stop/resume the lead-built team+tasks rebuild idempotently — via stable amq-squad commands; manual still works; eval passes; deprecated verbs gone w/ migration; module is /v2. Autonomous OUT OF SCOPE for 2.0.\n \n-FIRST: read docs/v2.0.0.md, open Slice A — branch, add `team member add/rm` + tests, `make ci` (exit code), PR, adversarial review, fold, merge. Then B. HOLD at the Slice-D gate before Phase-1 breaking work.\n\\ No newline at end of file\n",
+   "want": "the diff is cut short inside a hunk"
+  },
+  {
+   "name": "history: a marker after a hunk's last line, a `+` line",
+   "source": "local git: `git diff -M 95e6a9dd3302115592e44f181901f0f7ddb01af0 0f48ad6a89a1d43f3a769cf800ba20ebda8b92bd` in omriariav/amq-squad, the section of .claude/scheduled_tasks.lock",
+   "files": [
+    {
+     "filename": ".claude/scheduled_tasks.lock",
+     "previous_filename": "",
+     "status": "added",
+     "additions": 1,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/.claude/scheduled_tasks.lock b/.claude/scheduled_tasks.lock\nnew file mode 100644\nindex 00000000..254b8c07\n--- /dev/null\n+++ b/.claude/scheduled_tasks.lock\n@@ -0,0 +1 @@\n+{\"sessionId\":\"b4efb6b8-5c3e-43ad-9721-c8a317693c77\",\"pid\":75926,\"procStart\":\"Fri May 29 02:26:49 2026\",\"acquiredAt\":1780050224140}\n\\ No newline at end of file\n",
+   "want": ""
+  },
+  {
+   "name": "history: a marker after a hunk's last line, a `-` line",
+   "source": "local git: `git diff -M 0f48ad6a89a1d43f3a769cf800ba20ebda8b92bd d0c16c07b160e579379f141e7e9d104a0df2b9aa` in omriariav/amq-squad, the section of .claude/scheduled_tasks.lock",
+   "files": [
+    {
+     "filename": ".claude/scheduled_tasks.lock",
+     "previous_filename": "",
+     "status": "removed",
+     "additions": 0,
+     "deletions": 1
+    }
+   ],
+   "diff": "diff --git a/.claude/scheduled_tasks.lock b/.claude/scheduled_tasks.lock\ndeleted file mode 100644\nindex 254b8c07..00000000\n--- a/.claude/scheduled_tasks.lock\n+++ /dev/null\n@@ -1 +0,0 @@\n-{\"sessionId\":\"b4efb6b8-5c3e-43ad-9721-c8a317693c77\",\"pid\":75926,\"procStart\":\"Fri May 29 02:26:49 2026\",\"acquiredAt\":1780050224140}\n\\ No newline at end of file\n",
+   "want": ""
+  },
+  {
+   "name": "history: a marker after a hunk's last line, a context line",
+   "source": "local git: `git diff -M 572e7f0ac98889d07cce1716bb984fc8df30381b 5f5f4bce0c021f3563bcd4025fd341ac21520651` in omriariav/amq-squad, the section of .amq-squad/team.json",
+   "files": [
+    {
+     "filename": ".amq-squad/team.json",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 10,
+     "deletions": 3
+    }
+   ],
+   "diff": "diff --git a/.amq-squad/team.json b/.amq-squad/team.json\nindex 7c207836..d4d7d85d 100644\n--- a/.amq-squad/team.json\n+++ b/.amq-squad/team.json\n@@ -1,18 +1,25 @@\n {\n   \"schema\": 1,\n+  \"workstream\": \"v1-0-0-reshape\",\n   \"members\": [\n     {\n       \"role\": \"cto\",\n       \"binary\": \"codex\",\n       \"handle\": \"cto\",\n-      \"session\": \"cto\"\n+      \"session\": \"v1-0-0-reshape\"\n+    },\n+    {\n+      \"role\": \"senior-dev\",\n+      \"binary\": \"codex\",\n+      \"handle\": \"senior-dev\",\n+      \"session\": \"v1-0-0-reshape\"\n     },\n     {\n       \"role\": \"fullstack\",\n       \"binary\": \"claude\",\n       \"handle\": \"fullstack\",\n-      \"session\": \"fullstack\"\n+      \"session\": \"v1-0-0-reshape\"\n     }\n   ],\n-  \"created_at\": \"2026-04-23T11:11:38.671934Z\"\n+  \"created_at\": \"2026-05-17T06:35:46.061265Z\"\n }\n\\ No newline at end of file\n",
+   "want": ""
+  },
+  {
+   "name": "history: a rename with no change",
+   "source": "local git: `git diff -M b69c6175b1b1e3bf72bdc29c7ed30c85cc5d9ec5 5be99d13253fec2ebfa3bb4da037857d4da944d5` in omriariav/amq-squad, the section of plugins/claude/skills/amq-squad-role-creator/SKILL.md",
+   "files": [
+    {
+     "filename": "plugins/claude/skills/amq-squad-role-creator/SKILL.md",
+     "previous_filename": "skills/claude/amq-squad-role-creator/SKILL.md",
+     "status": "renamed",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/skills/claude/amq-squad-role-creator/SKILL.md b/plugins/claude/skills/amq-squad-role-creator/SKILL.md\nsimilarity index 100%\nrename from skills/claude/amq-squad-role-creator/SKILL.md\nrename to plugins/claude/skills/amq-squad-role-creator/SKILL.md\n",
+   "want": ""
+  },
+  {
+   "name": "history: an added binary file, local git's `Binary files` form",
+   "source": "local git: `git diff -M 1d1e5f7e7a08f70952b4d157eea6f70288f60f30 b5af721a90f148dcc692e584e862b31fb5cdcbba` in omriariav/amq-squad, the section of docs/v3-research/codex-agent-command-center-2026-10-24.png",
+   "files": [
+    {
+     "filename": "docs/v3-research/codex-agent-command-center-2026-10-24.png",
+     "previous_filename": "",
+     "status": "added",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/docs/v3-research/codex-agent-command-center-2026-10-24.png b/docs/v3-research/codex-agent-command-center-2026-10-24.png\nnew file mode 100644\nindex 00000000..8dbd5ec6\nBinary files /dev/null and b/docs/v3-research/codex-agent-command-center-2026-10-24.png differ\n",
+   "want": ""
+  },
+  {
+   "name": "history: an added empty file",
+   "source": "local git: `git diff -M d063d8076b71ab7ec69560e7b9dba106b3e521e0 dbda80132162ff7db9f2f9cb9669c1920eff24cd` in omriariav/amq-squad, the section of docs/v3-spike/3-2-evidence/s6-dry-run/pass6-amq-noc.txt",
+   "files": [
+    {
+     "filename": "docs/v3-spike/3-2-evidence/s6-dry-run/pass6-amq-noc.txt",
+     "previous_filename": "",
+     "status": "added",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/docs/v3-spike/3-2-evidence/s6-dry-run/pass6-amq-noc.txt b/docs/v3-spike/3-2-evidence/s6-dry-run/pass6-amq-noc.txt\nnew file mode 100644\nindex 00000000..e69de29b\n",
+   "want": ""
+  },
+  {
+   "name": "local git: a text change and an added binary file last, the `GIT binary patch` form",
+   "source": "local git, a temporary repository: `git diff -M --binary`; no measured diff ends in a binary section",
+   "files": [
+    {
+     "filename": "a.txt",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 1,
+     "deletions": 0
+    },
+    {
+     "filename": "z.bin",
+     "previous_filename": "",
+     "status": "added",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/a.txt b/a.txt\nindex 5626abf..814f4a4 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1,2 @@\n one\n+two\ndiff --git a/z.bin b/z.bin\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..94d646ff4898967681d139383a70ab9472c795be\nGIT binary patch\nliteral 10\nRcmZQzWMXFc|Bs7-9RLYX0u=xN\n\nliteral 0\nHcmV?d00001\n\n",
+   "want": ""
+  },
+  {
+   "name": "local git: the same, cut after the binary section's index line",
+   "source": "local git, a temporary repository: `git diff -M --binary`, cut at the line boundary after the last section's index line; no measured diff ends in a binary section",
+   "files": [
+    {
+     "filename": "a.txt",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 1,
+     "deletions": 0
+    },
+    {
+     "filename": "z.bin",
+     "previous_filename": "",
+     "status": "added",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/a.txt b/a.txt\nindex 5626abf..814f4a4 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1,2 @@\n one\n+two\ndiff --git a/z.bin b/z.bin\nnew file mode 100644\nindex 0000000000000000000000000000000000000000..94d646ff4898967681d139383a70ab9472c795be\n",
+   "want": "a file with no changed line holds an index line and neither a binary part nor an empty file's ids"
+  },
+  {
+   "name": "local git: a modified binary file",
+   "source": "local git, a temporary repository: `git diff -M --abbrev=9`; no measured diff holds a modified binary file",
+   "files": [
+    {
+     "filename": "z.bin",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/z.bin b/z.bin\nindex 94d646ff4..47c834836 100644\nBinary files a/z.bin and b/z.bin differ\n",
+   "want": ""
+  },
+  {
+   "name": "local git: a modified binary file cut after its index line",
+   "source": "local git, a temporary repository: `git diff -M --abbrev=9`, cut at the line boundary after its index line; no measured diff holds a modified binary file",
+   "files": [
+    {
+     "filename": "z.bin",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/z.bin b/z.bin\nindex 94d646ff4..47c834836 100644\n",
+   "want": "a file with no changed line holds an index line and neither a binary part nor an empty file's ids"
+  },
+  {
+   "name": "local git: a deleted empty file",
+   "source": "local git, a temporary repository: `git diff -M --abbrev=9`, one section; no measured diff holds a deleted empty file or a deleted binary file",
+   "files": [
+    {
+     "filename": "empty",
+     "previous_filename": "",
+     "status": "removed",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/empty b/empty\ndeleted file mode 100644\nindex e69de29bb..000000000\n",
+   "want": ""
+  },
+  {
+   "name": "local git: a deleted binary file",
+   "source": "local git, a temporary repository: `git diff -M --abbrev=9`, one section; no measured diff holds a deleted empty file or a deleted binary file",
+   "files": [
+    {
+     "filename": "z.bin",
+     "previous_filename": "",
+     "status": "removed",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/z.bin b/z.bin\ndeleted file mode 100644\nindex 47c834836..000000000\nBinary files a/z.bin and /dev/null differ\n",
+   "want": ""
+  },
+  {
+   "name": "local git: a deleted binary file cut after its index line",
+   "source": "local git, a temporary repository: `git diff -M --abbrev=9`, one section, cut at the line boundary after its index line; no measured diff holds a deleted empty file or a deleted binary file",
+   "files": [
+    {
+     "filename": "z.bin",
+     "previous_filename": "",
+     "status": "removed",
+     "additions": 0,
+     "deletions": 0
+    }
+   ],
+   "diff": "diff --git a/z.bin b/z.bin\ndeleted file mode 100644\nindex 47c834836..000000000\n",
+   "want": "a file with no changed line holds an index line and neither a binary part nor an empty file's ids"
+  }
+ ]
+}

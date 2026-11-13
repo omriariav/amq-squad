@@ -141,7 +141,7 @@ func TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged(t *testing.T) {
 	f, task, old, req := escapeBehind(t)
 	rebasedAndMerged(t, f, task, old, req)
 	reads := diffReads(f)
-	proofs := strings.Count(f.calls(), "missing_patch")
+	proofs := strings.Count(f.calls(), compareProofFilesJQ)
 	if proofs < 2 || len(reads) != proofs {
 		t.Fatalf("one diff read per proof: %d proofs, reads %q", proofs, reads)
 	}
@@ -168,7 +168,7 @@ func TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt(t *testing.T) {
 	f.edit(func(s *fakeState) { s.OldGH = true })
 	rebasedAndMerged(t, f, task, old, req)
 	reads := diffReads(f)
-	proofs := strings.Count(f.calls(), "missing_patch")
+	proofs := strings.Count(f.calls(), compareProofFilesJQ)
 	if proofs < 2 || len(reads) != 2*proofs {
 		t.Fatalf("two diff reads per proof: %d proofs, reads %q", proofs, reads)
 	}
