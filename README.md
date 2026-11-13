@@ -600,10 +600,12 @@ session's mailbox (or with `--lead` to one squad lead). The owner's guide is
   amq-squad gate rel-gh-...
   ```
 
-  Answer with a bare `yes` or `no` replied in the question's thread (case
-  and a trailing `.` or `!` do not matter). The thread and your signature
-  bind the answer to its gate; there is nothing else to type. The core of
-  the squad that raised it fetches and verifies the signed event itself. A
+  Answer with one of the words `yes`, `approve`, `y`, `ok`, `go ahead`, `כן`
+  (yes) or `no`, `deny`, `n`, `stop`, `לא` (no), alone, replied in the
+  question's thread; case and one trailing punctuation mark do not matter.
+  The thread and your signature bind the answer to its gate; there is
+  nothing else to type. The core of the squad that raised it fetches and
+  verifies the signed event itself. A
   `yes` or `no` outside the thread gets one re-ask in the thread, "Reply yes
   or no to this message."; a `yes` in another gate's thread answers that
   gate only. The 3.0 typed line (`approve <gate> <class> <prefix>`) still
