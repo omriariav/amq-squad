@@ -1,6 +1,6 @@
 # The merge train's compare proof
 
-The merge train checks that GitHub's API diff and compare file list describe the same change. The file-list constant is at `internal/mergetrain/gh.go:200-201`, and the check is at `internal/mergetrain/gh.go:279-468`. The dispatch TIP and this worktree's HEAD are `8c915ba47b7d90a2de38af0bd0a53436c43e22bc`; the scoped precheck between them is empty. The rule is:
+The merge train checks that GitHub's API diff and compare file list describe the same change. The file-list constant is at `internal/mergetrain/gh.go:200-201`, and the check is at `internal/mergetrain/gh.go:279-471`. The dispatch TIP of the third round's task was `8c915ba47b7d90a2de38af0bd0a53436c43e22bc`, and the worktree's HEAD at the precheck was that commit. The rule is:
 
 ```text
 The API diff stays the proof's bytes; the `patch == null` arm is replaced by the train's own check that the diff and the JSON describe the same change: the diff's `diff --git` file set equals the JSON's filenames (previous_filename for renames), and per file the diff's added and removed line counts equal the JSON's `additions` and `deletions`; the 300-file arm and the 406/422 arms stay; any mismatch is ErrIncompleteDiff with its words. No fetch, no credentials, no repository path in the package, no change to any id, and the rebind gets it through the same PatchID. A truncated 200 is caught by the counts, not assumed away; the note says the media type's wholeness on a 200 is otherwise unmeasured.
@@ -80,7 +80,7 @@ Every out-of-hunk line form found in those sources had these counts, in the orde
 | an empty binary-patch line | 0 | 0 | 2 | 2 |
 | anything else, or an empty line elsewhere | 0 | 0 | 0 | 0 |
 
-The forms `old mode`, `new mode`, `dissimilarity index`, `copy from`, `copy to`, and `delta N` are documented by git but were not measured.
+The forms `old mode`, `new mode`, `dissimilarity index`, `copy from`, `copy to`, and `delta N` are documented by git but were not measured in a diff of GitHub's or of the history.
 
 Removing each of the 3,739 lines of GitHub's 8 saved answers in turn left 120 accepted diffs. The patch id changed in 83: 72 removed `---` or `+++`, 8 removed mode lines, and 3 removed a rename or similarity line from a rename with changes. The remaining 37, comprising 36 `index` lines and 1 marker, retained the id. A prefix cut produces none of these.
 
@@ -104,6 +104,35 @@ The made cases showed that #999 accepted a 0/0 index-only binary prefix, hunk he
 
 The lead's final mutation measurement refused none of GitHub's 8 saved answers and blank-ending diff, the 1,930 history commits in either form, or the fake's 12 distinct diffs. Of 274,352 prefix cuts, only the cut before a final marker remained accepted, with the same patch id. None of 879 insertions was accepted. Of 3,739 single-line removals, 120 remained accepted and 83 changed the patch id, as counted above.
 
+On 2026-11-13 the lead built 24 forms with local git in a temporary repository, each as `git diff -M --abbrev=9` and as `git diff -M --binary`, 48 diffs in all, with the file list from local git. Forty-two were accepted and six were refused, the two forms of three cases: the type change and quoted name with the first text, and the mode change alone with the third. These are LOCAL GIT'S forms; GitHub's form of each is not measured.
+
+| form | what local git prints | verdict |
+|---|---|---|
+| symlink added | `new file mode 120000`, one `+` target line and marker | accepted |
+| symlink changed | `index … 120000`, old and new target lines, two markers | accepted |
+| symlink deleted | `deleted file mode 120000`, one `-` target line and marker | accepted |
+| submodule added | `new file mode 160000`, one `+Subproject commit …` line | accepted |
+| submodule changed | `index … 160000`, old and new `Subproject commit …` lines | accepted |
+| submodule deleted | `deleted file mode 160000`, one removed `Subproject commit …` line | accepted |
+| text to binary | binary numstat, index and `Binary files … differ` | accepted |
+| binary to text | binary numstat, index and `Binary files … differ` | accepted |
+| file emptied | a zero-new-side hunk and three removed lines | accepted |
+| empty file given content | a zero-old-side hunk and one added line | accepted |
+| empty file renamed | 100% similarity and the two rename lines | accepted |
+| empty file's mode changed | old and new mode, no index, 0/0 numstat | third text |
+| binary file renamed unchanged | the three rename lines, binary numstat | accepted |
+| binary file renamed with change | 97% similarity, rename lines, index and binary body | accepted |
+| regular file becomes symlink | two sections with one `diff --git` line for one list entry | first text |
+| file added without final newline | marker after its last added line | accepted |
+| file without final newline deleted | marker after its last removed line | accepted |
+| line added at file start | hunk `@@ -1,3 +1,4 @@` | accepted |
+| line added at file end | a hunk whose last line is added | accepted |
+| CRLF content changed | removed and added lines ending in carriage returns | accepted |
+| no-newline line changed | old line and marker, new line and marker | accepted |
+| rename changed, old file without final newline | 93% similarity and a marker inside the hunk | accepted |
+| mode and content changed | old mode, new mode, index and a hunk | accepted |
+| space name and quoted name added | the space name is taken; the quoted name's header is unexpected | first text |
+
 ## What the check does
 
 `PatchID` reads the file list, refuses 300 files before reading the diff, reads the diff bytes unchanged, checks them, and passes those same bytes to `git patch-id --stable` (`internal/mergetrain/gh.go:227-275`). Its file-list query is unique among `gh.go` calls:
@@ -122,7 +151,7 @@ The seven mismatch texts, returned in diff order before list-order checks, are:
 6. `a file's section holds a line that is neither a header line nor in a hunk` means an out-of-hunk line is not one of the allowed forms below. A binary data line whose length does not match its first letter also gives this text.
 7. `a file with no changed line holds an index line and neither a binary part nor an empty file's ids` means a 0/0 file passed the third check on an index line but has neither a binary body nor the exact empty-file exception.
 
-Measured header forms are `index `; `new file mode ` and `deleted file mode `; `similarity index `, `rename from `, and `rename to `; `Binary files ... differ`; and `--- ` or `+++ ` before the first hunk. Documented but unmeasured forms are `old mode `, `new mode `, `dissimilarity index `, `copy from `, and `copy to `. A marker is allowed directly after a line of a hunk, inside it or after its last line, and counts on neither side. At most two markers belong to one hunk; a third gives the sixth text. The place after a `-` line was measured; the allowed places after a context or `+` line inside a hunk were unseen. A `GIT binary patch` section with no hunk allows measured `literal N`, documented `delta N`, measured base85 data, and measured empty lines. The section recognizer is at `internal/mergetrain/gh.go:279-468`, with the binary-body grammar at `internal/mergetrain/gh.go:495-526`.
+Measured header forms are `index `; `new file mode ` and `deleted file mode `; `similarity index `, `rename from `, and `rename to `; `Binary files ... differ`; and `--- ` or `+++ ` before the first hunk. Forms documented by git but unmeasured in a diff of GitHub's or of the history are `old mode `, `new mode `, `dissimilarity index `, `copy from `, and `copy to `; the follow-up measured the first two in local git's output. A marker is allowed directly after a line of a hunk, inside it or after its last line, and counts on neither side. At most two markers belong to one hunk; a third gives the sixth text. The place after a `-` line was measured; the allowed places after a context or `+` line inside a hunk were unseen. A `GIT binary patch` section with no hunk allows measured `literal N`, documented `delta N`, measured base85 data, and measured empty lines; the follow-up measured `delta N` in local git's output. The section recognizer is at `internal/mergetrain/gh.go:279-471`, with the binary-body grammar at `internal/mergetrain/gh.go:498-529`.
 
 The empty-file exception recognizes the two ids in either order: a run of 7 to 40 zeros and a 7- to 40-character prefix of `e69de29bb2d1d6434b8b29ae775ad8c2e48c5391`. The zeros-first added form is measured. The deleted empty file's reversed form is allowed, documented, and unseen. `index 0000..e69d` is refused: git's shortest abbreviation is read as 4 digits, and no id shorter than 7 was measured served.
 
@@ -140,11 +169,19 @@ A diff cut at a line boundary inside a `GIT binary patch` part is accepted: the 
 
 In a section with hunks an index line that holds no ids is accepted: the patch id cannot move.
 
-The lines `old mode`, `new mode`, `dissimilarity index`, `copy from`, `copy to` and `delta N` are allowed from git's documentation and were seen in no measured diff; the base85 data lines measured begin with `z` (15,024), `H` (2), `h` (1) and `I` (1) and come from two binary files.
+The lines `dissimilarity index`, `copy from` and `copy to` are allowed from git's documentation and were seen in no measured diff; `old mode`, `new mode` and `delta N` were seen in local git's output alone, in the forms of the follow-up; the base85 data lines measured begin with `z` (15,024), `H` (2), `h` (1) and `I` (1) and come from two binary files.
 
 Two renames whose `diff --git` lines are the same text, which a name holding ` b/` can make, are refused with the first text.
 
 A mode change alone, which local git prints as `old mode` and `new mode` lines with no index line, is refused with the third text; GitHub's form for one is not measured.
+
+A type change, a regular file that becomes a symlink, is refused with the first text: local git prints two sections with one `diff --git` line for the one list entry, and the second is a duplicate section. GitHub's form for one is not measured; the check fails closed.
+
+In the section of a file with no changed line that holds two `index` lines, the later one decides.
+
+A `Binary files … differ` line is taken wherever it stands in its section, before the index line too, and the bare line `Binary files differ` is taken for one.
+
+A hunk header's fields may be parted by two spaces or by a tab.
 
 A mode change alone, a name git quotes, a file of status `copied`, a symlink, and a submodule receive no special handling; each is refused or accepted as the general rule gives, GitHub's form is unmeasured, and no test claims otherwise.
 
@@ -154,7 +191,7 @@ A diff whose final blank context line is lost anywhere between GitHub and the ch
 
 A deleted empty file is accepted on its index line; GitHub's form for one is not measured.
 
-The owner's refusal words do not identify which of the seven mismatches occurred; the proof error does. The JSON `patch` is no longer read, so a file omitted from both diff and list is not visible. A list of 300 files or more is refused before the diff is read, whatever the diff contains.
+The owner's refusal words do not identify which of the seven mismatches occurred; the proof error does. The JSON `patch` is no longer read, so a file omitted from both the diff and the list is not visible. A list of 300 files or more is refused before the diff is read, whatever the diff contains.
 
 ## The tests
 
@@ -174,9 +211,9 @@ The owner's refusal words do not identify which of the seven mismatches occurred
 
 `TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead` counts reads at 300 and 299 list entries, proving zero and one diff reads respectively.
 
-`TestCompareDiffMismatchWords` holds the measured GitHub sections with their three pair ids, marks local-only and documented forms, and fixes all seven mismatch texts and the marker cap.
+`TestCompareDiffMismatchWords` holds the measured GitHub sections with their three pair ids, marks local-only and documented forms, fixes all seven mismatch texts, tests both cases that reach a third marker, and accepts two hunks with two markers each.
 
-`TestTheCorpusOfRealSectionsGivesItsVerdicts` checks 24 cases by source: 6 GitHub's, 2 made from GitHub's sections, 9 the history's, and 7 local git's; 19 agree and 5 return their named text.
+`TestTheCorpusOfRealSectionsGivesItsVerdicts` checks 26 cases by source: 6 GitHub's, 2 made from GitHub's sections, 9 the history's, and 9 local git's; 20 agree and 6 return their named text.
 
 `TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck` reads the 2,680-byte saved compare and pins `d98a700eeca038b3cf05beae0453c0fc52246412`.
 
@@ -188,7 +225,9 @@ The owner's refusal words do not identify which of the seven mismatches occurred
 
 `TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged` asserts the fake diff ends with the complete blank context line and proves update and merge.
 
-`TestTheCheckOverTheHistoryRefusesNoWholeDiff` runs `compareDiffMismatch` over each listed commit as `git diff -M` and `git diff -M --binary`; the default package run skips it, while the two explicit runs printed `commits 1930, refused 0`.
+`TestTheCheckOverTheHistoryRefusesNoWholeDiff` reads its list with `compareHistoryPairs` and runs `compareDiffMismatch` over each listed commit as `git diff -M` and `git diff -M --binary`; the default package run skips it, while the two explicit runs printed `commits 1930, refused 0`.
+
+`TestTheHistoryListIsReadWholeOrItsErrorIsReturned` asserts two good pairs, a scanner-overflow list after one good pair, a malformed line, an empty list and an absent file, and proves that an incomplete read returns an error without partial pairs.
 
 `assertCompareRefused` checks `PatchProof.Required`, and recovery requires the rebase entry's run to equal the result's run. The fake's completeness answer counts binary files, explicit omissions, and 0/0 empty or unchanged-rename files as missing patches. `ExtraAdditionFiles` acts on every file-list answer, while the proof-specific control behavior is selected only by the unique query.
 
@@ -253,16 +292,36 @@ The corpus and the history test were copied from the round's inputs; their blob 
 1c40a9b29fb378b0d78901c298f9328ff3d5a182  internal/mergetrain/compare_history_test.go
 ```
 
+## Follow-up
+
+This follow-up's dispatch TIP is `af13b2e070a1ef93f20e5a3125d4f32298bb8e03`; the worktree's HEAD at the precheck is `af13b2e070a1ef93f20e5a3125d4f32298bb8e03`.
+
+Item 1 adds three marker-before-section inputs and makes each return the first text without a panic. R25 removes the nil guard and shows the first table case panic.
+
+Items 2 and 6 make both cap cases reach their third marker and add the two-hunk case. R26 shows both third-marker cases fail without the cap, and R27 shows the two-hunk case fail if the cap is counted over the section.
+
+Item 3 adds `compareHistoryPairs` and `TestTheHistoryListIsReadWholeOrItsErrorIsReturned`. R28 shows that ignoring the scanner error makes the new test fail.
+
+Item 4 names the worktree's HEAD at the precheck in the note's opening and in this section.
+
+Item 5 records the type-change limit, the three laxities, and all 24 local-git forms measured at the gate.
+
+Item 7 restores “both the diff and the list” in the JSON-patch known limit.
+
+Item 8 splits the allowed marker-after-context and marker-after-added-line ground into two table cases.
+
+The corpus was copied from the task's inputs; its blob hash was `854dda1b458eafea18eabab6ddc01f931180f821`.
+
 ## Rows
 
 ### R0
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh a`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh a`
 
 ```text
 === row R0 ===
-edit: none (your file)
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+edit: none (your files)
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 0
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
 --- PASS: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead
@@ -298,24 +357,27 @@ exit: 0
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 38 fail 0 skip 0
+pass 39 fail 0 skip 0
+panic: no
 failed subtests:
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R1
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh a`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh a`
 
 ```text
 === row R1 ===
 edit: internal/mergetrain/gh.go:227-275 (your PatchID, 49 lines) is the TIP's PatchID (49 lines), whole
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
 --- FAIL: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead
@@ -352,14 +414,16 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
-pass 25 fail 13 skip 0
+pass 26 fail 13 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead/at_the_limit
     --- FAIL: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead/one_under
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
     compare_proof_test.go:89: #6 was not rebased and merged: status refused; force pushes recorded 0; head unchanged true; task bound to its old head true; audit: refusal: the update could not be proved: GitHub returned an incomplete diff
     compare_proof_test.go:130: not refused in the fixed words: {Number:6 Task:t1 Head:<sha> Draft:true Changed:2 Files:[one.txt two.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false RebaseRule: RebaseReason: PatchP
     compare_proof_test.go:144: not refused in the fixed words: {Number:6 Task:t1 Head:<sha> Draft:true Changed:3 Files:[one.txt two.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false RebaseRule: RebaseReason: PatchP
@@ -368,16 +432,17 @@ messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids pr
     compare_proof_test.go:205: proof error GitHub returned an incomplete diff, want a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines
     compare_proof_test.go:234: limit: err=gh api repos/owner/fixture/compare/base...head --jq: unexpected call: unexpected reads=0 want 0
     compare_proof_test.go:234: under: err=gh api repos/owner/fixture/compare/base...head --jq: unexpected call: unexpected reads=0 want 1
-    compare_proof_test.go:526: cut proof: id="" err=gh api repos/omriariav/amq-squad/compare/<sha>...<sha> --jq: unexpected call: unexpected
-    compare_proof_test.go:545: rebind: rebind refused (rebind_unproved): the update could not be proved: GitHub returned an incomplete diff {Run: Task: Repository: Base: PR:0 From: To: Parent: ParentIs: PatchID: Push:} bound=<sha>
-    compare_proof_test.go:566: recovery: <nil> {Number:1 Task:t1 Head:<sha> Draft:true Changed:2 Files:[pkg/a.go] Refusals:[{Rule:force_push Detail:head was force-pushed <id> -> <id> by owner} {Rule:pr_head_moved Detail:PR #1 head <id> is n
+    compare_proof_test.go:533: cut proof: id="" err=gh api repos/omriariav/amq-squad/compare/<sha>...<sha> --jq: unexpected call: unexpected
+    compare_proof_test.go:552: rebind: rebind refused (rebind_unproved): the update could not be proved: GitHub returned an incomplete diff {Run: Task: Repository: Base: PR:0 From: To: Parent: ParentIs: PatchID: Push:} bound=<sha>
+    compare_proof_test.go:573: recovery: <nil> {Number:1 Task:t1 Head:<sha> Draft:true Changed:2 Files:[pkg/a.go] Refusals:[{Rule:force_push Detail:head was force-pushed <id> -> <id> by owner} {Rule:pr_head_moved Detail:PR #1 head <id> is n
     escape_legacy_320_test.go:146: one diff read per proof: 0 proofs, reads ["api repos/owner/fixture/compare/<sha>...<sha> -H Accept: application/vnd.github.diff --allow-escape-sequences" "api repos/owner/fixture/compare/<sha>...<sha> -H A
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R2
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh a`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh a`
 
 ```text
 === row R2 ===
@@ -386,11 +451,12 @@ edit: internal/mergetrain/gh.go:279
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours and answers "" when its answer starts with:
     "the diff's files are not the compare's files: "
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead
 --- FAIL: TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate
 --- FAIL: TestCompareDiffMismatchWords
+--- FAIL: TestTheCorpusOfRealSectionsGivesItsVerdicts
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
 --- PASS: TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate
 --- PASS: TestASavedCompareCutInsideItsLastLineIsRefused
@@ -421,14 +487,18 @@ exit: 1
 --- PASS: TestStrictOffBehindGreenKeepsCurrentBehavior
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
---- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 35 fail 3 skip 0
+pass 35 fail 4 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead/one_under
+    --- FAIL: TestCompareDiffMismatchWords/marker_before_any_section
+    --- FAIL: TestCompareDiffMismatchWords/marker_before_one_section
+    --- FAIL: TestCompareDiffMismatchWords/marker_after_empty_line_before_one_section
     --- FAIL: TestCompareDiffMismatchWords/file_empty_diff
     --- FAIL: TestCompareDiffMismatchWords/text_before_first_file
     --- FAIL: TestCompareDiffMismatchWords/missing_listed_file
@@ -436,22 +506,26 @@ failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/duplicate_section
     --- FAIL: TestCompareDiffMismatchWords/rename_without_previous
     --- FAIL: TestCompareDiffMismatchWords/quoted_name_local_form
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
     compare_proof_test.go:130: not refused in the fixed words: {Number:6 Task:t1 Head:<sha> Draft:true Changed:2 Files:[one.txt two.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false RebaseRule: RebaseReason: PatchP
     compare_proof_test.go:234: under: err=git patch-id --stable returned no patch id reads=1 want 1
-    compare_proof_test.go:369: got "", want prefix "the diff's files are not the compare's files: "
-    compare_proof_test.go:369: got "", want prefix "the diff's files are not the compare's files: "
-    compare_proof_test.go:369: got "", want prefix "the diff's files are not the compare's files: "
-    compare_proof_test.go:369: got "", want prefix "the diff's files are not the compare's files: "
-    compare_proof_test.go:369: got "", want prefix "the diff's files are not the compare's files: "
-    compare_proof_test.go:369: got "", want prefix "the diff's files are not the compare's files: "
-    compare_proof_test.go:369: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R3
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh a`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh a`
 
 ```text
 === row R3 ===
@@ -460,7 +534,7 @@ edit: internal/mergetrain/gh.go:279
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours and answers "" when its answer starts with:
     "the diff's added and removed lines are not the compare's counts: "
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate
 --- FAIL: TestCompareDiffMismatchWords
@@ -496,26 +570,29 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 36 fail 2 skip 0
+pass 37 fail 2 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/one_addition_missing
     --- FAIL: TestCompareDiffMismatchWords/removed_line_missing
     --- FAIL: TestCompareDiffMismatchWords/swapped_per-file_counts
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
     compare_proof_test.go:144: not refused in the fixed words: {Number:6 Task:t1 Head:<sha> Draft:true Changed:3 Files:[one.txt two.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false RebaseRule: RebaseReason: PatchP
-    compare_proof_test.go:369: got "", want prefix "the diff's added and removed lines are not the compare's counts: "
-    compare_proof_test.go:369: got "", want prefix "the diff's added and removed lines are not the compare's counts: "
-    compare_proof_test.go:369: got "", want prefix "the diff's added and removed lines are not the compare's counts: "
+    compare_proof_test.go:376: got "", want prefix "the diff's added and removed lines are not the compare's counts: "
+    compare_proof_test.go:376: got "", want prefix "the diff's added and removed lines are not the compare's counts: "
+    compare_proof_test.go:376: got "", want prefix "the diff's added and removed lines are not the compare's counts: "
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R4
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh a`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh a`
 
 ```text
 === row R4 ===
@@ -524,7 +601,7 @@ edit: internal/mergetrain/gh.go:279
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours and answers "" when its answer starts with:
     "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
 --- FAIL: TestCompareDiffMismatchWords
@@ -560,11 +637,13 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 36 fail 2 skip 0
+pass 37 fail 2 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/zero_with_hunk
     --- FAIL: TestCompareDiffMismatchWords/binary_no_index
@@ -573,22 +652,23 @@ failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/rename_wrong_from
     --- FAIL: TestCompareDiffMismatchWords/rename_99_percent
     --- FAIL: TestCompareDiffMismatchWords/mode_only_local_form
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
     compare_proof_test.go:205: not refused in the fixed words: {Number:6 Task:t1 Head:<sha> Draft:true Changed:1 Files:[asset.bin note.txt] Refusals:[] GateID: GateError: Lifted:false After:[] RebaseForCI:false RebaseRule: RebaseReason: Pat
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 keep directory removed: yes
 ```
 
 ### R5
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh b`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh b`
 
 ```text
 === row R5 ===
@@ -596,7 +676,7 @@ edit: internal/mergetrain/gh.go:279
   before: func compareDiffMismatch(files []FileChange, diff []byte) string {
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that refuses every file with 0 additions and 0 deletions, then calls yours
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
 --- FAIL: TestBehindPRWithABinaryFileIsUpdatedAndMerged
@@ -632,11 +712,13 @@ exit: 1
 --- PASS: TestStrictOffBehindGreenKeepsCurrentBehavior
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 33 fail 5 skip 0
+pass 34 fail 5 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/binary_GitHub
     --- FAIL: TestCompareDiffMismatchWords/binary_git
@@ -662,36 +744,36 @@ failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/non-data_binary_line
     --- FAIL: TestCompareDiffMismatchWords/wrong-length_binary_data
     --- FAIL: TestCompareDiffMismatchWords/marker_without_hunk
-    --- FAIL: TestCompareDiffMismatchWords/three_markers_inside
     --- FAIL: TestCompareDiffMismatchWords/binary_cut_after_index
     --- FAIL: TestCompareDiffMismatchWords/index_word_alone
     --- FAIL: TestCompareDiffMismatchWords/empty_ids_too_short
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
     compare_proof_test.go:164: #6 was not rebased and merged: status refused; force pushes recorded 0; head unchanged true; task bound to its old head true; audit: refusal: the update could not be proved: GitHub returned an incomplete diff
     compare_proof_test.go:191: #6 was not rebased and merged: status refused; force pushes recorded 0; head unchanged true; task bound to its old head true; audit: refusal: the update could not be proved: GitHub returned an incomplete diff
     compare_proof_test.go:205: proof error GitHub returned an incomplete diff: rows-trainfix.sh R5: a file with no changed line is refused, want a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three li
-    compare_proof_test.go:366: got "rows-trainfix.sh R5: a file with no changed line is refused"
-    compare_proof_test.go:366: got "rows-trainfix.sh R5: a file with no changed line is refused"
-    compare_proof_test.go:369: got "rows-trainfix.sh R5: a file with no changed line is refused", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
-    compare_proof_test.go:366: got "rows-trainfix.sh R5: a file with no changed line is refused"
-    compare_proof_test.go:366: got "rows-trainfix.sh R5: a file with no changed line is refused"
-    compare_proof_test.go:366: got "rows-trainfix.sh R5: a file with no changed line is refused"
-    compare_proof_test.go:366: got "rows-trainfix.sh R5: a file with no changed line is refused"
-    compare_proof_test.go:366: got "rows-trainfix.sh R5: a file with no changed line is refused"
-    compare_proof_test.go:366: got "rows-trainfix.sh R5: a file with no changed line is refused"
+    compare_proof_test.go:373: got "rows-trainfix.sh R5: a file with no changed line is refused"
+    compare_proof_test.go:373: got "rows-trainfix.sh R5: a file with no changed line is refused"
+    compare_proof_test.go:376: got "rows-trainfix.sh R5: a file with no changed line is refused", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
+    compare_proof_test.go:373: got "rows-trainfix.sh R5: a file with no changed line is refused"
+    compare_proof_test.go:373: got "rows-trainfix.sh R5: a file with no changed line is refused"
+    compare_proof_test.go:373: got "rows-trainfix.sh R5: a file with no changed line is refused"
+    compare_proof_test.go:373: got "rows-trainfix.sh R5: a file with no changed line is refused"
+    compare_proof_test.go:373: got "rows-trainfix.sh R5: a file with no changed line is refused"
+    compare_proof_test.go:373: got "rows-trainfix.sh R5: a file with no changed line is refused"
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R6
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh b`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh b`
 
 ```text
 === row R6 ===
 edit: internal/mergetrain/gh.go:240
   before: if len(files) >= MaxCompareFiles {
   after:  if len(files) >= MaxCompareFiles+1<<30 {
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -727,28 +809,31 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead/at_the_limit
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
     compare_proof_test.go:234: limit: err=GitHub returned an incomplete diff: the diff's files are not the compare's files: missing section for "f/000" reads=1 want 0
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R7
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh b`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh b`
 
 ```text
 === row R7 ===
-edit: internal/mergetrain/gh.go:577
+edit: internal/mergetrain/gh.go:580
   before: return strings.Contains(s, "diff too large") || strings.Contains(s, "http 406") || strings.Contains(s, "http 422")
   after:  return strings.Contains(s, "diff too large") || strings.Contains(s, "http 406")
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestHTTP422CompareRefusesWithoutRebind
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -784,27 +869,30 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
     strict_policy_test.go:273: incomplete compare was not refused in words: prove the updated patch of #1: gh api repos/owner/fixture/compare/<sha>...<sha> --jq: exit status 1: gh: compare result unavailable (HTTP 422) {Number:1 Task:t1 Hea
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R8
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh b`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh b`
 
 ```text
 === row R8 ===
-edit: internal/mergetrain/gh.go:577
+edit: internal/mergetrain/gh.go:580
   before: return strings.Contains(s, "diff too large") || strings.Contains(s, "http 406") || strings.Contains(s, "http 422")
   after:  return strings.Contains(s, "diff too large") || strings.Contains(s, "http 422")
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -840,23 +928,26 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead/a_diff_too_large
     --- FAIL: TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead/an_unknown_flag,_then_a_diff_too_large
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
     escape_legacy_320_test.go:227: a diff too large is an incomplete diff: gh api repos/owner/fixture/compare/<sha>...<sha> -H: exit status 1: gh: Sorry, the diff exceeded the maximum number of lines (HTTP 406)
     escape_legacy_320_test.go:227: a diff too large is an incomplete diff: gh api repos/owner/fixture/compare/<sha>...<sha> -H: exit status 1: gh: Sorry, the diff exceeded the maximum number of lines (HTTP 406)
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R9
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh b`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh b`
 
 ```text
 === row R9 ===
@@ -865,7 +956,7 @@ edit: internal/mergetrain/gh.go:279
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours and answers "" when its answer starts with:
     "the diff is cut short inside a hunk: "
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestCompareDiffMismatchWords
 --- FAIL: TestIncompleteCompareRefusesWithoutRebind
@@ -901,11 +992,13 @@ exit: 1
 --- PASS: TestStrictOffBehindGreenKeepsCurrentBehavior
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 35 fail 3 skip 0
+pass 36 fail 3 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/cut_final_context
     --- FAIL: TestCompareDiffMismatchWords/next_section_inside_hunk
@@ -915,24 +1008,25 @@ failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/consecutive_markers_inside_hunk
     --- FAIL: TestCompareDiffMismatchWords/garbage_hunk_numbers
     --- FAIL: TestCompareDiffMismatchWords/signed_hunk_lengths
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:369: got "", want prefix "the diff is cut short inside a hunk: "
-    compare_proof_test.go:369: got "", want prefix "the diff is cut short inside a hunk: "
-    compare_proof_test.go:369: got "", want prefix "the diff is cut short inside a hunk: "
-    compare_proof_test.go:369: got "", want prefix "the diff is cut short inside a hunk: "
-    compare_proof_test.go:369: got "", want prefix "the diff is cut short inside a hunk: "
-    compare_proof_test.go:369: got "", want prefix "the diff is cut short inside a hunk: "
-    compare_proof_test.go:369: got "", want prefix "the diff is cut short inside a hunk: "
-    compare_proof_test.go:369: got "", want prefix "the diff is cut short inside a hunk: "
-    compare_proof_test.go:417: history: the same section cut just after its in-hunk marker (local git: `git diff -M <sha> <sha>` in omriariav/amq-squad, the section of docs/v2.0.0-goal-condensed.md, cut at the line boundary after its first
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "the diff is cut short inside a hunk: "
+    compare_proof_test.go:376: got "", want prefix "the diff is cut short inside a hunk: "
+    compare_proof_test.go:376: got "", want prefix "the diff is cut short inside a hunk: "
+    compare_proof_test.go:376: got "", want prefix "the diff is cut short inside a hunk: "
+    compare_proof_test.go:376: got "", want prefix "the diff is cut short inside a hunk: "
+    compare_proof_test.go:376: got "", want prefix "the diff is cut short inside a hunk: "
+    compare_proof_test.go:376: got "", want prefix "the diff is cut short inside a hunk: "
+    compare_proof_test.go:376: got "", want prefix "the diff is cut short inside a hunk: "
+    compare_proof_test.go:424: history: the same section cut just after its in-hunk marker (local git: `git diff -M <sha> <sha>` in omriariav/amq-squad, the section of docs/v2.0.0-goal-condensed.md, cut at the line boundary after its first
     strict_policy_test.go:88: incomplete compare was not refused in words: <nil> {Number:1 Task:t1 Head:<sha> Draft:true Changed:2 Files:[pkg/a.go] Refusals:[{Rule:rebase_patch_changed Detail:its change moved during the update}] GateID: Gat
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 keep directory removed: yes
 ```
 
 ### R10
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh c`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh c`
 
 ```text
 === row R10 ===
@@ -940,7 +1034,7 @@ edit: internal/mergetrain/gh.go:279
   before: func compareDiffMismatch(files []FileChange, diff []byte) string {
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours with every file's previous name emptied
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged
 --- FAIL: TestCompareDiffMismatchWords
@@ -976,31 +1070,34 @@ exit: 1
 --- PASS: TestStrictOffBehindGreenKeepsCurrentBehavior
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 35 fail 3 skip 0
+pass 36 fail 3 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/renamed_with_changes
     --- FAIL: TestCompareDiffMismatchWords/rename_no_change
     --- FAIL: TestCompareDiffMismatchWords/rename_lacks_to
     --- FAIL: TestCompareDiffMismatchWords/rename_wrong_from
     --- FAIL: TestCompareDiffMismatchWords/rename_99_percent
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
     compare_proof_test.go:191: #6 was not rebased and merged: status refused; force pushes recorded 0; head unchanged true; task bound to its old head true; audit: refusal: the update could not be proved: GitHub returned an incomplete diff
-    compare_proof_test.go:366: got "the diff's files are not the compare's files: unexpected section \"diff --git a/old.txt b/new.txt\""
-    compare_proof_test.go:366: got "the diff's files are not the compare's files: unexpected section \"diff --git a/internal/cli/v3_holding_test.go b/internal/cli/cli_fixture_support_test.go\""
-    compare_proof_test.go:369: got "the diff's files are not the compare's files: unexpected section \"diff --git a/internal/cli/v3_holding_test.go b/internal/cli/cli_fixture_support_test.go\"", want prefix "a file with no changed line hold
-    compare_proof_test.go:369: got "the diff's files are not the compare's files: unexpected section \"diff --git a/internal/cli/v3_holding_test.go b/internal/cli/cli_fixture_support_test.go\"", want prefix "a file with no changed line hold
-    compare_proof_test.go:369: got "the diff's files are not the compare's files: unexpected section \"diff --git a/internal/cli/v3_holding_test.go b/internal/cli/cli_fixture_support_test.go\"", want prefix "a file with no changed line hold
-    compare_proof_test.go:411: GitHub: a rename with no change (as GitHub served it: the diff media type of compare <sha>...<sha> of omriariav/amq-squad, one section): got "the diff's files are not the compare's files: unexpected section \"
+    compare_proof_test.go:373: got "the diff's files are not the compare's files: unexpected section \"diff --git a/old.txt b/new.txt\""
+    compare_proof_test.go:373: got "the diff's files are not the compare's files: unexpected section \"diff --git a/internal/cli/v3_holding_test.go b/internal/cli/cli_fixture_support_test.go\""
+    compare_proof_test.go:376: got "the diff's files are not the compare's files: unexpected section \"diff --git a/internal/cli/v3_holding_test.go b/internal/cli/cli_fixture_support_test.go\"", want prefix "a file with no changed line hold
+    compare_proof_test.go:376: got "the diff's files are not the compare's files: unexpected section \"diff --git a/internal/cli/v3_holding_test.go b/internal/cli/cli_fixture_support_test.go\"", want prefix "a file with no changed line hold
+    compare_proof_test.go:376: got "the diff's files are not the compare's files: unexpected section \"diff --git a/internal/cli/v3_holding_test.go b/internal/cli/cli_fixture_support_test.go\"", want prefix "a file with no changed line hold
+    compare_proof_test.go:418: GitHub: a rename with no change (as GitHub served it: the diff media type of compare <sha>...<sha> of omriariav/amq-squad, one section): got "the diff's files are not the compare's files: unexpected section \"
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R11
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh c`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh c`
 
 ```text
 === row R11 ===
@@ -1008,7 +1105,7 @@ edit: internal/mergetrain/gh.go:279
   before: func compareDiffMismatch(files []FileChange, diff []byte) string {
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours and answers "" to its counts text when the totals over all files agree
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestCompareDiffMismatchWords
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -1044,28 +1141,31 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/swapped_per-file_counts
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:369: got "", want prefix "the diff's added and removed lines are not the compare's counts: "
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "the diff's added and removed lines are not the compare's counts: "
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R12
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh c`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh c`
 
 ```text
 === row R12 ===
 edit: internal/mergetrain/gh.go:265
   before: cmd.Stdin = bytes.NewReader(diff)
   after:  cmd.Stdin = bytes.NewReader(diff[:len(diff)/2])
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -1102,19 +1202,22 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:465: patch id "<sha>" err <nil>
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:472: patch id "<sha>" err <nil>
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R13
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh c`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh c`
 
 ```text
 === row R13 ===
@@ -1122,7 +1225,7 @@ edit: internal/mergetrain/gh.go:279
   before: func compareDiffMismatch(files []FileChange, diff []byte) string {
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours with the diff's end trimmed
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestASavedCompareCutInsideItsLastLineIsRefused
 --- FAIL: TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged
@@ -1158,11 +1261,13 @@ exit: 1
 --- PASS: TestStrictOffBehindGreenKeepsCurrentBehavior
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 34 fail 4 skip 0
+pass 35 fail 4 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/blank_context_end
     --- FAIL: TestCompareDiffMismatchWords/cut_added_line
@@ -1170,22 +1275,23 @@ failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/whole_diff_without_final_newline
     --- FAIL: TestCompareDiffMismatchWords/carriage_return_at_end
     --- FAIL: TestCompareDiffMismatchWords/index_word_alone
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:366: got "the diff is cut short inside a hunk: \"a.txt\""
-    compare_proof_test.go:369: got "", want prefix "the diff does not end with a newline: "
-    compare_proof_test.go:369: got "a file's section holds a line that is neither a header line nor in a hunk: \"x\"", want prefix "the diff does not end with a newline: "
-    compare_proof_test.go:369: got "", want prefix "the diff does not end with a newline: "
-    compare_proof_test.go:369: got "", want prefix "the diff does not end with a newline: "
-    compare_proof_test.go:369: got "a file's section holds a line that is neither a header line nor in a hunk: \"a.txt\"", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
-    compare_proof_test.go:411: GitHub: a rename with changes (as GitHub served it: the diff media type of compare <sha>...<sha> of omriariav/amq-squad, one section): got "the diff is cut short inside a hunk: \"internal/cli/v2310_legacy_stil
-    compare_proof_test.go:526: cut proof: id="<sha>" err=<nil>
-    compare_proof_test.go:593: #6 was not rebased and merged: status refused; force pushes recorded 0; head unchanged true; task bound to its old head true; audit: refusal: the update could not be proved: GitHub returned an incomplete diff
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:373: got "the diff is cut short inside a hunk: \"a.txt\""
+    compare_proof_test.go:376: got "", want prefix "the diff does not end with a newline: "
+    compare_proof_test.go:376: got "a file's section holds a line that is neither a header line nor in a hunk: \"x\"", want prefix "the diff does not end with a newline: "
+    compare_proof_test.go:376: got "", want prefix "the diff does not end with a newline: "
+    compare_proof_test.go:376: got "", want prefix "the diff does not end with a newline: "
+    compare_proof_test.go:376: got "a file's section holds a line that is neither a header line nor in a hunk: \"a.txt\"", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
+    compare_proof_test.go:418: GitHub: a rename with changes (as GitHub served it: the diff media type of compare <sha>...<sha> of omriariav/amq-squad, one section): got "the diff is cut short inside a hunk: \"internal/cli/v2310_legacy_stil
+    compare_proof_test.go:533: cut proof: id="<sha>" err=<nil>
+    compare_proof_test.go:600: #6 was not rebased and merged: status refused; force pushes recorded 0; head unchanged true; task bound to its old head true; audit: refusal: the update could not be proved: GitHub returned an incomplete diff
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R14
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh c`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh c`
 
 ```text
 === row R14 ===
@@ -1193,7 +1299,7 @@ edit: internal/mergetrain/gh.go:279
   before: func compareDiffMismatch(files []FileChange, diff []byte) string {
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours and answers "" to its third text when every file with no changed line has a section line that starts "index "
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestCompareDiffMismatchWords
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -1229,22 +1335,25 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/zero_with_hunk
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 keep directory removed: yes
 ```
 
 ### R15
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh d`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh d`
 
 ```text
 === row R15 ===
@@ -1252,7 +1361,7 @@ edit: internal/mergetrain/gh.go:279
   before: func compareDiffMismatch(files []FileChange, diff []byte) string {
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours and answers "" to its third text when every file with no changed line has a section line that is "similarity index 100%"
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestCompareDiffMismatchWords
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -1288,23 +1397,26 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/rename_lacks_to
     --- FAIL: TestCompareDiffMismatchWords/rename_wrong_from
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds a hunk, or neither an index line nor a 100% rename's three lines: "
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R16
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh d`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh d`
 
 ```text
 === row R16 ===
@@ -1313,7 +1425,7 @@ edit: internal/mergetrain/gh.go:279
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours and answers "" when its answer starts with:
     "the diff does not end with a newline: "
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestASavedCompareCutInsideItsLastLineIsRefused
 --- FAIL: TestCompareDiffMismatchWords
@@ -1349,28 +1461,31 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 36 fail 2 skip 0
+pass 37 fail 2 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/cut_added_line
     --- FAIL: TestCompareDiffMismatchWords/cut_zero_index
     --- FAIL: TestCompareDiffMismatchWords/whole_diff_without_final_newline
     --- FAIL: TestCompareDiffMismatchWords/carriage_return_at_end
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:369: got "", want prefix "the diff does not end with a newline: "
-    compare_proof_test.go:369: got "", want prefix "the diff does not end with a newline: "
-    compare_proof_test.go:369: got "", want prefix "the diff does not end with a newline: "
-    compare_proof_test.go:369: got "", want prefix "the diff does not end with a newline: "
-    compare_proof_test.go:526: cut proof: id="<sha>" err=<nil>
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "the diff does not end with a newline: "
+    compare_proof_test.go:376: got "", want prefix "the diff does not end with a newline: "
+    compare_proof_test.go:376: got "", want prefix "the diff does not end with a newline: "
+    compare_proof_test.go:376: got "", want prefix "the diff does not end with a newline: "
+    compare_proof_test.go:533: cut proof: id="<sha>" err=<nil>
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R17
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh d`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh d`
 
 ```text
 === row R17 ===
@@ -1379,7 +1494,7 @@ edit: internal/mergetrain/gh.go:279
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours and answers "" when its answer starts with:
     "a file's section holds a line that is neither a header line nor in a hunk: "
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestCompareDiffMismatchWords
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -1415,11 +1530,13 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/addition_outside_hunk
     --- FAIL: TestCompareDiffMismatchWords/addition_after_hunk
@@ -1435,32 +1552,33 @@ failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/second_marker
     --- FAIL: TestCompareDiffMismatchWords/third_marker_after_two_inside
     --- FAIL: TestCompareDiffMismatchWords/three_markers_inside
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R18
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh d`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh d`
 
 ```text
 === row R18 ===
 edit: internal/mergetrain/gh.go:201
   before: const compareProofFilesJQ = `.files[]? | {path: .filename, previous_path: (.previous_filename // ""), additions, deletions, status}`
   after:  const compareProofFilesJQ = `.files[]? | {path: .filename, previous_path: (.previous_filename // ""), status, additions, deletions}`
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt
 --- FAIL: TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged
@@ -1496,21 +1614,24 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 36 fail 2 skip 0
+pass 37 fail 2 skip 0
+panic: no
 failed subtests:
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
     escape_legacy_320_test.go:146: one diff read per proof: 4 proofs, reads ["api repos/owner/fixture/compare/<sha>...<sha> -H Accept: application/vnd.github.diff --allow-escape-sequences" "api repos/owner/fixture/compare/<sha>...<sha> -H A
     escape_legacy_320_test.go:173: two diff reads per proof: 4 proofs, reads ["api repos/owner/fixture/compare/<sha>...<sha> -H Accept: application/vnd.github.diff --allow-escape-sequences" "api repos/owner/fixture/compare/<sha>...<sha> -H
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R19
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh d`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh d`
 
 ```text
 === row R19 ===
@@ -1518,7 +1639,7 @@ edit: internal/mergetrain/gh.go:279
   before: func compareDiffMismatch(files []FileChange, diff []byte) string {
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours with the diff from its first "diff --git" line on
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestCompareDiffMismatchWords
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -1554,22 +1675,29 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
+    --- FAIL: TestCompareDiffMismatchWords/marker_before_one_section
+    --- FAIL: TestCompareDiffMismatchWords/marker_after_empty_line_before_one_section
     --- FAIL: TestCompareDiffMismatchWords/text_before_first_file
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:369: got "", want prefix "the diff's files are not the compare's files: "
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
+    compare_proof_test.go:376: got "", want prefix "the diff's files are not the compare's files: "
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 keep directory removed: yes
 ```
 
 ### R20
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh e`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh e`
 
 ```text
 === row R20 ===
@@ -1577,7 +1705,7 @@ edit: internal/mergetrain/gh.go:279
   before: func compareDiffMismatch(files []FileChange, diff []byte) string {
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that answers the fourth text for a marker line inside a hunk, then calls yours
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged
 --- FAIL: TestCompareDiffMismatchWords
@@ -1613,29 +1741,38 @@ exit: 1
 --- PASS: TestStrictOffBehindGreenKeepsCurrentBehavior
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 35 fail 3 skip 0
+pass 36 fail 3 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/marker_inside_after_removed_line
     --- FAIL: TestCompareDiffMismatchWords/marker_inside_and_after_hunk
-    --- FAIL: TestCompareDiffMismatchWords/markers_after_context_and_added_lines
+    --- FAIL: TestCompareDiffMismatchWords/marker_after_context_line
+    --- FAIL: TestCompareDiffMismatchWords/marker_after_added_line
     --- FAIL: TestCompareDiffMismatchWords/third_marker_after_two_inside
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
+    --- FAIL: TestCompareDiffMismatchWords/three_markers_inside
+    --- FAIL: TestCompareDiffMismatchWords/two_hunks_with_two_markers_each
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
     compare_proof_test.go:116: #6 was not rebased and merged: status refused; force pushes recorded 0; head unchanged true; task bound to its old head true; audit: refusal: the update could not be proved: GitHub returned an incomplete diff
-    compare_proof_test.go:366: got "the diff is cut short inside a hunk: rows-trainfix.sh R20, a marker line inside a hunk"
-    compare_proof_test.go:366: got "the diff is cut short inside a hunk: rows-trainfix.sh R20, a marker line inside a hunk"
-    compare_proof_test.go:366: got "the diff is cut short inside a hunk: rows-trainfix.sh R20, a marker line inside a hunk"
-    compare_proof_test.go:369: got "the diff is cut short inside a hunk: rows-trainfix.sh R20, a marker line inside a hunk", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
-    compare_proof_test.go:411: history: a marker inside a hunk after a `-` line, `+` lines following (local git: `git diff -M <sha> <sha>` in omriariav/amq-squad, the section of README.md): got "the diff is cut short inside a hunk: rows-tra
+    compare_proof_test.go:373: got "the diff is cut short inside a hunk: rows-trainfix.sh R20, a marker line inside a hunk"
+    compare_proof_test.go:373: got "the diff is cut short inside a hunk: rows-trainfix.sh R20, a marker line inside a hunk"
+    compare_proof_test.go:373: got "the diff is cut short inside a hunk: rows-trainfix.sh R20, a marker line inside a hunk"
+    compare_proof_test.go:373: got "the diff is cut short inside a hunk: rows-trainfix.sh R20, a marker line inside a hunk"
+    compare_proof_test.go:376: got "the diff is cut short inside a hunk: rows-trainfix.sh R20, a marker line inside a hunk", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "the diff is cut short inside a hunk: rows-trainfix.sh R20, a marker line inside a hunk", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:373: got "the diff is cut short inside a hunk: rows-trainfix.sh R20, a marker line inside a hunk"
+    compare_proof_test.go:418: history: a marker inside a hunk after a `-` line, `+` lines following (local git: `git diff -M <sha> <sha>` in omriariav/amq-squad, the section of README.md): got "the diff is cut short inside a hunk: rows-tra
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R21
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh e`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh e`
 
 ```text
 === row R21 ===
@@ -1644,7 +1781,7 @@ edit: internal/mergetrain/gh.go:279
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours and answers "" when its answer starts with:
     "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestCompareDiffMismatchWords
 --- FAIL: TestTheCorpusOfRealSectionsGivesItsVerdicts
@@ -1680,28 +1817,31 @@ exit: 1
 --- PASS: TestStrictOffBehindGreenKeepsCurrentBehavior
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 36 fail 2 skip 0
+pass 37 fail 2 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/zero_count_index
     --- FAIL: TestCompareDiffMismatchWords/binary_cut_after_index
     --- FAIL: TestCompareDiffMismatchWords/index_word_alone
     --- FAIL: TestCompareDiffMismatchWords/empty_ids_too_short
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
-    compare_proof_test.go:369: got "", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
-    compare_proof_test.go:417: made from GitHub's sections: the binary section last and cut after its index line (constructed: the case before, cut at the line boundary after the binary section's index line (git patch-id --stable of the cut
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
+    compare_proof_test.go:376: got "", want prefix "a file with no changed line holds an index line and neither a binary part nor an empty file's ids: "
+    compare_proof_test.go:424: made from GitHub's sections: the binary section last and cut after its index line (constructed: the case before, cut at the line boundary after the binary section's index line (git patch-id --stable of the cut
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R22
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh e`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh e`
 
 ```text
 === row R22 ===
@@ -1709,7 +1849,7 @@ edit: internal/mergetrain/gh.go:279
   before: func compareDiffMismatch(files []FileChange, diff []byte) string {
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours with every hunk header's numbers made digits
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestCompareDiffMismatchWords
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -1745,23 +1885,26 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/garbage_hunk_numbers
     --- FAIL: TestCompareDiffMismatchWords/signed_hunk_lengths
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:369: got "", want prefix "the diff is cut short inside a hunk: "
-    compare_proof_test.go:369: got "", want prefix "the diff is cut short inside a hunk: "
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "the diff is cut short inside a hunk: "
+    compare_proof_test.go:376: got "", want prefix "the diff is cut short inside a hunk: "
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R23
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh e`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh e`
 
 ```text
 === row R23 ===
@@ -1769,7 +1912,7 @@ edit: internal/mergetrain/gh.go:279
   before: func compareDiffMismatch(files []FileChange, diff []byte) string {
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours and answers "" to its sixth text when every data line of every GIT binary patch part is a letter and base85 characters
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestCompareDiffMismatchWords
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -1805,21 +1948,24 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/wrong-length_binary_data
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:369: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 ```
 
 ### R24
 
-`bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh e`
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh e`
 
 ```text
 === row R24 ===
@@ -1827,7 +1973,7 @@ edit: internal/mergetrain/gh.go:279
   before: func compareDiffMismatch(files []FileChange, diff []byte) string {
   after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
   appended: a compareDiffMismatch that calls yours with a carriage return at the diff's very end made a newline
-$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
 exit: 1
 --- FAIL: TestCompareDiffMismatchWords
 --- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
@@ -1863,16 +2009,235 @@ exit: 1
 --- PASS: TestStrictOffDoesNotCallFailingCompare
 --- PASS: TestStrictUpToDateDoesNotRebase
 --- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
 --- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
 --- PASS: TestTrainNotesASkippedLegacyGateRecord
 --- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
 --- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
-pass 37 fail 1 skip 0
+pass 38 fail 1 skip 0
+panic: no
 failed subtests:
     --- FAIL: TestCompareDiffMismatchWords/carriage_return_at_end
-messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; the texts are your tests'):
-    compare_proof_test.go:369: got "", want prefix "the diff does not end with a newline: "
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "the diff does not end with a newline: "
 restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
+keep directory removed: yes
+```
+
+### R25
+
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh f`
+
+```text
+=== row R25 ===
+edit: internal/mergetrain/gh.go:279
+  before: func compareDiffMismatch(files []FileChange, diff []byte) string {
+  after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
+  appended: a compareDiffMismatch that reads a marker line before the first section through a nil section, then calls yours
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+exit: 1
+--- FAIL: TestCompareDiffMismatchWords
+--- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
+--- PASS: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead
+--- PASS: TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate
+--- PASS: TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate
+--- PASS: TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged
+--- PASS: TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged
+--- PASS: TestBehindPRWithABinaryFileIsUpdatedAndMerged
+--- PASS: TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
+pass 9 fail 1 skip 0
+panic: yes (a test panicked: it has a FAIL line, and the tests after it did not run and have no line)
+panic: runtime error: invalid memory address or nil pointer dereference [recovered, repanicked]
+failed subtests:
+    --- FAIL: TestCompareDiffMismatchWords/marker_before_any_section
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
+```
+
+### R26
+
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh f`
+
+```text
+=== row R26 ===
+edit: internal/mergetrain/gh.go:279
+  before: func compareDiffMismatch(files []FileChange, diff []byte) string {
+  after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
+  appended: a compareDiffMismatch: your check is handed the diff with every marker line of a hunk after its second taken out.
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+exit: 1
+--- FAIL: TestCompareDiffMismatchWords
+--- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
+--- PASS: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead
+--- PASS: TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate
+--- PASS: TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate
+--- PASS: TestASavedCompareCutInsideItsLastLineIsRefused
+--- PASS: TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt
+--- PASS: TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged
+--- PASS: TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged
+--- PASS: TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged
+--- PASS: TestBehindPRWithABinaryFileIsUpdatedAndMerged
+--- PASS: TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged
+--- PASS: TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged
+--- PASS: TestChangedPatchAfterUpdateIsRefusedWithoutRebind
+--- PASS: TestDriftClearsAStoreAlertOnlyForAPathThisRunRead
+--- PASS: TestDriftSkipsALegacyGateRecordWithOneLine
+--- PASS: TestDriftStillNamesAMalformedGateRecord
+--- PASS: TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed
+--- PASS: TestHTTP422CompareRefusesWithoutRebind
+--- PASS: TestIncompleteCompareRefusesWithoutRebind
+--- PASS: TestLaterStrictCompareErrorSkipsOnlyThatPR
+--- PASS: TestLeadRebindOverAFileWithNoPatchIsProvedAndBound
+--- PASS: TestMaxFileCompareRefusesWithoutRebind
+--- PASS: TestNamedDryRunBindsTheSameMovedHeadAsRealRun
+--- PASS: TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead
+--- PASS: TestProtectionParsesStrictPolicy
+--- PASS: TestStrictBehindConflictDryRunRefuses
+--- PASS: TestStrictBehindMovedHeadDryRunRefuses
+--- PASS: TestStrictBehindUsesPinnedCompareAndRebases
+--- PASS: TestStrictFreshnessIsRecheckedBeforeEveryLanding
+--- PASS: TestStrictOffBehindGreenKeepsCurrentBehavior
+--- PASS: TestStrictOffDoesNotCallFailingCompare
+--- PASS: TestStrictUpToDateDoesNotRebase
+--- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
+--- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
+--- PASS: TestTrainNotesASkippedLegacyGateRecord
+--- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
+--- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
+pass 38 fail 1 skip 0
+panic: no
+failed subtests:
+    --- FAIL: TestCompareDiffMismatchWords/third_marker_after_two_inside
+    --- FAIL: TestCompareDiffMismatchWords/three_markers_inside
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+    compare_proof_test.go:376: got "", want prefix "a file's section holds a line that is neither a header line nor in a hunk: "
+restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
+```
+
+### R27
+
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh f`
+
+```text
+=== row R27 ===
+edit: internal/mergetrain/gh.go:279
+  before: func compareDiffMismatch(files []FileChange, diff []byte) string {
+  after:  func compareDiffMismatchYours(files []FileChange, diff []byte) string {
+  appended: a compareDiffMismatch: a diff with a section that holds more than two marker lines in all is answered with the sixth text before your check runs.
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+exit: 1
+--- FAIL: TestCompareDiffMismatchWords
+--- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
+--- PASS: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead
+--- PASS: TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate
+--- PASS: TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate
+--- PASS: TestASavedCompareCutInsideItsLastLineIsRefused
+--- PASS: TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt
+--- PASS: TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged
+--- PASS: TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged
+--- PASS: TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged
+--- PASS: TestBehindPRWithABinaryFileIsUpdatedAndMerged
+--- PASS: TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged
+--- PASS: TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged
+--- PASS: TestChangedPatchAfterUpdateIsRefusedWithoutRebind
+--- PASS: TestDriftClearsAStoreAlertOnlyForAPathThisRunRead
+--- PASS: TestDriftSkipsALegacyGateRecordWithOneLine
+--- PASS: TestDriftStillNamesAMalformedGateRecord
+--- PASS: TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed
+--- PASS: TestHTTP422CompareRefusesWithoutRebind
+--- PASS: TestIncompleteCompareRefusesWithoutRebind
+--- PASS: TestLaterStrictCompareErrorSkipsOnlyThatPR
+--- PASS: TestLeadRebindOverAFileWithNoPatchIsProvedAndBound
+--- PASS: TestMaxFileCompareRefusesWithoutRebind
+--- PASS: TestNamedDryRunBindsTheSameMovedHeadAsRealRun
+--- PASS: TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead
+--- PASS: TestProtectionParsesStrictPolicy
+--- PASS: TestStrictBehindConflictDryRunRefuses
+--- PASS: TestStrictBehindMovedHeadDryRunRefuses
+--- PASS: TestStrictBehindUsesPinnedCompareAndRebases
+--- PASS: TestStrictFreshnessIsRecheckedBeforeEveryLanding
+--- PASS: TestStrictOffBehindGreenKeepsCurrentBehavior
+--- PASS: TestStrictOffDoesNotCallFailingCompare
+--- PASS: TestStrictUpToDateDoesNotRebase
+--- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
+--- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
+--- PASS: TestTrainNotesASkippedLegacyGateRecord
+--- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
+--- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
+pass 38 fail 1 skip 0
+panic: no
+failed subtests:
+    --- FAIL: TestCompareDiffMismatchWords/two_hunks_with_two_markers_each
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_proof_test.go:373: got "a file's section holds a line that is neither a header line nor in a hunk: rows-trainfix.sh R27, a third marker line in one section"
+restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
+```
+
+### R28
+
+`bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh f`
+
+```text
+=== row R28 ===
+edit: internal/mergetrain/compare_history_test.go:31
+  before: if err := sc.Err(); err != nil {
+  after:  if err := sc.Err(); err != nil && false {
+$ go test ./internal/mergetrain/ -count=1 -timeout 240s -v -run '^(TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged|TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate|TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate|TestBehindPRWithABinaryFileIsUpdatedAndMerged|TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate|TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead|TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged|TestCompareDiffMismatchWords|TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck|TestLeadRebindOverAFileWithNoPatchIsProvedAndBound|TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged|TestIncompleteCompareRefusesWithoutRebind|TestMaxFileCompareRefusesWithoutRebind|TestHTTP422CompareRefusesWithoutRebind|TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead|TestStrictBehindUsesPinnedCompareAndRebases|TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged|TestASavedCompareCutInsideItsLastLineIsRefused|TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged|TestTheCorpusOfRealSectionsGivesItsVerdicts|TestTheHistoryListIsReadWholeOrItsErrorIsReturned|TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed|TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged|TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt|TestDriftSkipsALegacyGateRecordWithOneLine|TestDriftStillNamesAMalformedGateRecord|TestTrainNotesASkippedLegacyGateRecord|TestDriftClearsAStoreAlertOnlyForAPathThisRunRead|TestTrainRecordsAStoreAlertsClearingInItsOwnWords|TestChangedPatchAfterUpdateIsRefusedWithoutRebind|TestStrictOffDoesNotCallFailingCompare|TestLaterStrictCompareErrorSkipsOnlyThatPR|TestNamedDryRunBindsTheSameMovedHeadAsRealRun|TestStrictFreshnessIsRecheckedBeforeEveryLanding|TestStrictOffBehindGreenKeepsCurrentBehavior|TestStrictBehindConflictDryRunRefuses|TestStrictBehindMovedHeadDryRunRefuses|TestStrictUpToDateDoesNotRebase|TestProtectionParsesStrictPolicy)$'
+exit: 1
+--- FAIL: TestTheHistoryListIsReadWholeOrItsErrorIsReturned
+--- PASS: TestABinaryFileWithNoIndexLineIsRefusedBeforeTheUpdate
+--- PASS: TestACompareAtTheFileLimitIsRefusedBeforeTheDiffIsRead
+--- PASS: TestADiffThatLacksAFileOfTheCompareIsRefusedBeforeTheUpdate
+--- PASS: TestADiffWhoseLineCountsAreNotTheComparesIsRefusedBeforeTheUpdate
+--- PASS: TestASavedCompareCutInsideItsLastLineIsRefused
+--- PASS: TestAnOlderGHThatDoesNotKnowTheFlagIsReadOnceMoreWithoutIt
+--- PASS: TestBehindPRThatChangesALastLineWithNoNewlineIsUpdatedAndMerged
+--- PASS: TestBehindPRWhoseCompareGivesAFileNoPatchIsUpdatedAndMerged
+--- PASS: TestBehindPRWhoseDiffEndsInABlankContextLineIsUpdatedAndMerged
+--- PASS: TestBehindPRWithABinaryFileIsUpdatedAndMerged
+--- PASS: TestBehindPRWithAnEmptyFileAndAnUnchangedRenameIsUpdatedAndMerged
+--- PASS: TestBehindPRWithEscapeBytesInItsDiffIsRebasedAndMerged
+--- PASS: TestChangedPatchAfterUpdateIsRefusedWithoutRebind
+--- PASS: TestCompareDiffMismatchWords
+--- PASS: TestDriftClearsAStoreAlertOnlyForAPathThisRunRead
+--- PASS: TestDriftSkipsALegacyGateRecordWithOneLine
+--- PASS: TestDriftStillNamesAMalformedGateRecord
+--- PASS: TestFakeGHRefusesADiffWithEscapeBytesUnlessAllowed
+--- PASS: TestHTTP422CompareRefusesWithoutRebind
+--- PASS: TestIncompleteCompareRefusesWithoutRebind
+--- PASS: TestLaterStrictCompareErrorSkipsOnlyThatPR
+--- PASS: TestLeadRebindOverAFileWithNoPatchIsProvedAndBound
+--- PASS: TestMaxFileCompareRefusesWithoutRebind
+--- PASS: TestNamedDryRunBindsTheSameMovedHeadAsRealRun
+--- PASS: TestOnlyAnUnknownFlagIsAnsweredByASecondDiffRead
+--- PASS: TestProtectionParsesStrictPolicy
+--- PASS: TestStrictBehindConflictDryRunRefuses
+--- PASS: TestStrictBehindMovedHeadDryRunRefuses
+--- PASS: TestStrictBehindUsesPinnedCompareAndRebases
+--- PASS: TestStrictFreshnessIsRecheckedBeforeEveryLanding
+--- PASS: TestStrictOffBehindGreenKeepsCurrentBehavior
+--- PASS: TestStrictOffDoesNotCallFailingCompare
+--- PASS: TestStrictUpToDateDoesNotRebase
+--- PASS: TestTheCorpusOfRealSectionsGivesItsVerdicts
+--- PASS: TestThePatchIDOfASavedCompareIsTheOneGitGaveBeforeTheCheck
+--- PASS: TestTrainNotesASkippedLegacyGateRecord
+--- PASS: TestTrainRecordsAStoreAlertsClearingInItsOwnWords
+--- PASS: TestUnrecordedUpdateOverAFileWithNoPatchIsRecoveredAndMerged
+pass 38 fail 1 skip 0
+panic: no
+failed subtests:
+messages (the first 12 lines, each cut at 240 characters; 40-digit commit ids printed as <sha>, 12-digit ones as <id>; white space at a line's end removed; a panic's stack left out; the texts are your tests'):
+    compare_history_test.go:133: over-long list did not return its error after one pair
+restore: gh.go cmp exit 0
+restore: compare_history_test.go cmp exit 0
 keep directory removed: yes
 ```
 
@@ -1899,56 +2264,60 @@ Exit 0. No output.
 Exit 0.
 
 ```text
-ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	128.672s
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	128.036s
 ```
 
-### `TRAINFIX_HISTORY_LIST=$PWD/../../../../amq-squad-lead/T/trainfix/inputs-r3/history/commits.txt go test ./internal/mergetrain/ -count=1 -timeout 300s -v -run '^TestTheCheckOverTheHistoryRefusesNoWholeDiff$/^plain$'`
+### `TRAINFIX_HISTORY_LIST=$PWD/../../../../amq-squad-lead/T/trainfix/inputs-fu/history/commits.txt go test ./internal/mergetrain/ -count=1 -timeout 300s -v -run '^TestTheCheckOverTheHistoryRefusesNoWholeDiff$/^plain$'`
 
 Exit 0.
 
 ```text
 === RUN   TestTheCheckOverTheHistoryRefusesNoWholeDiff
 === RUN   TestTheCheckOverTheHistoryRefusesNoWholeDiff/plain
-    compare_history_test.go:88: git diff -M: commits 1930, refused 0
---- PASS: TestTheCheckOverTheHistoryRefusesNoWholeDiff (22.27s)
-    --- PASS: TestTheCheckOverTheHistoryRefusesNoWholeDiff/plain (22.27s)
+    compare_history_test.go:102: git diff -M: commits 1930, refused 0
+--- PASS: TestTheCheckOverTheHistoryRefusesNoWholeDiff (22.34s)
+    --- PASS: TestTheCheckOverTheHistoryRefusesNoWholeDiff/plain (22.34s)
 PASS
-ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	22.538s
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	22.775s
 ```
 
-### `TRAINFIX_HISTORY_LIST=$PWD/../../../../amq-squad-lead/T/trainfix/inputs-r3/history/commits.txt go test ./internal/mergetrain/ -count=1 -timeout 300s -v -run '^TestTheCheckOverTheHistoryRefusesNoWholeDiff$/^binary$'`
+### `TRAINFIX_HISTORY_LIST=$PWD/../../../../amq-squad-lead/T/trainfix/inputs-fu/history/commits.txt go test ./internal/mergetrain/ -count=1 -timeout 300s -v -run '^TestTheCheckOverTheHistoryRefusesNoWholeDiff$/^binary$'`
 
 Exit 0.
 
 ```text
 === RUN   TestTheCheckOverTheHistoryRefusesNoWholeDiff
 === RUN   TestTheCheckOverTheHistoryRefusesNoWholeDiff/binary
-    compare_history_test.go:88: git diff -M --binary: commits 1930, refused 0
---- PASS: TestTheCheckOverTheHistoryRefusesNoWholeDiff (22.31s)
-    --- PASS: TestTheCheckOverTheHistoryRefusesNoWholeDiff/binary (22.31s)
+    compare_history_test.go:102: git diff -M --binary: commits 1930, refused 0
+--- PASS: TestTheCheckOverTheHistoryRefusesNoWholeDiff (22.30s)
+    --- PASS: TestTheCheckOverTheHistoryRefusesNoWholeDiff/binary (22.30s)
 PASS
-ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	22.571s
+ok  	github.com/omriariav/amq-squad/v3/internal/mergetrain	22.693s
 ```
 
-### `bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh a`
+### `bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh a`
 
 Exit 0. Its complete R0 through R4 output is in Rows.
 
-### `bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh b`
+### `bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh b`
 
 Exit 0. Its complete R5 through R9 output is in Rows.
 
-### `bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh c`
+### `bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh c`
 
 Exit 0. Its complete R10 through R14 output is in Rows.
 
-### `bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh d`
+### `bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh d`
 
 Exit 0. Its complete R15 through R19 output is in Rows.
 
-### `bash ../../../../amq-squad-lead/T/trainfix/inputs-r3/rows-trainfix.sh e`
+### `bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh e`
 
 Exit 0. Its complete R20 through R24 output is in Rows.
+
+### `bash ../../../../amq-squad-lead/T/trainfix/inputs-fu/rows-trainfix.sh f`
+
+Exit 0. Its complete R25 through R28 output is in Rows.
 
 ### `go run ./scripts/redact-evidence -check docs/v3-spike/330-train-compare-proof/`
 
@@ -1958,24 +2327,12 @@ Exit 0. No output.
 
 Exit 0. No output.
 
-### `git diff --no-index --check /dev/null docs/v3-spike/330-train-compare-proof/README.md`
-
-Exit 1. No output.
-
-### `git diff --no-index --check /dev/null internal/mergetrain/compare_proof_test.go`
-
-Exit 1. No output.
-
-### `git hash-object internal/mergetrain/escape_legacy_320_test.go internal/mergetrain/fakegh_test.go internal/mergetrain/testdata/compare-b46cb806-18dd4997.json internal/mergetrain/testdata/compare-corpus.json internal/mergetrain/compare_history_test.go`
+### `git hash-object internal/mergetrain/testdata/compare-corpus.json`
 
 Exit 0.
 
 ```text
-af604e36ad83e06287eba4113a5c5edf617443e0
-2507c12fcf62c62f6aa3382eb0623457835071c6
-fe0ff3c4d3fb09d2554a353e2976d42c5bd4caf3
-8ea830d158aa93df2ddef33c9adabc87da18b476
-1c40a9b29fb378b0d78901c298f9328ff3d5a182
+854dda1b458eafea18eabab6ddc01f931180f821
 ```
 
 ### `git diff --numstat -- docs/v3-followups.md`
@@ -1983,7 +2340,7 @@ fe0ff3c4d3fb09d2554a353e2976d42c5bd4caf3
 Exit 0.
 
 ```text
-18	11	docs/v3-followups.md
+10	17	docs/v3-followups.md
 ```
 
 ### `grep -cE '/Us''ers/|/private/t''mp|rows-trainfix-ke''ep|/var/fold''ers' docs/v3-spike/330-train-compare-proof/README.md`
@@ -1994,19 +2351,19 @@ Exit 1.
 0
 ```
 
-### `python3 ../../../../amq-squad-lead/T/trainfix/inputs-r3/cites.py docs/v3-spike/330-train-compare-proof/README.md`
+### `python3 ../../../../amq-squad-lead/T/trainfix/inputs-fu/cites.py docs/v3-spike/330-train-compare-proof/README.md`
 
 Exit 0.
 
 ```text
 note:3 internal/mergetrain/gh.go:200-201 | first: // compareProofFilesJQ is unique to the proof so its call is | last: const compareProofFilesJQ = `.files[]? | {path: .filename, p | next:  | closes inside
-note:3 internal/mergetrain/gh.go:279-468 | first: func compareDiffMismatch(files []FileChange, diff []byte) st | last: } | next:  | closes inside
+note:3 internal/mergetrain/gh.go:279-471 | first: func compareDiffMismatch(files []FileChange, diff []byte) st | last: } | next:  | closes inside
 note:87 internal/mergetrain/gh.go:240-242 | first: if len(files) >= MaxCompareFiles { | last: } | next: // gh refuses to print a response holdin | closes inside
 note:89 internal/mergetrain/fakegh_test.go:502-530 | first: if slices.Contains(args, "Accept: application/vnd.github.dif | last: } | next: if slices.Contains(args, ".behind_by") { | closes inside
-note:109 internal/mergetrain/gh.go:227-275 | first: func (g *GH) PatchID(ctx context.Context, repository, base,  | last: } | next:  | closes inside
-note:125 internal/mergetrain/gh.go:495-526 | first: func compareBinaryPatchLine(line string) bool { | last: } | next:  | closes inside
-note:129 internal/mergetrain/gh.go:261-263 | first: if mismatch := compareDiffMismatch(files, diff); mismatch != | last: } | next: cmd := exec.CommandContext(ctx, "git", " | closes inside
-note:203 internal/mergetrain/gh.go:201-201 | first: const compareProofFilesJQ = `.files[]? | {path: .filename, p | last: const compareProofFilesJQ = `.files[]? | {path: .filename, p | next:  | -
+note:138 internal/mergetrain/gh.go:227-275 | first: func (g *GH) PatchID(ctx context.Context, repository, base,  | last: } | next:  | closes inside
+note:154 internal/mergetrain/gh.go:498-529 | first: func compareBinaryPatchLine(line string) bool { | last: } | next:  | closes inside
+note:158 internal/mergetrain/gh.go:261-263 | first: if mismatch := compareDiffMismatch(files, diff); mismatch != | last: } | next: cmd := exec.CommandContext(ctx, "git", " | closes inside
+note:242 internal/mergetrain/gh.go:201-201 | first: const compareProofFilesJQ = `.files[]? | {path: .filename, p | last: const compareProofFilesJQ = `.files[]? | {path: .filename, p | next:  | -
 cites 8, short 0
 ```
 
@@ -2024,24 +2381,23 @@ Exit 0.
 
 ```text
  M docs/v3-followups.md
- M internal/mergetrain/escape_legacy_320_test.go
- M internal/mergetrain/fakegh_test.go
+ M docs/v3-spike/330-train-compare-proof/README.md
+ M internal/mergetrain/compare_history_test.go
+ M internal/mergetrain/compare_proof_test.go
  M internal/mergetrain/gh.go
-?? docs/v3-spike/330-train-compare-proof/README.md
-?? internal/mergetrain/compare_history_test.go
-?? internal/mergetrain/compare_proof_test.go
-?? internal/mergetrain/testdata/compare-b46cb806-18dd4997.json
-?? internal/mergetrain/testdata/compare-corpus.json
+ M internal/mergetrain/testdata/compare-corpus.json
 ```
 
-### `git diff --stat -- docs/v3-followups.md internal/mergetrain`
+### `git diff --stat -- docs/v3-followups.md docs/v3-spike/330-train-compare-proof/README.md internal/mergetrain/compare_history_test.go internal/mergetrain/compare_proof_test.go internal/mergetrain/gh.go internal/mergetrain/testdata/compare-corpus.json`
 
 Exit 0.
 
 ```text
- docs/v3-followups.md                          |  29 ++-
- internal/mergetrain/escape_legacy_320_test.go |   4 +-
- internal/mergetrain/fakegh_test.go            | 119 +++++++++-
- internal/mergetrain/gh.go                     | 311 +++++++++++++++++++++++++-
- 4 files changed, 430 insertions(+), 33 deletions(-)
+ docs/v3-followups.md                             |  27 +-
+ docs/v3-spike/330-train-compare-proof/README.md  | 864 ++++++++++++++++-------
+ internal/mergetrain/compare_history_test.go      |  92 ++-
+ internal/mergetrain/compare_proof_test.go        |  15 +-
+ internal/mergetrain/gh.go                        |   3 +
+ internal/mergetrain/testdata/compare-corpus.json |  30 +
+ 6 files changed, 742 insertions(+), 289 deletions(-)
 ```
