@@ -179,7 +179,7 @@ A type change, a regular file that becomes a symlink, is refused with the first 
 
 In the section of a file with no changed line that holds two `index` lines, the later one decides.
 
-A `Binary files … differ` line is taken wherever it stands in its section, before the index line too, and the bare line `Binary files differ` is taken for one.
+Outside a hunk and outside a `GIT binary patch` part, a `Binary files … differ` line is taken wherever it stands in its section, before the index line too, and the bare line `Binary files differ` is taken for one; inside a `GIT binary patch` part that line is the sixth text. (Corrected by the lead on 2026-11-13: the sentence had said "wherever it stands in its section".)
 
 A hunk header's fields may be parted by two spaces or by a tab.
 
@@ -306,7 +306,7 @@ Item 4 names the worktree's HEAD at the precheck in the note's opening and in th
 
 Item 5 records the type-change limit, the three laxities, and all 24 local-git forms measured at the gate.
 
-Item 7 restores “both the diff and the list” in the JSON-patch known limit.
+Item 7 restores "both the diff and the list" in the JSON-patch known limit.
 
 Item 8 splits the allowed marker-after-context and marker-after-added-line ground into two table cases.
 
