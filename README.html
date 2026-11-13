@@ -899,15 +899,18 @@ once. A reply over one DM is split into at most three parts
 <li><p><strong>What the relay never carries.</strong> Only the lead's
 own text reaches your DM, after <code>redact.Block</code>; the
 attachment never writes a line of its own from status. It refuses a
-reply with a line that is, as a whole, a gate answer (<code>yes</code>,
-<code>no</code>, <code>approve</code>, <code>deny</code>, alone or with
-a gate id or the typed tuple), a line naming an open gate's id, or a
-line of an open gate's question. It never posts into a gate question's
-thread. A sentence like "No, the build is green" posts. A refusal is
-recorded by name (<code>relay_refused_gate_shape</code>) and a sha256 of
-the line, and shows in the lead's team screen and in <code>status</code>
-under <code>requests</code>. The lead never holds a key: the body key
-stays in the attachment.</p></li>
+reply with a line that is, as a whole, a gate answer (one of the eleven
+words a bare answer can be: <code>yes</code>, <code>approve</code>,
+<code>y</code>, <code>ok</code>, <code>go ahead</code>, <code>כן</code>,
+<code>no</code>, <code>deny</code>, <code>n</code>, <code>stop</code>,
+<code>לא</code>; alone or with a gate id or the typed tuple), a line
+naming an open gate's id, or a line of an open gate's question. It never
+posts into a gate question's thread. A sentence like "No, the build is
+green" posts. A refusal is recorded by name
+(<code>relay_refused_gate_shape</code>) and a sha256 of the line, and
+shows in the lead's team screen and in <code>status</code> under
+<code>requests</code>. The lead never holds a key: the body key stays in
+the attachment.</p></li>
 <li><p><strong>The gates.</strong> A typed gate's question goes to the
 owner's DM in plain words: what is asked, why now, and what yes and no
 do, then a rule and the identifiers for the record (the gate id, the
@@ -918,14 +921,17 @@ Yes creates the release. No does nothing.
 
 ----------
 amq-squad gate rel-gh-...</code></pre>
-<p>Answer with a bare <code>yes</code> or <code>no</code> replied in the
-question's thread (case and a trailing <code>.</code> or <code>!</code>
-do not matter). The thread and your signature bind the answer to its
-gate; there is nothing else to type. The core of the squad that raised
-it fetches and verifies the signed event itself. A <code>yes</code> or
-<code>no</code> outside the thread gets one re-ask in the thread, "Reply
-yes or no to this message."; a <code>yes</code> in another gate's thread
-answers that gate only. The 3.0 typed line
+<p>Answer with one of the words <code>yes</code>, <code>approve</code>,
+<code>y</code>, <code>ok</code>, <code>go ahead</code>, <code>כן</code>
+(yes) or <code>no</code>, <code>deny</code>, <code>n</code>,
+<code>stop</code>, <code>לא</code> (no), alone, replied in the
+question's thread; case and one trailing punctuation mark do not matter.
+The thread and your signature bind the answer to its gate; there is
+nothing else to type. The core of the squad that raised it fetches and
+verifies the signed event itself. A <code>yes</code> or <code>no</code>
+outside the thread gets one re-ask in the thread, "Reply yes or no to
+this message."; a <code>yes</code> in another gate's thread answers that
+gate only. The 3.0 typed line
 (<code>approve &lt;gate&gt; &lt;class&gt; &lt;prefix&gt;</code>) still
 verifies, but no question asks for it.</p></li>
 </ul>

@@ -578,10 +578,11 @@ session's mailbox (or with `--lead` to one squad lead). The owner's guide is
 - **What the relay never carries.** Only the lead's own text reaches your DM,
   after `redact.Block`; the attachment never writes a line of its own from
   status. It refuses a reply with a line that is, as a whole, a gate answer
-  (`yes`, `no`, `approve`, `deny`, alone or with a gate id or the typed
-  tuple), a line naming an open gate's id, or a line of an open gate's
-  question. It never posts into a gate question's thread. A sentence like
-  "No, the build is green" posts. A refusal is recorded by name
+  (one of the eleven words a bare answer can be: `yes`, `approve`, `y`,
+  `ok`, `go ahead`, `כן`, `no`, `deny`, `n`, `stop`, `לא`; alone or with a
+  gate id or the typed tuple), a line naming an open gate's id, or a line of
+  an open gate's question. It never posts into a gate question's thread. A
+  sentence like "No, the build is green" posts. A refusal is recorded by name
   (`relay_refused_gate_shape`) and a sha256 of the line, and shows in the
   lead's team screen and in `status` under `requests`. The lead never
   holds a key: the body key stays in the attachment.
@@ -599,10 +600,12 @@ session's mailbox (or with `--lead` to one squad lead). The owner's guide is
   amq-squad gate rel-gh-...
   ```
 
-  Answer with a bare `yes` or `no` replied in the question's thread (case
-  and a trailing `.` or `!` do not matter). The thread and your signature
-  bind the answer to its gate; there is nothing else to type. The core of
-  the squad that raised it fetches and verifies the signed event itself. A
+  Answer with one of the words `yes`, `approve`, `y`, `ok`, `go ahead`, `כן`
+  (yes) or `no`, `deny`, `n`, `stop`, `לא` (no), alone, replied in the
+  question's thread; case and one trailing punctuation mark do not matter.
+  The thread and your signature bind the answer to its gate; there is
+  nothing else to type. The core of the squad that raised it fetches and
+  verifies the signed event itself. A
   `yes` or `no` outside the thread gets one re-ask in the thread, "Reply yes
   or no to this message."; a `yes` in another gate's thread answers that
   gate only. The 3.0 typed line (`approve <gate> <class> <prefix>`) still

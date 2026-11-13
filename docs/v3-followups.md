@@ -129,6 +129,11 @@ its PR. Nothing here is promised by date.
   puts it back after its push. The version as the cause is not established.
   The rule for a test: its ground is asserted, never assumed from a command's
   side effect.
+- Dated 2026-11-12: a fixture test of `internal/mergetrain` failed once in
+  25 driver rows with no assertion of its own, on "TempDir RemoveAll
+  cleanup: unlinkat <tmp>/…/bare.git/info: directory not empty". 40 runs of
+  that test alone and 45 of three sibling tests passed. Cause not
+  established.
 
 ### Ledgers, seals and recovery
 
@@ -214,6 +219,13 @@ its PR. Nothing here is promised by date.
   #962: no guard checks what a listed row function asserts.)
 - **Guard round 4 (test tooling), moved from rc.2, 2026-11-10.** Brief:
   brief-320-guard-round4.md.
+- **Two small things in the A1-1 tests** (2026-11-12, the #997 gate), for
+  whoever next edits those files: two helper types carry no comment
+  (`decidedWordCase`, `internal/gatestore/words_test.go:149`;
+  `bareWordCase330`, `internal/buzz/words330_test.go:130`); and the guard
+  `TestNoOtherFileSpellsAYesNoList` keeps its one allowed place as a map
+  entry with its reason in the test's comment, not in the list
+  (`internal/gatestore/words_test.go:143`).
 
 ### Rollback and `up`
 
@@ -483,6 +495,35 @@ as #962 corrected it.
   produces such a diff. The next sentence to measure for the rule: "a
   section with a hunk holds its `---` and `+++` lines". Source: the note
   docs/v3-spike/330-train-compare-proof/README.md.
+- **GitHub served a rename as a deletion and an addition** in a 2,903-file,
+  54,652,486-byte compare (seen once, 2026-11-12, not explored). The two
+  small renames measured (9 and 12 files) were served as renames. If GitHub
+  did so for a compare under 300 files whose JSON says `renamed`, the
+  file-set check would refuse it. Source: the note
+  docs/v3-spike/330-train-compare-proof/README.md.
+- **The train fix's one follow-up task** (2026-11-13; #1000), eight items:
+  (1) a `\ No newline at end of file` line as the diff's first line, before
+  any section, panics in `compareDiffMismatch` (a nil pointer dereference;
+  found by a read-only Codex pass on #1000 and confirmed by the lead's run):
+  the nil guard before the marker branch with its table case (the first
+  text); (2) the table case "three markers inside" does not reach its second
+  marker; (3) the history test does not check its scanner's error; (4) the
+  note's sentence naming HEAD; (5) Known limits to gain: a type change (a
+  regular file that becomes a symlink: two sections with one header line for
+  one list entry, refused with the first text; GitHub's form not measured)
+  and three laxities (two `index` lines in one section with no changed line,
+  the later deciding; a `Binary files … differ` line before the index line;
+  two spaces or a tab between a hunk header's fields); and the 48 diffs of
+  24 real forms measured at the gate into the note; (6) a table case with
+  two hunks holding markers in one section; (7), (8) two wording items
+  of the note and the tests. Its gate: the corpus test, the two
+  history runs, the affected rows, the whole package once, CI green.
+- **The train's fix is on v3 and not on the squad until a 3.3.0 build is
+  installed** (2026-11-13): the running squad's binary is 3.2.0, whose train
+  still refuses a behind PR when the compare gives a file no patch, and
+  whose seat clean still has limit 35. Until a build with both is installed
+  the lead merges nothing into the base under an open seat PR unless that
+  compare shows a patch for every file.
 
 ### Control bytes and status text
 
@@ -605,6 +646,13 @@ as #960 corrected it.
   soak's record has the run). They were removed on v3 by #969; the 3.2 line
   keeps them, and at its pin v0.116.2 they build. The corrected sentence
   goes into the 3.2.0 notes with the release PR.
+- **The relay's refusal for the seven words D3 added was ruled on its
+  shape** (2026-11-12; the note docs/v3-spike/330-a1-1-words/README.md,
+  Known differences): no relay record existed to count from. Count the
+  `relay_refused_gate_shape` refusals by word from the first real traffic (a
+  relay record under a root that has had a phone request relayed), and
+  narrow the seven added words to the parser's form if decorated lines
+  dominate.
 
 ### Evidence tooling
 
@@ -650,6 +698,13 @@ as #960 corrected it.
 - Whole-module tests, `make ci` and `npm test` from different seats compete
   for one host and create load-sensitive failures. Have the harness serialise
   these seat gates, as the lead's agents already do with a host gate lock.
+- **A check over an external format is proved on the format's real
+  instances** (2026-11-12): a corpus of saved real sections as testdata and
+  a run over the repository's history, both handed to the seat (the train's
+  compare proof took three rounds, two of them on forms no table held).
+- **A seat's brief names the one folder the seat may read on the lead's
+  host**; the lead's reference implementation lives outside it (2026-11-12:
+  a seat committed the lead's prototype found beside its inputs).
 
 ### The 3.1.2 plan's eight items, audited against origin/v3 (2026-11-07, at a4dff16c)
 

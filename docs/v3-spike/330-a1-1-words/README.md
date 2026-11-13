@@ -1,6 +1,6 @@
 # A1-1: the words
 
-A1-1 puts the decided bare-answer list in `internal/gatestore/words.go:3-20` behind `BareVerb`; `ParseBare` in `internal/gatestore/plain.go:555-568` and the relay's `answerForm` in `internal/buzz/relay.go:766-800` ask that shared reader, and the parser removes at most one trailing punctuation mark. The original cut's statements that "the list is the only parser" and "No channel change" were corrected after measurement. The dispatch TIP and this tree's HEAD are both `2d52b79dc133d070e5e45c91eff7371f999055bc`. The seven Go files were written by the seat of task t186 from the brief whose sha256 is 9da9fdd704c67628bd71903cfe69904915d8413edaf5b0979c9207ab3aa7ede3; that task blocked on a whole run of `internal/cli`, which cannot pass in a seat, and the files are carried here unchanged, by blob hash.
+A1-1 puts the decided bare-answer list in `internal/gatestore/words.go:3-21` behind `BareVerb`; `ParseBare` in `internal/gatestore/plain.go:555-568` and the relay's `answerForm` in `internal/buzz/relay.go:766-809` ask that shared reader, and the parser removes at most one trailing punctuation mark. The original cut's statements that "the list is the only parser" and "No channel change" were corrected after measurement. The dispatch TIP was `2d52b79dc133d070e5e45c91eff7371f999055bc`, which was also the worktree's HEAD at the precheck; the commit that holds this note is 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf, merged into v3 as 8c915ba47b7d90a2de38af0bd0a53436c43e22bc. The seven Go files were written by the seat of task t186 from the brief whose sha256 is 9da9fdd704c67628bd71903cfe69904915d8413edaf5b0979c9207ab3aa7ede3; that task blocked on a whole run of `internal/cli`, which cannot pass in a seat, and the files are carried here unchanged, by blob hash.
 
 ```text
 8087b52e39817bd3a735bf24b65148d6245b4b08  internal/buzz/relay.go
@@ -19,7 +19,7 @@ var yesWords = []string{"yes", "approve", "y", "ok", "go ahead", "כן"}
 var noWords = []string{"no", "deny", "n", "stop", "לא"}
 ```
 
-`כן` is U+05DB U+05DF and `לא` is U+05DC U+05D0. The shared reader's signature is `func BareVerb(word string) (verb string, ok bool)` (`internal/gatestore/words.go:8-20`).
+`כן` is U+05DB U+05DF and `לא` is U+05DC U+05D0. The shared reader's signature is `func BareVerb(word string) (verb string, ok bool)` (`internal/gatestore/words.go:8-21`).
 
 ## The rule as built
 
@@ -41,7 +41,7 @@ The plan's ruling 4 lists `"ok?"` among the lines that bind nothing, while the A
 
 ## The relay
 
-`answerVerbs` is gone, and `answerForm` asks `BareVerb` for the whole normalized line, its first field, and its first two fields (`internal/buzz/relay.go:783-792`):
+`answerVerbs` is gone, and `answerForm` asks `BareVerb` for the whole normalized line, its first field, and its first two fields (`internal/buzz/relay.go:783-793`):
 
 ```go
 if _, ok := gatestore.BareVerb(strings.Join(w, " ")); ok {
@@ -61,13 +61,15 @@ The relay's refusal is wider than the parser because it removes every punctuatio
 
 ## The handler and the team door
 
-a bare `stop` or `ok` sent to the squad outside a request's thread is a gate answer from A1-1 on; with no gate open it is refused and reaches no lead. In a gate's thread, every word in the list is that gate's answer through `internal/buzz/inbound.go:557-558`, `internal/buzz/inbound.go:642-649`, `internal/gateverify/core.go:172-179`, and `internal/gateverify/verify.go:149-157`; `TestABareWordOfTheListInAGatesThreadIsThatGatesAnswer` asserts this. `ok`, `y`, `go ahead`, or `כן` replied to the lead's plan post confirms the team as `yes` does, while a no word confirms nothing through `internal/buzz/inbound.go:249-258` and `internal/cli/lead_start.go:491-498`; `TestTheTeamDoorTakesAYesWordOfTheListAndNoNoWord` and `TestTheLeadWitnessesAYesWordOfTheListRepliedToThePlanPost` assert it. The witness test runs `witnessBuzz` but does not run the attachment that hands the bytes to the lead over its socket with a real pi as the peer (`internal/cli/words330_test.go:34-61`).
+a bare `stop` or `ok` sent to the squad outside a request's thread is a gate answer from A1-1 on; with no gate open it is refused and reaches no lead. In a gate's thread, every word in the list is that gate's answer through `internal/buzz/inbound.go:557-559`, `internal/buzz/inbound.go:642-653`, `internal/gateverify/core.go:172-183`, and `internal/gateverify/verify.go:149-158`; `TestABareWordOfTheListInAGatesThreadIsThatGatesAnswer` asserts this. `ok`, `y`, `go ahead`, or `כן` replied to the lead's plan post confirms the team as `yes` does, while a no word confirms nothing through `internal/buzz/inbound.go:249-259` and the bare-yes case of the witness's switch, `internal/cli/lead_start.go:493-519`; `TestTheTeamDoorTakesAYesWordOfTheListAndNoNoWord` and `TestTheLeadWitnessesAYesWordOfTheListRepliedToThePlanPost` assert it. The witness test runs `witnessBuzz` but does not run the attachment that hands the bytes to the lead over its socket with a real pi as the peer (`internal/cli/words330_test.go:34-62`).
 
 ## Known differences
 
-One of the four earlier words with two or more trailing marks, `yes!!`, gave its verb before this change and binds nothing now; the one-mark rule and `TestParseBare` assert it.
+One of the four earlier words with two or more trailing marks, `yes!!`, gave its verb before this change and binds nothing now (the one-mark rule; `TestParseBare` asserts it).
 
 the relay's refusal of a decorated line of a word D3 adds was ruled on its shape; no relay record existed on the lead's host to count from.
+
+Added by the lead: run by the lead on 2026-11-12, on its own host: a search of the home directory for any directory named `extensions/amq-squad/relay` (`find <home> -type d -path '*extensions/amq-squad/relay' -not -path '*/Library/*' -not -path '*/node_modules/*'`) printed nothing; the same search under the squad's state folders to depth 8 printed nothing; in the project's twelve session folders no `relay` directory exists and no message file names a `cockpit/q-` thread. So no lead had had a phone request relayed from a root on that host, or none was kept.
 
 A format character (Cf) beside a word binds nothing, until a measurement of the owner's client says one is sent.
 
@@ -158,6 +160,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R1
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -217,6 +220,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R2
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -272,6 +276,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R3
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -334,6 +339,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R4
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -394,6 +400,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R5
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -446,6 +453,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R6
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -509,6 +517,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R7
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -575,6 +584,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R8
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -640,6 +650,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R9
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -705,6 +716,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R10
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -774,6 +786,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R11
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -830,6 +843,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R12
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -895,6 +909,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R13
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -957,6 +972,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R14
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -1008,6 +1024,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R15
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -1061,6 +1078,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R16
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -1114,6 +1132,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### R17
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -1166,6 +1185,7 @@ restore: internal/cli/lead_start.go cmp exit 0
 restore: added files left: 0
 restore: git status as before the row: cmp exit 0
 ```
+
 ### C1b
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -1178,6 +1198,7 @@ exit: 0
 --- PASS: TestABareYesOrNoInTheThreadIsTheAnswer
 pass 1 fail 0 skip 0
 ```
+
 ### C12
 
 `bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all`
@@ -1219,9 +1240,9 @@ c19e3d1bbb16e67f0be7bb60aeb68dff1c4e1cca
 8eaf661b6d8208ef58b7474cf66cea4b3eff19d6
 ```
 
-`go build ./...` first exited 1 because the sandbox refused the host Go build cache, then the identical command exited 0 and printed nothing when granted cache access.
+`go build ./...` was run twice: the first run exited 1 (the sandbox refused the host Go build cache); the second exited 0 and printed nothing.
 
-`go vet ./internal/gatestore/ ./internal/buzz/ ./internal/cli/` first exited 1 because the sandbox refused the host Go build cache, then the identical command exited 0 and printed nothing when granted cache access.
+`go vet ./internal/gatestore/ ./internal/buzz/ ./internal/cli/` was run twice: the first run exited 1 (the sandbox refused the host Go build cache); the second exited 0 and printed nothing.
 
 `gofmt -l internal/gatestore internal/buzz internal/cli` exited 0 and printed nothing.
 
@@ -1243,7 +1264,7 @@ c19e3d1bbb16e67f0be7bb60aeb68dff1c4e1cca
 
 `ls docs | grep -i -E '3\.3|330'` exited 1 and printed nothing.
 
-`bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all` exited 0 with the 20 row blocks above and `keep directory removed: yes`. The same inner command was run a second time by `bash -c 'bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all' > /private/tmp/t188-rows-all.log`; that capture exited 0, and its whole output is the row evidence above.
+`bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all` was run twice and exited 0 both times, with the 20 rows and `keep directory removed: yes`. The rows of this note are the whole output of the second run, `bash -c 'bash ../../../../amq-squad-lead/T/a11/inputs-carry/rows-a11.sh all' > <tmp>/t188-rows-all.log`. The path of that file was replaced by `<tmp>` by the lead on 2026-11-13.
 
 `go run ./scripts/redact-evidence -check docs/v3-spike/330-a1-1-words/` exited 0 and printed nothing.
 
@@ -1274,3 +1295,65 @@ c19e3d1bbb16e67f0be7bb60aeb68dff1c4e1cca
 `git diff --stat -- internal/gatestore/plain.go internal/gatestore/plain311_test.go internal/buzz/relay.go docs/v3-spike/330-a0-sender-auth/README.md` printed only those four paths and exited 0.
 
 No package was run whole by the seat: the whole runs are the lead's, on the PR head. The final command was the seven-file `git hash-object` command above, and it printed the same seven hashes again.
+
+### Added by the lead on 2026-11-13 (runs on the merged commits)
+
+Every line of this sub-section is the lead's, run in a worktree of v3 at `f9251f8cead3c42315203892e8f93990badc2e24`. `2d52b79dc133d070e5e45c91eff7371f999055bc` is the dispatch TIP and `188e04f7ffb6c23f1100410f3ce76cf7e9137bbf` the commit that holds this note.
+
+The entry above for `git diff --numstat` gives no exit code. On the two commits:
+
+`git diff --numstat 2d52b79dc133d070e5e45c91eff7371f999055bc 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf -- docs/v3-spike/330-a0-sender-auth/README.md`
+
+```text
+13	0	docs/v3-spike/330-a0-sender-auth/README.md
+```
+
+It exited 0.
+
+The last command of the list, the seven-file `git hash-object`, is not printed a second time above. The seven blobs of the commit that holds this note, in the order of `blobs-after.txt`:
+
+`git rev-parse 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf:internal/buzz/relay.go 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf:internal/buzz/words330_test.go 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf:internal/cli/words330_test.go 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf:internal/gatestore/plain.go 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf:internal/gatestore/plain311_test.go 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf:internal/gatestore/words.go 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf:internal/gatestore/words_test.go`
+
+```text
+8087b52e39817bd3a735bf24b65148d6245b4b08
+ef151cf3977ffd695ef87070b656205cc814b641
+1ad7c22579edf12539150b584fcca9b8ad6c80df
+872e77d4765fa9236bcae4cc2820cc8acbd0d22d
+c19e3d1bbb16e67f0be7bb60aeb68dff1c4e1cca
+4b93ca88a41d0e32a573dd7165ae84a42b3c08ae
+8eaf661b6d8208ef58b7474cf66cea4b3eff19d6
+```
+
+It exited 0.
+
+The entry above for the last `git status` says "the nine declared paths" without printing them. The nine paths of the commit:
+
+`git diff --name-status 2d52b79dc133d070e5e45c91eff7371f999055bc 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf`
+
+```text
+M	docs/v3-spike/330-a0-sender-auth/README.md
+A	docs/v3-spike/330-a1-1-words/README.md
+M	internal/buzz/relay.go
+A	internal/buzz/words330_test.go
+A	internal/cli/words330_test.go
+M	internal/gatestore/plain.go
+M	internal/gatestore/plain311_test.go
+A	internal/gatestore/words.go
+A	internal/gatestore/words_test.go
+```
+
+It exited 0.
+
+The entry above for the last `git diff --stat` says "only those four paths" without printing them. On the two commits:
+
+`git diff --stat 2d52b79dc133d070e5e45c91eff7371f999055bc 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf -- internal/gatestore/plain.go internal/gatestore/plain311_test.go internal/buzz/relay.go docs/v3-spike/330-a0-sender-auth/README.md`
+
+```text
+ docs/v3-spike/330-a0-sender-auth/README.md | 13 +++++++++++++
+ internal/buzz/relay.go                     | 25 +++++++++++++++++++------
+ internal/gatestore/plain.go                | 19 +++++++------------
+ internal/gatestore/plain311_test.go        |  6 +++---
+ 4 files changed, 42 insertions(+), 21 deletions(-)
+```
+
+It exited 0.
