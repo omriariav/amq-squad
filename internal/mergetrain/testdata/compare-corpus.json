@@ -423,6 +423,36 @@
    ],
    "diff": "diff --git a/z.bin b/z.bin\ndeleted file mode 100644\nindex 47c834836..000000000\n",
    "want": "a file with no changed line holds an index line and neither a binary part nor an empty file's ids"
+  },
+  {
+   "name": "local git: a symlink changed (two markers, mode 120000)",
+   "source": "local git, a temporary repository: `git diff -M --abbrev=9`; the list entry is local git's (numstat 1 and 1); no measured diff holds a symlink, and GitHub's form of one is not measured",
+   "files": [
+    {
+     "filename": "link",
+     "previous_filename": "",
+     "status": "modified",
+     "additions": 1,
+     "deletions": 1
+    }
+   ],
+   "diff": "diff --git a/link b/link\nindex 031720c5f..d6a410762 120000\n--- a/link\n+++ b/link\n@@ -1 +1 @@\n-text.txt\n\\ No newline at end of file\n+big.txt\n\\ No newline at end of file\n",
+   "want": ""
+  },
+  {
+   "name": "local git: a regular file that becomes a symlink (a type change)",
+   "source": "local git, a temporary repository: `git diff -M --abbrev=9`, which prints TWO sections with one `diff --git` line for the one list entry (name-status T, numstat 1 and 1); the list entry is local git's; no measured diff holds a type change, and GitHub's form of one is not measured; a whole diff, refused: the known limit",
+   "files": [
+    {
+     "filename": "tolink.txt",
+     "previous_filename": "",
+     "status": "changed",
+     "additions": 1,
+     "deletions": 1
+    }
+   ],
+   "diff": "diff --git a/tolink.txt b/tolink.txt\ndeleted file mode 100644\nindex 02f6335fc..000000000\n--- a/tolink.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-a file\ndiff --git a/tolink.txt b/tolink.txt\nnew file mode 120000\nindex 000000000..031720c5f\n--- /dev/null\n+++ b/tolink.txt\n@@ -0,0 +1 @@\n+text.txt\n\\ No newline at end of file\n",
+   "want": "the diff's files are not the compare's files"
   }
  ]
 }

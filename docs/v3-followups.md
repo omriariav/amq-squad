@@ -501,23 +501,16 @@ as #962 corrected it.
   did so for a compare under 300 files whose JSON says `renamed`, the
   file-set check would refuse it. Source: the note
   docs/v3-spike/330-train-compare-proof/README.md.
-- **The train fix's one follow-up task** (2026-11-13; #1000), eight items:
-  (1) a `\ No newline at end of file` line as the diff's first line, before
-  any section, panics in `compareDiffMismatch` (a nil pointer dereference;
-  found by a read-only Codex pass on #1000 and confirmed by the lead's run):
-  the nil guard before the marker branch with its table case (the first
-  text); (2) the table case "three markers inside" does not reach its second
-  marker; (3) the history test does not check its scanner's error; (4) the
-  note's sentence naming HEAD; (5) Known limits to gain: a type change (a
-  regular file that becomes a symlink: two sections with one header line for
-  one list entry, refused with the first text; GitHub's form not measured)
-  and three laxities (two `index` lines in one section with no changed line,
-  the later deciding; a `Binary files … differ` line before the index line;
-  two spaces or a tab between a hunk header's fields); and the 48 diffs of
-  24 real forms measured at the gate into the note; (6) a table case with
-  two hunks holding markers in one section; (7), (8) two wording items
-  of the note and the tests. Its gate: the corpus test, the two
-  history runs, the affected rows, the whole package once, CI green.
+- **done (the note docs/v3-spike/330-train-compare-proof/README.md, its
+  "## Follow-up"):** the train fix's one follow-up task (2026-11-13;
+  #1000), eight items. A `\ No newline at end of file` line before any
+  section is the first text and no longer a panic, with three table
+  cases; the table case "three markers inside" reaches its markers; the
+  history test's list reader returns its scanner's error; the note says
+  "the worktree's HEAD at the precheck"; its Known limits gained a type
+  change and three laxities, and its measurements the 24 real forms of
+  the gate; a table case holds two hunks with markers in one section; a
+  kept sentence and two marker cases were put as dictated.
 - **The train's fix is on v3 and not on the squad until a 3.3.0 build is
   installed** (2026-11-13): the running squad's binary is 3.2.0, whose train
   still refuses a behind PR when the compare gives a file no patch, and

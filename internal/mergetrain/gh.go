@@ -340,6 +340,9 @@ func compareDiffMismatch(files []FileChange, diff []byte) string {
 			inHunk = false
 		}
 		if line == `\ No newline at end of file` {
+			if current == nil {
+				return filesMismatch + ": content before the first file section"
+			}
 			if markerAllowed {
 				if markerCount >= 2 {
 					return headerMismatch + ": " + strconv.Quote(current.file.Path)

@@ -274,7 +274,8 @@ func TestCompareDiffMismatchWords(t *testing.T) {
 		{"marker inside after removed line", []FileChange{fc("a.txt", "", 1, 1)}, strings.Replace(changed, "-old\n+new", "-old\n\\ No newline at end of file\n+new", 1), ""},
 		{"marker inside and after hunk", []FileChange{fc("a.txt", "", 1, 1)}, strings.Replace(changed, "-old\n+new", "-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file", 1), ""},
 		// The rule allows these two inside-hunk places; neither was measured.
-		{"markers after context and added lines", []FileChange{fc("a.txt", "", 2, 0)}, "diff --git a/a.txt b/a.txt\nindex 1..2 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1,3 @@\n same\n\\ No newline at end of file\n+one\n\\ No newline at end of file\n+two\n", ""},
+		{"marker after context line", []FileChange{fc("a.txt", "", 1, 0)}, "diff --git a/a.txt b/a.txt\nindex 1..2 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1,2 @@\n same\n\\ No newline at end of file\n+one\n", ""},
+		{"marker after added line", []FileChange{fc("a.txt", "", 2, 0)}, "diff --git a/a.txt b/a.txt\nindex 1..2 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -0,0 +1,2 @@\n+one\n\\ No newline at end of file\n+two\n", ""},
 		{"omitted hunk lengths", []FileChange{fc("a.txt", "", 1, 1)}, changed, ""},
 		{"deleted file", []FileChange{fc("a.txt", "", 0, 1)}, "diff --git a/a.txt b/a.txt\ndeleted file mode 100644\nindex 1..0\n--- a/a.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-old\n", ""},
 		{"renamed with changes", []FileChange{fc("new.txt", "old.txt", 1, 1)}, strings.ReplaceAll(changed, "a.txt", "old.txt")[:0] + "diff --git a/old.txt b/new.txt\nindex 1..2 100644\n--- a/old.txt\n+++ b/new.txt\n@@ -1 +1 @@\n-old\n+new\n", ""},
@@ -307,6 +308,10 @@ func TestCompareDiffMismatchWords(t *testing.T) {
 		{"documented binary delta", []FileChange{fc("a.bin", "", 0, 0)}, strings.Replace(binaryGit, "literal 1", "delta 1", 1), ""},
 		// Known limit: removing a final marker leaves the same counted hunk and patch id.
 		{"final marker omitted", []FileChange{fc("a.txt", "", 1, 1)}, strings.TrimSuffix(marker, "\\ No newline at end of file\n"), ""},
+		// A marker before any section is content before the first file.
+		{"marker before any section", nil, "\\ No newline at end of file\n", first},
+		{"marker before one section", []FileChange{fc("a.txt", "", 1, 1)}, "\\ No newline at end of file\n" + changed, first},
+		{"marker after empty line before one section", []FileChange{fc("a.txt", "", 1, 1)}, "\n\\ No newline at end of file\n" + changed, first},
 		{"file empty diff", []FileChange{fc("a.txt", "", 1, 1)}, "", first},
 		{"text before first file", []FileChange{fc("a.txt", "", 1, 1)}, "not a diff header\n" + changed, first},
 		{"missing listed file", []FileChange{fc("a.txt", "", 1, 1), fc("b.txt", "", 1, 1)}, changed, first},
@@ -353,7 +358,9 @@ func TestCompareDiffMismatchWords(t *testing.T) {
 		// Git emits at most one marker for each side; a third is stray text.
 		{"third marker after two inside", []FileChange{fc("a.txt", "", 1, 1)}, "diff --git a/a.txt b/a.txt\n@@ -2,2 +1,2 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n tail\n\\ No newline at end of file\n", sixth},
 		// Git emits at most one marker for each side; a third is stray text.
-		{"three markers inside", []FileChange{fc("a.txt", "", 0, 0)}, "diff --git a/a.txt b/a.txt\n@@ -4 +4 @@\n one\n\\ No newline at end of file\n two\n\\ No newline at end of file\n three\n\\ No newline at end of file\n four\n", sixth},
+		{"three markers inside", []FileChange{fc("a.txt", "", 1, 1)}, "diff --git a/a.txt b/a.txt\n@@ -1,3 +1,3 @@\n one\n\\ No newline at end of file\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n tail\n", sixth},
+		// The cap is counted for each hunk, not for the whole section.
+		{"two hunks with two markers each", []FileChange{fc("a.txt", "", 2, 2)}, "diff --git a/a.txt b/a.txt\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n@@ -3 +3 @@\n-before\n\\ No newline at end of file\n+after\n\\ No newline at end of file\n", ""},
 		// This is the prefix of a binary section that ends after its index line.
 		{"binary cut after index", []FileChange{fc("docs/v3-research/codex-agent-command-center-2026-10-24.png", "", 0, 0)}, strings.Replace(binaryGH, "Binary files /dev/null and b/docs/v3-research/codex-agent-command-center-2026-10-24.png differ\n", "", 1), seventh},
 		{"index word alone", []FileChange{fc("a.txt", "", 0, 0)}, "diff --git a/a.txt b/a.txt\nindex \n", seventh},
@@ -392,7 +399,7 @@ func TestTheCorpusOfRealSectionsGivesItsVerdicts(t *testing.T) {
 		} `json:"cases"`
 	}
 	raw, err := os.ReadFile("testdata/compare-corpus.json")
-	if err != nil || json.Unmarshal(raw, &corpus) != nil || len(corpus.Cases) != 24 {
+	if err != nil || json.Unmarshal(raw, &corpus) != nil || len(corpus.Cases) != 26 {
 		t.Fatalf("corpus ground: err=%v cases=%d", err, len(corpus.Cases))
 	}
 	agree, refuse := 0, 0
@@ -417,7 +424,7 @@ func TestTheCorpusOfRealSectionsGivesItsVerdicts(t *testing.T) {
 			t.Fatalf("%s (%s): got %q, want prefix %q", tc.Name, tc.Source, got, tc.Want+": ")
 		}
 	}
-	if agree != 19 || refuse != 5 {
+	if agree != 20 || refuse != 6 {
 		t.Fatalf("corpus verdict ground: agree=%d refuse=%d", agree, refuse)
 	}
 }
