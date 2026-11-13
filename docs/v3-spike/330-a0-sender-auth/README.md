@@ -363,13 +363,13 @@ is narrowed (item 5); no verdict on rows 1 to 7 and 9 to 11 changed.
 
 ## A1-1: the words
 
-A1-1 landed as recorded in `docs/v3-spike/330-a1-1-words/README.md` on HEAD `2d52b79dc133d070e5e45c91eff7371f999055bc`.
+A1-1 landed as recorded in `docs/v3-spike/330-a1-1-words/README.md`, in commit 188e04f7ffb6c23f1100410f3ce76cf7e9137bbf, merged into v3 as 8c915ba47b7d90a2de38af0bd0a53436c43e22bc; the dispatch tip was `2d52b79dc133d070e5e45c91eff7371f999055bc`.
 
 ```go
 var yesWords = []string{"yes", "approve", "y", "ok", "go ahead", "כן"}
 var noWords = []string{"no", "deny", "n", "stop", "לא"}
 ```
 
-Row 3 holds at the shared seam in `internal/gatestore/words.go`, with `TestBareWordsAreTheDecidedList`, `TestParseBareBindsEachWordAloneInAnyCaseWithOneMark`, `TestParseBareBindsNothingForTwoMarksOrAnythingElseOnTheLine`, and `TestNoOtherFileSpellsAYesNoList`. Row 1's first layer, the relay's refusal, now reads the same list and covers all eleven words through `TestRelayRefusesALeadLineOfEachWordOfTheList`; row 2 is unchanged, and row 12 is covered by the `TestFourClassesThroughTheCore` control only.
+Row 3 holds: the trim, case and one-mark rule is `ParseBare` in `internal/gatestore/plain.go:555-568`, and the list it reads is in `internal/gatestore/words.go:3-21`, with `TestBareWordsAreTheDecidedList`, `TestParseBareBindsEachWordAloneInAnyCaseWithOneMark`, and `TestParseBareBindsNothingForTwoMarksOrAnythingElseOnTheLine`. That the list is the one list is guarded by `TestNoOtherFileSpellsAYesNoList`. Row 1's first layer, the relay's refusal, now reads the same list and covers all eleven words through `TestRelayRefusesALeadLineOfEachWordOfTheList`; row 2 is unchanged, and row 12 is covered by the `TestFourClassesThroughTheCore` control only.
 
 Open question 2 is answered: the existing test is kept and gains a two-mark refusal. `ok?` alone binds, the plan's ruling 4 notwithstanding.
