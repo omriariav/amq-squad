@@ -511,6 +511,20 @@ as #962 corrected it.
   change and three laxities, and its measurements the 24 real forms of
   the gate; a table case holds two hunks with markers in one section; a
   kept sentence and two marker cases were put as dictated.
+- **Three small things left by the train fix's follow-up** (2026-11-13;
+  #1002's gate): (a) three wrong edits of the history test's list reader
+  `compareHistoryPairs` pass every test: the pairs read so far returned
+  together with the error of a line that is no pair; an id of 39 characters
+  taken; a line that is no pair passed over. One list closes all three: a
+  good line, then a line of two ids of 39 characters. For whoever next
+  edits `internal/mergetrain/compare_history_test.go`; the real run is
+  guarded by its printed count (`commits 1930`). (b) The note's sentence on
+  the place of a `Binary files … differ` line said "wherever it stands in
+  its section"; corrected in the note on 2026-11-13 (not inside a `GIT
+  binary patch` part). (c) A diff that is one empty line, with an empty
+  file list, is accepted: the empty line before the first section is passed
+  over and nothing follows; a compare with no file is a train that has
+  nothing to prove.
 - **The train's fix is on v3 and not on the squad until a 3.3.0 build is
   installed** (2026-11-13): the running squad's binary is 3.2.0, whose train
   still refuses a behind PR when the compare gives a file no patch, and
