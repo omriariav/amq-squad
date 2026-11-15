@@ -373,3 +373,7 @@ var noWords = []string{"no", "deny", "n", "stop", "לא"}
 Row 3 holds: the trim, case and one-mark rule is `ParseBare` in `internal/gatestore/plain.go:555-568`, and the list it reads is in `internal/gatestore/words.go:3-21`, with `TestBareWordsAreTheDecidedList`, `TestParseBareBindsEachWordAloneInAnyCaseWithOneMark`, and `TestParseBareBindsNothingForTwoMarksOrAnythingElseOnTheLine`. That the list is the one list is guarded by `TestNoOtherFileSpellsAYesNoList`. Row 1's first layer, the relay's refusal, now reads the same list and covers all eleven words through `TestRelayRefusesALeadLineOfEachWordOfTheList`; row 2 is unchanged, and row 12 is covered by the `TestFourClassesThroughTheCore` control only.
 
 Open question 2 is answered: the existing test is kept and gains a two-mark refusal. `ok?` alone binds, the plan's ruling 4 notwithstanding.
+
+## A1-2: the one open gate
+
+A1-2 is recorded in `docs/v3-spike/330-a1-2-one-gate/README.md`. Row 5 holds for one open gate: an unthreaded bare answer binds it when no other gate's question or re-ask and no lead reply that may end in a question was posted at or after its question. Row 6 holds for the unthreaded path by the posted_at rule (an answer older than the gate's question binds nothing); the threaded path keeps its 60 s skew. Row 4 does not hold: with two or more gates open an unthreaded answer is refused as before, and the letters are 3.3.x.

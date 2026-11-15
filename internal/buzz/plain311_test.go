@@ -12,29 +12,23 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/status"
 )
 
-// Brief 3.1.1-1, row 2 at the handler: a bare yes is a gate answer, never a
-// phone request. Outside every thread it gets the plain re-ask in the one
-// open gate's thread; replied in that thread it is accepted for that gate.
+// A bare yes is a gate answer, never a phone request, and outside every
+// thread it binds the one open gate when that gate's question is latest.
 func TestABareYesIsAGateAnswerAtTheHandler(t *testing.T) {
 	hf := newHandlerFixture(t)
-	rec, q, _ := raiseRel(t, hf.core, "rel-bare")
+	rec, _, _ := raiseRel(t, hf.core, "rel-bare")
 	_, msg := hf.dm(t, "yes", "")
 	got := hf.step(t)
 	res, _ := hf.serve.result(msg)
-	if len(got) != 1 || got[0].Kind != "gate" || got[0].Gate == nil || got[0].Gate.Outcome != "reasked" || !strings.HasPrefix(res, "refused rel-bare "+gateverify.RejectThread) {
+	if len(got) != 1 || got[0].Kind != "gate" || got[0].Gate == nil || got[0].Gate.Outcome != "approved" || res != "accepted rel-bare tag" {
 		t.Fatalf("a bare yes outside the thread: reply %q handled %+v", res, got)
 	}
 	if len(hf.mail.sent) != 0 {
 		t.Fatalf("a bare yes reached a lead: %+v", hf.mail.sent)
 	}
 	ra, _ := hf.core.Store.ReadReask(rec.GateID)
-	if ra == nil || !strings.HasPrefix(mustContent(t, ra.RawEvent), "Reply yes or no to this message.\n\n"+gatestore.Rule+"\n") {
-		t.Fatalf("the re-ask: %+v", ra)
-	}
-	_, msg = hf.dm(t, "Yes.", q.EventID)
-	hf.step(t)
-	if res, _ := hf.serve.result(msg); res != "accepted rel-bare tag" {
-		t.Fatalf("a bare yes in the thread: %q", res)
+	if ra != nil {
+		t.Fatalf("a bound bare yes was re-asked: %+v", ra)
 	}
 }
 

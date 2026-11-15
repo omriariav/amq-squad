@@ -327,9 +327,11 @@ func (h *Handler) gate(ctx, vctx context.Context, hd *Handled, e nostr.Event, ra
 		h.final(ctx, hd, "refused "+gateID+" ambiguous_gate")
 		return
 	}
-	prevRelay, prevBody, prevGrant := core.Relay, core.Body, core.BodyGrant
-	core.Relay, core.Body, core.BodyGrant = relay, body, grant
-	defer func() { core.Relay, core.Body, core.BodyGrant = prevRelay, prevBody, prevGrant }()
+	prevRelay, prevBody, prevGrant, prevUnthreaded := core.Relay, core.Body, core.BodyGrant, core.Unthreaded
+	core.Relay, core.Body, core.BodyGrant, core.Unthreaded = relay, body, grant, h.unthreadedBinds
+	defer func() {
+		core.Relay, core.Body, core.BodyGrant, core.Unthreaded = prevRelay, prevBody, prevGrant, prevUnthreaded
+	}()
 	r := core.HandleEvent(vctx, raw)
 	hd.Gate = &r
 	if r.GateID != "" {

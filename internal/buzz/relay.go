@@ -74,6 +74,13 @@ const (
 	// thread is a gate question's.
 	RefusedGateShape  = status.RelayRefusedGateShape
 	RefusedGateThread = status.RelayRefusedGateThread
+	// EndingsSuffix names a request's sidecar in the relay directory: a JSON
+	// object from event id to whether that event's post ends in a question.
+	// Relay-record readers do not read it because it does not end in .json.
+	EndingsSuffix = ".endings"
+	// RelayEndingsFailed names a post whose endings entry could not be written.
+	// The post stands and later reads as unknown.
+	RelayEndingsFailed = "relay_endings_failed"
 )
 
 // RequestID names the request an owner DM opens: q- and the first 12 hex of
@@ -241,6 +248,11 @@ func (h *Handler) RelayStep(ctx context.Context) ([]Relayed, error) {
 		out = append(out, got...)
 		if err != nil {
 			errs = append(errs, rec.RequestID+": "+err.Error())
+		}
+		for _, r := range got {
+			if r.Error != "" {
+				errs = append(errs, rec.RequestID+": "+r.Error)
+			}
 		}
 	}
 	return out, joinErrs(errs)
@@ -454,6 +466,9 @@ func (h *Handler) publish(ctx context.Context, rec *status.RelayRecord, parts []
 			return r, err
 		}
 	}
+	if err := putEndings(status.RelayDir(h.Target.Root), rec.RequestID, p.Events, endsInQuestion(parts)); err != nil {
+		r.Error = RelayEndingsFailed + ": " + err.Error()
+	}
 	rec.Posts = append(rec.Posts, status.RelayPost{ReplyID: p.ReplyID, Kind: p.Kind, Events: p.Events, SHA256: sha256Hex(strings.Join(parts, "\n")), At: now.UTC(), PlanFor: p.PlanFor})
 	rec.RelayedAt = timePtr(now)
 	rec.Posting = nil
@@ -469,6 +484,64 @@ func (h *Handler) publish(ctx context.Context, rec *status.RelayRecord, parts []
 	}
 	r.Outcome, r.Events = "posted", p.Events
 	return r, save()
+}
+
+// isQuestionMark reports the three terminal question marks recognized by
+// the relay's deterministic text check.
+func isQuestionMark(r rune) bool { return r == '?' || r == '？' || r == '؟' }
+
+// endsInQuestion reports whether the joined post parts end in a question
+// after trailing characters other than letters, digits and question marks
+// are removed. No model reads the text.
+func endsInQuestion(parts []string) bool {
+	t := strings.TrimRightFunc(strings.Join(parts, "\n"), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !isQuestionMark(r)
+	})
+	r, _ := utf8.DecodeLastRuneInString(t)
+	return isQuestionMark(r)
+}
+
+func endingsPath(dir, requestID string) string { return filepath.Join(dir, requestID+EndingsSuffix) }
+
+// readEndings reads one request's event-ending sidecar. A missing sidecar is
+// an empty map; unreadable or malformed content is unknown and returns an
+// error so unthreaded answers fail closed.
+func readEndings(dir, requestID string) (map[string]bool, error) {
+	raw, err := os.ReadFile(endingsPath(dir, requestID))
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]bool{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]bool
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = map[string]bool{}
+	}
+	return out, nil
+}
+
+// putEndings records every event id of one post in the request's sidecar.
+// An unreadable prior sidecar is replaced by the known entries of this post.
+func putEndings(dir, requestID string, events []string, ends bool) error {
+	values, err := readEndings(dir, requestID)
+	if err != nil {
+		values = map[string]bool{}
+	}
+	for _, event := range events {
+		values[event] = ends
+	}
+	raw, err := json.MarshalIndent(values, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return atomicfile.Write(endingsPath(dir, requestID), append(raw, '\n'), 0o600)
 }
 
 // planFor is the proposal a lead reply carries as the team plan (brief
@@ -641,6 +714,100 @@ func (h *Handler) gateView(now time.Time) (gateView, error) {
 		}
 	}
 	return g, nil
+}
+
+// unthreadedBinds reports whether q is the one open gate across every store
+// this attachment serves and its question is the latest question shown in
+// the shared DM. Another gate question or re-ask, or a relay post at or after
+// q that may end in a question, makes the answer ambiguous. Any unreadable
+// gate, relay record or endings sidecar fails closed.
+func (h *Handler) unthreadedBinds(q gatestore.Question) bool {
+	postedAt, err := time.Parse(time.RFC3339, q.PostedAt)
+	if err != nil {
+		return false
+	}
+	later := func(at string) bool {
+		t, err := time.Parse(time.RFC3339, at)
+		return err != nil || !t.Before(postedAt)
+	}
+	roots := []string{h.Target.Root}
+	var open []string
+	for _, c := range append([]*gateverify.Core{h.Core}, h.Cores...) {
+		roots = append(roots, c.Store.Root)
+		ids, err := c.Store.IDs()
+		if err != nil {
+			return false
+		}
+		for _, id := range ids {
+			oq, err := c.Store.Question(id)
+			if err != nil {
+				return false
+			}
+			if oq == nil {
+				continue
+			}
+			rec, err := c.Store.Load(id)
+			if err != nil {
+				return false
+			}
+			if c.Store.State(rec, h.now()) == gatestore.StateOpen {
+				open = append(open, oq.EventID)
+			}
+			if oq.EventID == q.EventID {
+				continue
+			}
+			if later(oq.PostedAt) {
+				return false
+			}
+			reask, err := c.Store.ReadReask(id)
+			if err != nil {
+				return false
+			}
+			if reask != nil && later(reask.At) {
+				return false
+			}
+		}
+	}
+	if !slices.Equal(open, []string{q.EventID}) {
+		return false
+	}
+	seenDirs := map[string]bool{}
+	for _, root := range roots {
+		dir := status.RelayDir(filepath.Clean(root))
+		if seenDirs[dir] {
+			continue
+		}
+		seenDirs[dir] = true
+		records, problems := loadRelayRecords(dir)
+		if len(problems) > 0 {
+			return false
+		}
+		for _, r := range records {
+			if r.Posting != nil {
+				return false
+			}
+			var ends map[string]bool
+			loaded := false
+			for _, p := range r.Posts {
+				if p.At.Before(postedAt) {
+					continue
+				}
+				if !loaded {
+					ends, err = readEndings(dir, r.RequestID)
+					if err != nil {
+						return false
+					}
+					loaded = true
+				}
+				for _, e := range p.Events {
+					if v, ok := ends[e]; !ok || v {
+						return false
+					}
+				}
+			}
+		}
+	}
+	return true
 }
 
 // refuse runs the gate-shape check over every line of a reply and returns

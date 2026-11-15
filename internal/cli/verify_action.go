@@ -683,7 +683,7 @@ func renderVerifyAction(out io.Writer, result verifyActionResult, to string) {
 		fmt.Fprintf(out, "- %s: %s\n", f.Code, f.Detail)
 	}
 	if result.Decision != actionDecisionApproved && typedGateAction(result.Action) {
-		fmt.Fprintf(out, "Resolve with: the owner's signed Buzz answer in the gate thread, then amq-squad gate answer\n")
+		fmt.Fprintf(out, "Resolve with: the owner's signed Buzz answer (a reply in the gate thread; a bare yes or no outside it binds only the one open gate), then amq-squad gate answer\n")
 	} else if result.Decision != actionDecisionApproved {
 		fmt.Fprintf(out, "Resolve with: amq-squad operator answer --gate %s --to %s --approved --reason \"Action: %s\\nTarget: %s\"\n", strings.TrimPrefix(result.Gate, "gate/"), firstOf(strings.TrimSpace(to), "<lead>"), result.Action, result.Target)
 	}

@@ -36,7 +36,13 @@ type Core struct {
 	// Carriers are the AMQ handles whose mailbox messages may carry a
 	// nostr:<event id> label (the binding's carrier, e.g. buzz).
 	Carriers []string
-	Now      func() time.Time
+	// Unthreaded, when set, is asked about a bare answer with no thread
+	// reference whose only fault is that it is outside the gate thread, its
+	// gate never re-asked and the answer created at or after the question
+	// (3.3.0 A1-2): true binds it as a thread answer binds, false keeps the
+	// re-ask. The handler lends it for one verification.
+	Unthreaded func(q gatestore.Question) bool
+	Now        func() time.Time
 }
 
 func (c *Core) now() time.Time {
@@ -170,6 +176,7 @@ func (c *Core) handleEvent(ctx context.Context, raw []byte) Result {
 		return rejected("", "", reject(RejectMalformed, "%v", err))
 	}
 	a, err := gatestore.ParseAnswer(e.Content)
+	bare := err != nil
 	if err != nil {
 		verb, ok := gatestore.ParseBare(e.Content)
 		if !ok {
@@ -205,6 +212,9 @@ func (c *Core) handleEvent(ctx context.Context, raw []byte) Result {
 	}
 	now := c.now()
 	o, err := Verify(raw, rec, q, reask, c.Pin, now)
+	if Code(err) == RejectThread && bare && reask == nil && c.bindsUnthreaded(q, e) {
+		err = nil // every other check passed (Verify runs the thread check last)
+	}
 	if Code(err) == RejectThread {
 		if reask != nil && c.Store.ReaskPublished(rec.GateID) {
 			return rejected(rec.GateID, e.ID, reject(RejectThread, "the gate was re-asked in its thread (%s); this answer is still outside it", reask.EventID))
@@ -293,6 +303,21 @@ func (c *Core) bareGate(e nostr.Event) (string, error) {
 		return "", reject(RejectWrongThread, "a bare answer replies to %v, which is not exactly one gate's thread", refs)
 	}
 	return named[0], nil
+}
+
+// bindsUnthreaded reports whether the handler's one-call hook binds a bare
+// answer outside every thread. The question must exist, the event must name
+// no thread, and its whole-second timestamp must be from the question through
+// this host's current time; the hook decides the channel-wide condition.
+func (c *Core) bindsUnthreaded(q *gatestore.Question, e nostr.Event) bool {
+	if c.Unthreaded == nil || q == nil || len(nostr.ThreadRefs(e)) != 0 {
+		return false
+	}
+	posted, err := time.Parse(time.RFC3339, q.PostedAt)
+	if err != nil || e.CreatedAt < posted.Unix() || e.CreatedAt > c.now().Unix() {
+		return false
+	}
+	return c.Unthreaded(*q)
 }
 
 // reask posts the gate's one "reply here to confirm" in the gate thread. The

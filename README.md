@@ -605,10 +605,14 @@ session's mailbox (or with `--lead` to one squad lead). The owner's guide is
   question's thread; case and one trailing punctuation mark do not matter.
   The thread and your signature bind the answer to its gate; there is
   nothing else to type. The core of the squad that raised it fetches and
-  verifies the signed event itself. A
-  `yes` or `no` outside the thread gets one re-ask in the thread, "Reply yes
-  or no to this message."; a `yes` in another gate's thread answers that
-  gate only. The 3.0 typed line (`approve <gate> <class> <prefix>`) still
+  verifies the signed event itself. A `yes` or `no` outside every thread
+  answers the one open gate when its question is the latest thing asked in
+  the DM (no other gate's question or re-ask and no lead reply ending in a
+  question came after it) and your answer is dated neither before it nor
+  after this machine's clock. Otherwise it gets one re-ask in the gate's
+  thread, "Reply yes or no to this message.", and with two or more gates
+  open it is refused. A `yes` in another gate's thread answers that gate
+  only. The 3.0 typed line (`approve <gate> <class> <prefix>`) still
   verifies, but no question asks for it.
 
 ```sh

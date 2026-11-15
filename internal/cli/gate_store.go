@@ -33,7 +33,7 @@ func typedGateAction(action string) bool { return gatetarget.Class(action) != ""
 // GateUpgradeNote is the upgrade note of the squad identity (amendment 28).
 const GateUpgradeNote = "gates raised before the squad field are closed; raise them again under a new id"
 
-const typedOperatorAnswerRefusal = "typed gates (tag and release, external send, credential change, growth) are answered only by the owner's signed Buzz reply in the gate thread; the core verifies it with 'amq-squad gate answer'. An AMQ operator answer never counts (plan 7.3, R32)."
+const typedOperatorAnswerRefusal = "typed gates (tag and release, external send, credential change, growth) are answered only by the owner's signed Buzz answer: a reply in the gate thread, or a bare yes or no outside every thread when that gate is the one open gate and its question the latest asked; the core verifies it with 'amq-squad gate answer'. An AMQ operator answer never counts (plan 7.3, R32)."
 
 // gateTransportFunc connects the core to the binding's relay and returns the
 // relay, the share body key and its NIP-OA tag for kind 9 posts. The Buzz
