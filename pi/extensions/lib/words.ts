@@ -814,6 +814,7 @@ export const RELAY_WORDS: Record<string, string> = {
 	relay_turn_undelivered: "the owner's turn did not reach the lead",
 	relay_rollback_failed: "the relay could not undo a failed post",
 	relay_record_failed: "the relay could not write its record",
+	relay_endings_failed: "the relay could not record whether its post asked a question",
 };
 
 // requestWords is a phone request's plain line: to whom, whether the
