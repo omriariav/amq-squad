@@ -49,11 +49,20 @@ its PR. Nothing here is promised by date.
      An R53 row also failed once at 7.0 s while the host gate lock was held,
      with load 12.5 from work outside the lock (`async-update.md:1865-1869`).
      The R53 tests are in `pi/test/phase.test.ts`.
+     Done in 3.3.0 A3: the R53 rows' world gives the guard a 600 s budget
+     (`AMQ_SQUAD_HOOK_TIMEOUT_MS`); the product's 5 s fail-closed timeout is
+     unchanged. A guard forced to 6 s failed the row as recorded before the
+     change and passed after it.
   6. In the same run the pi screen row `row 2: the screen's last line ...`
      took 11.4 s and failed with `TypeError: Cannot read properties of
      undefined (reading 'lines')`; it is a separate screen-row timing
      failure, not an R53 guard row. Source:
      `docs/v3-spike/320-3a-train/async-update.md:1808-1812`.
+     Done in 3.3.0 A3: the row waited 1000 rounds of 10 ms for the screen's
+     first draw, then read the widget anyway. The three screen waits of
+     `pi/test/commands.test.ts` now wait for the draw itself, under a 600 s
+     test timeout. A status forced to 15 s failed the row with the recorded
+     TypeError at 11.5 s before the change and passed after it.
   7. `internal/cli/repass5_fix_test.go:74`
      `TestDecisionAdapterKillsAHungGuardGroup` reported a hung guard and
      unparsable guard output after 30.0 s at load 16.7. Source: the test's

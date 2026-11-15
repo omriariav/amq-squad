@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { installScreen, renderScreen, type ScreenStatus } from "../extensions/lib/screen.ts";
 import { truncateToWidth } from "../extensions/lib/width.ts";
 import { installCommands } from "../extensions/lib/commands.ts";
-import { Keys, refusal, WIDEN_REASON } from "../extensions/lib/keys.ts";
+import { ACTION_WORDS, gateLabel, Keys, refusal, WIDEN_REASON } from "../extensions/lib/keys.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
 import { FakePi, fakeCtx } from "./fakepi.ts";
@@ -305,6 +305,15 @@ const KINDS: [string, string, string][] = [
 	["credential_change", "credential", "rotate the deploy key"],
 	["spawn", "grow", "seat qa over max_seats"],
 ];
+// A3 (a): a gate whose question cannot be shown is named by what it asks
+// about, in these words; never by its id.
+const UNSHOWN: Record<string, string> = {
+	tag: "An owner question about a tag; its words could not be read here",
+	github_release: "An owner question about a GitHub release; its words could not be read here",
+	external_send: "An owner question about a message outside the squad; its words could not be read here",
+	credential_change: "An owner question about a credential change; its words could not be read here",
+	spawn: "An owner question about a merge or growth past the grant; its words could not be read here",
+};
 const gateDoc: ScreenStatus = {
 	...fixture,
 	gates: KINDS.map(([action], i) => ({ id: `g${i + 1}`, action_class: action, target_digest: `sha256:${String(i + 1).repeat(16)}aa`, state: "open", raised_by: "cto" })),
@@ -326,10 +335,10 @@ test("answer, Q7 no: every typed gate kind waits on Buzz and no terminal answer 
 	KINDS.forEach(([action], i) => {
 		assert.match(gates[i], new RegExp(`^  g${i + 1}  ${action}  ${String(i + 1).repeat(16)}  age .*  waiting on Buzz$`));
 		// above the rule: the gate in words, no id and no prefix
-		assert.ok(lines.slice(0, rule).includes(`  an owner gate (${action.replace(/_/g, " ")}) is open  (answer on the phone; /answer shows it)`), lines.join("\n"));
+		assert.ok(lines.slice(0, rule).includes(`  ${UNSHOWN[action]}  (answer on the phone; /answer shows it)`), lines.join("\n"));
 	});
 	for (let i = 0; i < KINDS.length; i++) {
-		const r = rig((args) => (args[0] === "gate" && args[1] === "status" ? res(0, envelope("gate_status", [gateRow(i)])) : res(1, "", "error: unexpected")), [`an owner gate (${KINDS[i][0].replace(/_/g, " ")}) is open`], () => gateDoc);
+		const r = rig((args) => (args[0] === "gate" && args[1] === "status" ? res(0, envelope("gate_status", [gateRow(i)])) : res(1, "", "error: unexpected")), [UNSHOWN[KINDS[i][0]]], () => gateDoc);
 		await r.screen.poll();
 		const out = await r.press("answer");
 		assert.equal(keyLine(out), `  /answer: Waiting on your answer on the phone to "the ${KINDS[i][1]} gate": reply yes or no in the question's Buzz thread; the terminal cannot answer a typed gate.`);
@@ -346,7 +355,7 @@ test("answer, Q7 no: every typed gate kind waits on Buzz and no terminal answer 
 // failed post shows the verb's refusal. A model tool call cannot write an
 // answer: no tool carries the verb (row 2).
 test("answer, Q7 no: an unposted question is posted over Buzz; a gate answered over Buzz is closed and refused", async () => {
-	const G1 = "an owner gate (tag) is open";
+	const G1 = UNSHOWN.tag;
 	const post = rig((args) => (args[1] === "status" ? res(0, envelope("gate_status", [gateRow(0, "open", false)])) : res(0, envelope("gate_post", { event_id: "e1" }))), [G1], () => gateDoc);
 	await post.screen.poll();
 	assert.match(keyLine(await post.press("answer")), /: the question was posted over Buzz; reply yes or no/);
@@ -469,4 +478,58 @@ test("widen: the dialog shows the requested paths and the seat's reason; only it
 	assert.equal(keyLine(refusedLines), "  /widen: t5 was not widened: task widen t5 was refused: the widened set overlaps another active task's files");
 	// the verb's code, printed below its own rule, is below the screen's
 	assert.equal(recLine(refusedLines), "  /widen: t5: task widen t5 was refused: the widened set overlaps another active task's files (refused (file_lock_conflict): src/helper.go is t7's)");
+});
+
+// A3 (a): every typed-gate action Go lists (gatetarget.Actions) has words,
+// and a gate whose question is empty, blank, or blank after status's plain
+// pass is named by them, never by its id; an action with no words still
+// reads as a question, not as an id.
+test("A3 (a): a gate whose question cannot be shown is named in words, never by its id", () => {
+	const src = fs.readFileSync(path.join(here, "..", "..", "internal", "gatetarget", "gatetarget.go"), "utf8");
+	const body = /func Actions\(\) \[\]string \{\s*return \[\]string\{([^}]*)\}/.exec(src);
+	assert.ok(body, "gatetarget.Actions not found");
+	const actions = [...body![1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
+	assert.equal(actions.length, 6, actions.join(" "));
+	assert.deepEqual(Object.keys(ACTION_WORDS).sort(), [...actions].sort());
+	for (const a of actions) {
+		for (const question of [undefined, "", "   \n\t\n ", "\n\n"]) {
+			const label = gateLabel({ id: "merge-0123456789abcdef", action_class: a, question });
+			assert.equal(label, `An owner question about ${ACTION_WORDS[a]}; its words could not be read here`);
+			assert.ok(!label.includes("merge-0123456789abcdef") && !label.includes(a.replace(/_/g, " ") + ")"), label);
+		}
+	}
+	assert.equal(gateLabel({ id: "g9", action_class: "new_action", question: "" }), "An owner question about an action the squad wants to take; its words could not be read here");
+	assert.equal(gateLabel({ id: "g9", action_class: "tag", question: "\n  Create a tag named v1?\nWhy." }), "  Create a tag named v1?");
+});
+
+// A3 (c): on the screen, every open gate's line above the rule is its plain
+// first question line (or its words, (a)) and names the phone; no line above
+// the rule carries a gate id. A0 row 9's door stays shut: pi/test/keys.test.ts
+// "answer, Q7 no" rows run gate status only.
+test("A3 (c): every open gate's screen line shows its plain first line and names the phone, never its id", () => {
+	const gates = [
+		{ id: "rel-tag-0a1b2c3d4e5f60718293", action_class: "tag", question: "Create a tag for v3.3.0 in amq-squad?\nThe prepare found its commit on v3.\nYes creates the tag. No does nothing." },
+		{ id: "merge-0123456789abcdef", action_class: "spawn", question: "Merge PR #1006 outside the grant?\nWhy it is asked." },
+		{ id: "send-g7", action_class: "external_send", question: "Send a message outside the squad by mail?" },
+		{ id: "cred-g8", action_class: "credential_change", question: "" },
+		{ id: "gh-g9", action_class: "github_release", question: "  \n " },
+		{ id: "pkg-g10", action_class: "package_publish" },
+		{ id: "done-g11", action_class: "tag", question: "Create a tag named old?", state: "accepted" },
+	].map((g) => ({ target_digest: "sha256:" + "ab".repeat(32), raised_by: "cto", state: "open", ...g }));
+	const lines = renderScreen({ ...fixture, gates, attention: [] } as ScreenStatus, new Date("2026-11-16T09:00:00Z"));
+	const rule = lines.indexOf("----------");
+	const above = lines.slice(0, rule);
+	const at = above.indexOf("waiting on you (6)");
+	assert.ok(at >= 0, lines.join("\n"));
+	const want = [
+		"Create a tag for v3.3.0 in amq-squad?",
+		"Merge PR #1006 outside the grant?",
+		"Send a message outside the squad by mail?",
+		"An owner question about a credential change; its words could not be read here",
+		"An owner question about a GitHub release; its words could not be read here",
+		"An owner question about a package release; its words could not be read here",
+	];
+	assert.deepEqual(above.slice(at + 1, at + 7), want.map((w) => `  ${w}  (answer on the phone; /answer shows it)`), lines.join("\n"));
+	for (const g of gates) assert.ok(!above.some((l) => l.includes(g.id)), `${g.id} above the rule:\n${above.join("\n")}`);
+	assert.ok(!above.some((l) => l.includes("Create a tag named old?")), "an accepted gate is listed");
 });
