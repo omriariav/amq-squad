@@ -593,10 +593,16 @@ func TestMovesAreWellFormed(t *testing.T) {
 	}
 }
 
+// disagreement is one known disagreement of a move with the plan's rule for
+// its row (the F5 list).
+type disagreement struct{ From, Via, To, Detail, File, Func string }
+
+// knownDisagreements is the F5 list, read by TestLeavingBlockedClearsTheBlockGroup
+// and by TestEveryMoveIsDrivenThroughTheStore (s2_moves_test.go).
+// Adding an entry is a plan ruling, never a seat's own edit. An S4 task starts by deleting its entry.
+var knownDisagreements = []disagreement{{StateBlocked, "Cancel", StateCancelled, "survey candidate 2: Cancel leaves the five block fields set", "internal/task/lease.go:968", "Cancel"}}
+
 func TestLeavingBlockedClearsTheBlockGroup(t *testing.T) {
-	type disagreement struct{ From, Via, To, Detail, File, Func string }
-	// Adding an entry is a plan ruling, never a seat's own edit. An S4 task starts by deleting its entry.
-	knownDisagreements := []disagreement{{StateBlocked, "Cancel", StateCancelled, "survey candidate 2: Cancel leaves the five block fields set", "internal/task/lease.go:968", "Cancel"}}
 	matched := make([]bool, len(knownDisagreements))
 	for _, move := range Moves() {
 		if move.From != StateBlocked || move.To == StateBlocked || move.ClearsBlockGroup {
