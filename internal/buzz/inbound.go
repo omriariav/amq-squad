@@ -350,7 +350,7 @@ func (h *Handler) gate(ctx, vctx context.Context, hd *Handled, e nostr.Event, ra
 		if rec, err := core.Store.Load(r.GateID); err == nil {
 			class = rec.Class
 		}
-		h.final(ctx, hd, "accepted "+gateID+" "+class)
+		h.final(ctx, hd, "accepted "+gateID+" "+class+" "+r.Outcome)
 	case "reasked":
 		h.final(ctx, hd, "refused "+gateID+" "+r.Code+"\n"+reaskLine(r.ReaskEventID))
 	default:

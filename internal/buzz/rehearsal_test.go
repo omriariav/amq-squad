@@ -272,7 +272,7 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	// while one was open as busy (internal/remote/core/admission.go:524-547
 	// there); at v0.140.0 a mailbox target admits concurrent requests
 	// (internal/remote/mailbox/mailbox.go:168-171, core/admission.go:536-540)
-	await(ctx, t, &relay.bell, "serve's accepted result row", func() bool { return bodyPosted(relay, body, "accepted g45-owner-01 tag") })
+	await(ctx, t, &relay.bell, "serve's accepted result row", func() bool { return bodyPosted(relay, body, "accepted g45-owner-01 tag approved") })
 	// 6.1 /status is serve's own command (v0.116.2 buzzio/normalize.go): it
 	// never reaches the mailbox; serve's own reply row ends the step
 	statusID := dm("/status", "")
