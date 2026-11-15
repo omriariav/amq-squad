@@ -45,7 +45,7 @@ func TestRehearsalThroughServe(t *testing.T) {
 	if !strings.Contains(out, `"outcome":"approved"`) {
 		t.Fatalf("attach did not verify the answer:\n%s", out)
 	}
-	if res, n := serve.result(msg); n != 1 || res != "accepted rel-r tag" {
+	if res, n := serve.result(msg); n != 1 || res != "accepted rel-r tag approved" {
 		t.Fatalf("the result row %q (%d)", res, n)
 	}
 	if st := store.State(rec, hookNow()); st != gatestore.StateAccepted {

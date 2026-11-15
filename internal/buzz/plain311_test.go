@@ -33,7 +33,7 @@ func TestABareYesIsAGateAnswerAtTheHandler(t *testing.T) {
 	}
 	_, msg = hf.dm(t, "Yes.", q.EventID)
 	hf.step(t)
-	if res, _ := hf.serve.result(msg); res != "accepted rel-bare tag" {
+	if res, _ := hf.serve.result(msg); res != "accepted rel-bare tag approved" {
 		t.Fatalf("a bare yes in the thread: %q", res)
 	}
 }
@@ -59,7 +59,7 @@ func TestABareYesGoesToTheSquadWhoseThreadItNames(t *testing.T) {
 	}
 	_, msg = hf.dm(t, "yes", qB.EventID)
 	hf.step(t)
-	if res, _ := hf.serve.result(msg); res != "accepted rel-9 tag" {
+	if res, _ := hf.serve.result(msg); res != "accepted rel-9 tag approved" {
 		t.Fatalf("a bare yes in squad B's thread: %q", res)
 	}
 	if ans, _ := b.Store.ReadAnswer("rel-9"); ans == nil {

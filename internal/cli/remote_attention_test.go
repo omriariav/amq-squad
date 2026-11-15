@@ -75,7 +75,7 @@ func TestHungVerificationIsInTheStatusAttentionQueue(t *testing.T) {
 	f.answer(t, "Approve"+strings.TrimPrefix(answer, "approve"), q.EventID)
 	msg2 := serve.inbox[len(serve.inbox)-1].ID
 	attachOnce(t, f)
-	if res, _ := serve.result(msg2); res != "accepted rel-h tag" {
+	if res, _ := serve.result(msg2); res != "accepted rel-h tag approved" {
 		t.Fatalf("re-answer %q", res)
 	}
 	if row := verifyTimeoutRow(buildStatusContract(f.root, f.project, "test", time.Now()), "rel-h"); row != nil {

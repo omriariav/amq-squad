@@ -25,7 +25,7 @@ Every message gets one reply, ids and code words only, never your text:
 
 | reply | meaning |
 | --- | --- |
-| `accepted <gate> <class>` | your answer verified and committed |
+| `accepted <gate> <class> approved` or `accepted <gate> <class> denied` | your answer verified and committed, with the decision as recorded |
 | `refused <gate> <code>` | not accepted; the code is the verifier's (`already_consumed`, `wrong_pubkey`, `outside_window`, `bad_signature`, `bad_tuple`, `not_in_gate_thread`, ...) |
 | `refused <gate> not_in_gate_thread` and `re-ask: answer in the gate thread (event <id>)` | answer again as a reply in that thread |
 | `routed <lead or mailbox>` | delivered (and forwarded to the lead) |
