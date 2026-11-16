@@ -101,7 +101,9 @@ jobs:
   # non-blocking (continue-on-error), because its failure reads as upstream
   # drift to look at, not as a break of this repository. macOS, the 3.0 host,
   # with tmux for the launch-backed proofs. The lane runs every test gated on
-  # AMQ_SQUAD_REAL_AMQ.
+  # AMQ_SQUAD_REAL_AMQ, and internal/buzz with amq-remote and amq-owner-sign
+  # installed from the same AMQ release's assets (checksums and signer checked),
+  # so the owner dry-run tests run here instead of skipping.
   real-amq-compatibility:
     name: real AMQ compatibility (${{ matrix.lane }} ${{ matrix.amq-version }})
     runs-on: macos-latest
@@ -124,12 +126,21 @@ jobs:
 
       - name: Install tmux and requested AMQ
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           command -v tmux >/dev/null || brew install tmux
           export GOBIN="$RUNNER_TEMP/amq-bin"
           mkdir -p "$GOBIN"
-          go install github.com/avivsinai/agent-message-queue/cmd/amq@${{ matrix.amq-version }}
+          # one AMQ release for all three binaries: "latest" is resolved once
+          version="${{ matrix.amq-version }}"
+          if [ "$version" = latest ]; then
+            version="$(gh release view --repo avivsinai/agent-message-queue --json tagName -q .tagName)"
+          fi
+          echo "AMQ release: $version"
+          go install "github.com/avivsinai/agent-message-queue/cmd/amq@$version"
+          bash scripts/install-amq-release-binaries.sh "$version" "$GOBIN"
           tmux -V
           "$GOBIN/amq" version
 
@@ -138,6 +149,7 @@ jobs:
         env:
           AMQ_SQUAD_REAL_AMQ: ${{ runner.temp }}/amq-bin/amq
           AMQ_SQUAD_REAL_AMQ_VERSION: ${{ matrix.amq-version }}
+          AMQ_SQUAD_TEST_AMQ_BIN: ${{ runner.temp }}/amq-bin
           AMQ_NO_UPDATE_CHECK: "1"
           CLI_TESTS: "^(TestRealAMQ.*|TestNestedWorktreeRootDiscoveryOnAMQ074)$"
           LIBRARY_TESTS: "^(TestCompiledIntentAcceptedByReleasedAMQ|TestApplyForwardsSubjectSchemaFromPrepareResult)$"
@@ -146,6 +158,13 @@ jobs:
           "$AMQ_SQUAD_REAL_AMQ" version
           go test ./internal/cli -run "$CLI_TESTS" -count=1 -v -timeout=10m
           go test ./internal/launchintent ./internal/adoptionseam -run "$LIBRARY_TESTS" -count=1 -v -timeout=10m
+          go test ./internal/buzz/... -count=1 -v -timeout=20m 2>&1 | tee "$RUNNER_TEMP/buzz.log"
+          # the owner dry-run tests must run here, not skip
+          if grep -E -- '--- SKIP: TestOwnerScriptDryRun' "$RUNNER_TEMP/buzz.log"; then
+            echo "the owner dry-run tests skipped: amq-remote or amq-owner-sign is missing from the lane" >&2
+            exit 1
+          fi
+          test "$(grep -c -E -- '--- PASS: TestOwnerScriptDryRun(RejectsThenSendsAgain)? ' "$RUNNER_TEMP/buzz.log")" -eq 2
 
   # v3 phase 5: the Claude hook script under dash, which is /bin/sh on
   # ubuntu. The script runs through /bin/sh in Claude Code's hook runner, so
