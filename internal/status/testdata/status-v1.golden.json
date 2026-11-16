@@ -220,7 +220,33 @@
       "pr_head": "",
       "wait_holders": [],
       "waits_for": [],
-      "wait_pool": ""
+      "wait_pool": "",
+      "next": [
+        {
+          "verb": "task block",
+          "who": "holder"
+        },
+        {
+          "verb": "task done",
+          "who": "holder"
+        },
+        {
+          "verb": "task fail",
+          "who": "holder"
+        },
+        {
+          "verb": "task release",
+          "who": "holder"
+        },
+        {
+          "verb": "task cancel",
+          "who": "lead"
+        },
+        {
+          "verb": "task release",
+          "who": "lead"
+        }
+      ]
     },
     {
       "id": "t2",
@@ -250,7 +276,18 @@
       "pr_head": "4f1c2a9",
       "wait_holders": [],
       "waits_for": [],
-      "wait_pool": ""
+      "wait_pool": "",
+      "next": [
+        {
+          "verb": "task cancel",
+          "who": "lead"
+        },
+        {
+          "verb": "task reset",
+          "who": "lead",
+          "may_refuse": "only its creator cto resets it"
+        }
+      ]
     }
   ],
   "attention": [
