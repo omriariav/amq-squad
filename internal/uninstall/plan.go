@@ -12,6 +12,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
+	"github.com/omriariav/amq-squad/v3/internal/gatestore"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/sealchain"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
@@ -80,7 +81,7 @@ var (
 	// refused documents the tamper alarm copied are evidence, listed beside
 	// the ledger and removed only with it (--purge), never on their own.
 	sealedNames = map[string]bool{"commits": true, "quarantine": true, "ledger": true, "routing": true}
-	gateNames   = map[string]bool{"gates": true, "answers": true, "denials": true, "reasks": true, "consumed": true, "clears": true}
+	gateNames   = gateStoreNames()
 	// ownerFiles are the files of ~/.amq-squad this verb removes with
 	// --owner-files; the first two are secrets.
 	ownerFiles = []struct {
@@ -619,4 +620,15 @@ func (p *plan) manual(o Options, worktrees []string) {
 	for _, r := range list {
 		p.byHand = append(p.byHand, fmt.Sprintf("git -C %q worktree prune   (drops the removed worktrees' git bookkeeping; not run)", r))
 	}
+}
+
+// gateStoreNames are the gate store's directories, kept unless --purge: every
+// directory gatestore writes (gatestore.TopDirs), and the legacy clear
+// records.
+func gateStoreNames() map[string]bool {
+	m := map[string]bool{"clears": true}
+	for _, d := range gatestore.TopDirs {
+		m[d] = true
+	}
+	return m
 }

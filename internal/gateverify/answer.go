@@ -132,6 +132,14 @@ func sameJSON(a, b any) bool {
 //     session, generation): an approval copied into another session's store
 //     never counts there.
 func VerifyAnswerFile(f gatestore.AnswerFile, store operatorauth.AuthorizationTrustStore, pin Pin, rec gatestore.Record, q *gatestore.Question, reask *gatestore.Reask, ns Namespace) error {
+	return VerifyAnswerFileReasked(f, store, pin, rec, q, reask, nil, ns)
+}
+
+// VerifyAnswerFileReasked is VerifyAnswerFile with the gate's stored window
+// re-ask (nil when none), which the raw owner event re-verifies against
+// (VerifyReasked): an approval given in the asked-again window counts only
+// with that window re-ask in the store.
+func VerifyAnswerFileReasked(f gatestore.AnswerFile, store operatorauth.AuthorizationTrustStore, pin Pin, rec gatestore.Record, q *gatestore.Question, reask, window *gatestore.Reask, ns Namespace) error {
 	if f.Schema != gatestore.AnswerSchema || f.Scheme != SchemeBIP340 || f.Decision != operatorauth.DecisionApproved {
 		return errors.New("answer file is not a bip340 approval")
 	}
@@ -194,7 +202,7 @@ func VerifyAnswerFile(f gatestore.AnswerFile, store operatorauth.AuthorizationTr
 	if err != nil {
 		return err
 	}
-	o, err := Verify(raw, rec, q, reask, pin, verifiedAt)
+	o, err := VerifyReasked(raw, rec, q, reask, window, pin, verifiedAt)
 	if err != nil {
 		return fmt.Errorf("bip340 re-verification: %w", err)
 	}

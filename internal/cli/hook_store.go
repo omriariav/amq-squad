@@ -96,6 +96,17 @@ func readHookGates(root string, now time.Time) ([]hookGate, error) {
 				g.State = "accepted"
 			}
 		}
+		// A window re-ask opens a new window (A1-3): the gate's not_after is
+		// then its derived end, the one gatestore.Store.State reads.
+		if g.State == "open" {
+			if rec, err := store.Load(g.GateID); err == nil {
+				if w, _ := store.ReadWindow(g.GateID); w != nil {
+					if _, end, err := w.WindowEnd(rec); err == nil {
+						g.NotAfter = end.UTC().Format(time.RFC3339)
+					}
+				}
+			}
+		}
 		// Acceptance is terminal: not_after governs only an unanswered gate; the
 		// envelope's own window, checked by VerifyAuthorizationEnvelope, is the
 		// only time check on an answer.

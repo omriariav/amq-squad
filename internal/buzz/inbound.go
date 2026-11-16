@@ -340,9 +340,13 @@ func (h *Handler) gate(ctx, vctx context.Context, hd *Handled, e nostr.Event, ra
 		return
 	}
 	clearVerifyTimeout(core, gateID) // a verification of the gate finished
-	// the owner's verified event is handled: a redelivery is a duplicate
-	if err := h.seen.put(e.ID, gateID, h.now()); err != nil {
-		hd.Error = joinErr(hd.Error, "once-only record: "+err.Error())
+	// the owner's verified event is handled: a redelivery is a duplicate;
+	// except a window re-ask the relay did not take, which a redelivery of
+	// the same event retries (A1-3)
+	if r.Code != gateverify.RejectPublish {
+		if err := h.seen.put(e.ID, gateID, h.now()); err != nil {
+			hd.Error = joinErr(hd.Error, "once-only record: "+err.Error())
+		}
 	}
 	switch r.Outcome {
 	case "approved", "denied":
@@ -355,7 +359,12 @@ func (h *Handler) gate(ctx, vctx context.Context, hd *Handled, e nostr.Event, ra
 		h.final(ctx, hd, "refused "+gateID+" "+r.Code+"\n"+reaskLine(r.ReaskEventID))
 	default:
 		text := "refused " + gateID + " " + r.Code
-		if r.Code == gateverify.RejectThread || r.Code == gateverify.RejectWrongThread {
+		if r.Code == gateverify.RejectBeforeReask {
+			// dated before the gate was asked again: answer that message
+			if w, err := core.Store.ReadWindow(gateID); err == nil && w != nil {
+				text += "\n" + reaskLine(w.EventID)
+			}
+		} else if r.Code == gateverify.RejectThread || r.Code == gateverify.RejectWrongThread {
 			if ra, err := core.Store.ReadReask(gateID); err == nil && ra != nil {
 				text += "\n" + reaskLine(ra.EventID)
 			} else if q, err := core.Store.Question(gateID); err == nil && q != nil {
@@ -577,8 +586,7 @@ func (h *Handler) coreFor(e nostr.Event) (*gateverify.Core, []string) {
 	for _, c := range holders {
 		names = append(names, squadName(c))
 		q, _ := c.Store.Question(a.GateID)
-		r, _ := c.Store.ReadReask(a.GateID)
-		if (q != nil && slices.Contains(refs, q.EventID)) || (r != nil && slices.Contains(refs, r.EventID)) {
+		if (q != nil && slices.Contains(refs, q.EventID)) || slices.ContainsFunc(c.Store.ReaskEventIDs(a.GateID), func(id string) bool { return slices.Contains(refs, id) }) {
 			match = append(match, c)
 		}
 	}
@@ -608,8 +616,7 @@ func (h *Handler) bareCore(e nostr.Event) (*gateverify.Core, []string) {
 				hit = hit || (err == nil && q != nil && c.Store.State(rec, now) == gatestore.StateOpen)
 				continue
 			}
-			r, _ := c.Store.ReadReask(id)
-			hit = hit || (q != nil && slices.Contains(refs, q.EventID)) || (r != nil && slices.Contains(refs, r.EventID))
+			hit = hit || (q != nil && slices.Contains(refs, q.EventID)) || slices.ContainsFunc(c.Store.ReaskEventIDs(id), func(rid string) bool { return slices.Contains(refs, rid) })
 		}
 		if hit {
 			match = append(match, c)

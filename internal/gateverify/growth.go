@@ -38,7 +38,11 @@ func (v Verifier) Accepted(store gatestore.Store, rec gatestore.Record) error {
 	if err != nil {
 		return err
 	}
-	return VerifyAnswerFile(*f, v.Trust, v.Pin, rec, q, re, v.Namespace)
+	win, err := store.ReadWindow(rec.GateID)
+	if err != nil {
+		return err
+	}
+	return VerifyAnswerFileReasked(*f, v.Trust, v.Pin, rec, q, re, win, v.Namespace)
 }
 
 // AcceptedFor returns the gate accepted for exactly this action and target.

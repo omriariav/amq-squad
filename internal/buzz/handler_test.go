@@ -122,10 +122,24 @@ func TestHandlerReplyTable(t *testing.T) {
 			_ = hf.mem.Publish(context.Background(), e.Marshal())
 			return hf.serve.deliver(e.ID, hf.core.Pin.Channel, e.Content)
 		}, regexp.MustCompile(`^refused g-wp ` + gateverify.RejectWrongPubkey + `$`)},
-		{"outside window", func(t *testing.T, hf handlerFixture) string {
-			_, q, a := raiseRel(t, hf.core, "g-ow")
+		{"lapsed", func(t *testing.T, hf handlerFixture) string {
+			_, q, a := raiseRel(t, hf.core, "g-lp")
 			hf.core.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
 			_, m := hf.dm(t, a, q.EventID)
+			return m
+		}, regexp.MustCompile(`^refused g-lp ` + gateverify.RejectLapsed + `\nre-ask: answer in the gate thread \(event [0-9a-f]{12}\)$`)},
+		{"answered before the re-ask", func(t *testing.T, hf handlerFixture) string {
+			_, q, a := raiseRel(t, hf.core, "g-bf")
+			hf.core.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+			_, _ = hf.dm(t, a, q.EventID) // the window re-ask
+			hf.step(t)
+			_, m := hf.dm(t, "A"+a[1:], q.EventID) // dated before the window re-ask
+			return m
+		}, regexp.MustCompile(`^refused g-bf ` + gateverify.RejectBeforeReask + `\nre-ask: answer in the gate thread \(event [0-9a-f]{12}\)$`)},
+		{"outside window", func(t *testing.T, hf handlerFixture) string {
+			hf.core.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+			_, q, a := raiseRel(t, hf.core, "g-ow") // raised two hours ahead
+			_, m := hf.dm(t, a, q.EventID)          // dated before its not_before
 			return m
 		}, regexp.MustCompile(`^refused g-ow ` + gateverify.RejectWindow + `$`)},
 		{"bad signature", func(t *testing.T, hf handlerFixture) string {

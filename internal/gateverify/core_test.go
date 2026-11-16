@@ -158,7 +158,7 @@ func TestConformanceRules(t *testing.T) {
 		t.Fatalf("created exactly 60 s ahead: %v", err)
 	}
 	_, _, na, _ := rec.Window()
-	if _, err := Verify(f.answer(f.owner, tuple("approve", rec), q.EventID, at), rec, &q, nil, f.core.Pin, na.Add(time.Second)); Code(err) != RejectWindow {
+	if _, err := Verify(f.answer(f.owner, tuple("approve", rec), q.EventID, at), rec, &q, nil, f.core.Pin, na.Add(time.Second)); Code(err) != RejectLapsed {
 		t.Fatalf("presented past not_after: %v", err)
 	}
 	if _, err := Verify(f.answer(f.owner, tuple("approve", rec), q.EventID, testNow.Add(-61*time.Second)), rec, &q, nil, f.core.Pin, at); Code(err) != RejectWindow {
