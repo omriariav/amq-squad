@@ -98,15 +98,63 @@ leadership epochs, intent/artifact/implementer/reviewer contracts, and
 review/replacement links. v2 task files are not read: the 3.0 store lives
 in a new directory, so there is nothing to migrate in place.
 
+<!-- task-machine:begin -->
 ## States
 
-| state | lease | meaning |
-| --- | --- | --- |
-| `pending` | none | queued; `wait_reason` names why it is not dispatched yet |
-| `in_progress` | held | a seat holds the lease, claimed or not yet claimed |
-| `blocked` | none | stopped on a decision the lead owes (`block_route: lead`) or, routed, the owner (`block_route: owner`) |
-| `completed` | none | terminal; the done report passed the commit step |
-| `cancelled` | none | terminal; the lead cancelled it |
+| state | terminal |
+| --- | --- |
+| `pending` | false |
+| `in_progress` | false |
+| `blocked` | false |
+| `completed` | true |
+| `cancelled` | true |
+
+## Moves
+
+| from | via | writer | to | who | needs | clears block group |
+| --- | --- | --- | --- | --- | --- | --- |
+| (new task) | `Add`, `AddWithFileWaits` | `AddWithFileWaits` | `pending` | `asserted_handle` |  | false |
+| `pending` | `Grant`, `GrantClean`, `Claim`, `ClaimServing` | `grant` | `in_progress` | `scheduler`, `asserted_handle` |  | false |
+| `pending` | `Block`, `BlockWithPaths` | `block` | `blocked` | `scheduler`, `asserted_handle` |  | false |
+| `pending` | `Cancel` | `Cancel` | `cancelled` | `asserted_handle` |  | false |
+| `in_progress` | `Done` | `complete` | `completed` | `live_holder` | Done has no prior report and no declared files; when a verdict is required or a sealed verdict is present, that verdict passes | true |
+| `in_progress` | `Complete`, `CompleteBound` | `complete` | `completed` | `scheduler`, `harness_shell` | a report exists; CompleteBound also has a nonnegative PR number and, when positive, a valid free binding; when a verdict is required or a sealed verdict is present, that verdict passes | true |
+| `in_progress` | `Done`, `Complete`, `CompleteBound` | `block` | `blocked` | `live_holder`, `scheduler`, `harness_shell` | Done has no prior report and no declared files; Complete and CompleteBound have a report; CompleteBound also has a nonnegative PR number and, when positive, a valid free binding; a verdict is required but absent, or a sealed verdict is present and does not pass | false |
+| `in_progress` | `RefuseCommit`, `RefuseCommitPaths` | `block` | `blocked` | `scheduler`, `harness_shell` | paths are exact, a report exists, the route is empty, lead, or owner, and the reason code is non-empty | false |
+| `in_progress` | `Block`, `BlockWithPaths` | `block` | `blocked` | `live_holder` |  | false |
+| `in_progress` | `Fail` | `Fail` | `pending` | `live_holder` |  | false |
+| `in_progress` | `Release` | `Release` | `pending` | `asserted_handle` |  | false |
+| `in_progress` | `ExpireDue` | `ExpireDue` | `pending` | `scheduler` | no report; the lease is due | false |
+| `in_progress` | `Cancel` | `Cancel` | `cancelled` | `asserted_handle` |  | false |
+| `blocked` | `ResetBy` | `ResetBy` | `pending` | `creator`, `asserted_handle` | the caller is non-empty, the route is not owner, and the caller matches the creator when recorded; when no creator is recorded, any non-empty caller is accepted | true |
+| `blocked` | `Reset` | `Reset` | `pending` | `scheduler` |  | true |
+| `blocked` | `ResetIfBlocked` | `ResetIfBlocked` | `pending` | `scheduler` | the block reason matches, and the optional match function is absent or accepts the task | true |
+| `blocked` | `Widen`, `WidenGated` | `WidenGated` | `pending` | `proven_lead` | added paths and their union are valid and non-empty, reason and actor are non-empty, actor is not holder or reporter, no active file conflicts, the task has no report and has refused paths, and the block reason is widen_requested or growth_gate_required | true |
+| `blocked` | `Widen`, `WidenGated` | `WidenGated` | `in_progress` | `proven_lead` | added paths and their union are valid and non-empty, reason and actor are non-empty, actor is not holder or reporter, no active file conflicts, and a report exists | true |
+| `blocked` | `Escalate` | `block` | `blocked` | `proven_lead` | the reason code is non-empty | false |
+| `blocked` | `Cancel` | `Cancel` | `cancelled` | `asserted_handle` |  | false |
+
+## Block group
+
+| field |
+| --- |
+| `block_reason` |
+| `block_route` |
+| `block_detail` |
+| `block_attempt` |
+| `refused_paths` |
+
+## Who legend
+
+| who | meaning |
+| --- | --- |
+| `asserted_handle` | a caller whose handle is asserted by the command boundary |
+| `scheduler` | the scheduler |
+| `live_holder` | the current holder of a live, claimed lease |
+| `harness_shell` | the harness shell |
+| `creator` | the task creator |
+| `proven_lead` | a lead whose authority has been proved by the caller |
+<!-- task-machine:end -->
 
 v2's `failed` is not a task state in 3.0: a failed attempt ends the lease,
 is recorded in `attempts`, and the task returns to `pending`, where the
