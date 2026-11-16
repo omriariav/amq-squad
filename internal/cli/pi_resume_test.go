@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -72,14 +74,58 @@ func TestLeadRefusesAnEscapingAmMeBeforeAnyPath(t *testing.T) {
 // R3: the squad's own handles launch (a dry run): the check refuses no
 // handle the squad can have, its live ones and the edges of the squad's
 // handle pattern (a hyphen, an underscore, a leading digit, 64 characters).
+//
+// followups-b (Codex on #1021): each dry run prints its launch, the
+// pi_launch envelope of the current schema with the seat's own agent dir and
+// the runtime's argv, and runs nothing: the stand-in pi is never called.
 func TestPiRunAcceptsTheSquadsHandles(t *testing.T) {
-	piFixture(t)
+	call, home := piFixture(t)
 	chdir(t, t.TempDir())
 	t.Setenv("AM_ME", "")
 	t.Setenv("AM_ROOT", "")
 	for _, h := range []string{"lead", "dev", "dev2", "reviewer", "cto", "seat-a", "seat_b", "2dev", strings.Repeat("a", 64)} {
-		if _, _, err := captureOutput(t, func() error { return Run([]string{"pi", "run", "--seat", h, "--dry-run"}, "test") }); err != nil {
+		out, _, err := captureOutput(t, func() error { return Run([]string{"pi", "run", "--seat", h, "--dry-run"}, "test") })
+		if err != nil {
 			t.Errorf("pi run --seat %s: %v", h, err)
+			continue
 		}
+		var launch struct {
+			SchemaVersion int    `json:"schema_version"`
+			Kind          string `json:"kind"`
+			Data          struct {
+				Runtime  string   `json:"runtime"`
+				AgentDir string   `json:"agent_dir"`
+				Argv     []string `json:"argv"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(out), &launch); err != nil || launch.SchemaVersion != JSONSchemaVersion || launch.Kind != "pi_launch" {
+			t.Errorf("pi run --seat %s --dry-run printed no pi_launch envelope of schema %d (%v):\n%s", h, JSONSchemaVersion, err, out)
+			continue
+		}
+		// the expected values are built here, not by the launcher's helpers
+		// and not from the output: the seat's agent dir (plan 4.1), and the
+		// one runtime the fixture unpacked under home, its node, its pi entry
+		// and the package
+		if want := filepath.Join(home, ".amq-squad", "pi-agent", h); launch.Data.AgentDir != want {
+			t.Errorf("pi run --seat %s --dry-run: agent_dir %q, want %q", h, launch.Data.AgentDir, want)
+		}
+		entries, err := os.ReadDir(filepath.Join(home, ".amq-squad", "runtime"))
+		var unpacked []string
+		for _, e := range entries {
+			if e.IsDir() {
+				unpacked = append(unpacked, e.Name())
+			}
+		}
+		if err != nil || len(unpacked) != 1 {
+			t.Fatalf("the fixture's unpacked runtimes: %v (%v)", entries, err)
+		}
+		rt := filepath.Join(home, ".amq-squad", "runtime", unpacked[0])
+		argv := []string{filepath.Join(rt, "node", "bin", "node"), filepath.Join(rt, "pi", "node_modules", "pi", "cli.js"), "-e", filepath.Join(rt, "pi")}
+		if launch.Data.Runtime != rt || !slices.Equal(launch.Data.Argv, argv) {
+			t.Errorf("pi run --seat %s --dry-run: runtime %q, argv %q, want %q and %q", h, launch.Data.Runtime, launch.Data.Argv, rt, argv)
+		}
+	}
+	if call.path != "" || call.argv != nil || call.exit != -1 {
+		t.Fatalf("a dry run ran the stand-in pi: %q %q (exit %d)", call.path, call.argv, call.exit)
 	}
 }
