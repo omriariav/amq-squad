@@ -267,3 +267,123 @@ func TestSeatLiveIsIndependentOfTheBucket(t *testing.T) {
 		}
 	}
 }
+
+// followups-b (Codex on #1020): each task row's next is task.Next of the
+// stored task with no caller (status names no viewer), at the build's clock,
+// in every state the fixture has: the in-progress t1 carries the lead's
+// entries, and the completed t5 carries none. The build runs 37 minutes past
+// the seed's whole hour, so t1's lease (to 12:09) has lapsed: a next taken
+// at another time differs. t6, which the lead created and whose seat asked
+// to widen it to two more files, carries the widen entries and the
+// creator's reset: a next taken from part of the record, or for another
+// caller, differs. t7, reported and waiting for the commit step, has a lease
+// live at the clock (a next taken at the wall clock differs) and no task
+// done (a next taken without its report differs); t8, blocked for the
+// owner, carries the owner's answer (a caller without the owner differs);
+// t9, claimed and live with no report, carries the holder's task done.
+func TestEachTaskRowCarriesTaskNext(t *testing.T) {
+	root, gates := seed(t)
+	store, err := task.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Add(task.AddInput{Title: "Created by the lead", Class: "implement", ProjectPath: "/repo", CreatedBy: "lead"}, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t6", "impl-5", nil, 10*time.Minute, now.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.BlockWithPaths("t6", "impl-5", task.ReasonWidenRequested, "two more files", task.RouteLead, []string{"internal/a.go", "internal/b.go"}, now.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	clock := now.Add(37 * time.Minute)
+	// t7: reported, waiting for the commit step, its lease live at the clock
+	if _, err := store.Add(task.AddInput{Title: "Reported", Class: "implement", ProjectPath: "/repo", DeclaredFiles: []string{"internal/x.go"}}, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t7", "impl-6", nil, 30*time.Minute, clock.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Done("t7", "impl-6", "ok", "", clock.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	// t8: blocked for the owner
+	if _, err := store.Add(task.AddInput{Title: "For the owner", Class: "implement", ProjectPath: "/repo"}, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Block("t8", "lead", "needs_decision", "the owner decides", task.RouteOwner, clock.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	// t9: claimed, no report, its lease live at the clock (12:37) and ending
+	// at 12:45, before the next whole hour: a next taken at the time rounded
+	// to the hour differs
+	if _, err := store.Add(task.AddInput{Title: "Working", Class: "implement", ProjectPath: "/repo"}, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Claim("t9", "impl-7", nil, 10*time.Minute, clock.Add(-2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	st := Build(Collect(CollectOptions{Root: root, Session: "squad", ProjectPath: "/repo", ProducerVersion: "test", Now: clock, Gates: gates, PIDAlive: alive}))
+	withEntries, empty := 0, 0
+	for _, id := range []string{"t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9"} {
+		stored, err := store.Get(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := task.Next(stored, clock, task.NextCaller{})
+		if got := taskRow(st, id).Next; !reflect.DeepEqual(got, want) {
+			t.Errorf("task %s (%s): the row's next = %+v, want task.Next = %+v", id, stored.State, got, want)
+		}
+		if len(want) > 0 {
+			withEntries++
+		} else {
+			empty++
+		}
+	}
+	if withEntries == 0 || empty == 0 {
+		t.Fatalf("the fixture has %d rows with entries and %d empty; the check wants both", withEntries, empty)
+	}
+	if t1, t5 := taskRow(st, "t1"), taskRow(st, "t5"); len(t1.Next) == 0 || t5.Next == nil || len(t5.Next) != 0 {
+		t.Fatalf("t1 (%s) next = %+v, want entries; t5 (%s) next = %#v, want an empty list", t1.TaskState, t1.Next, t5.TaskState, t5.Next)
+	}
+	// the fixture tells the record apart: t1's lapsed lease leaves no holder
+	// entry, and t6 has widen entries and a reset only its creator may run
+	for _, e := range taskRow(st, "t1").Next {
+		if e.Who == task.NextHolder && e.Verb != "task release" {
+			t.Fatalf("t1's lapsed lease still lists the holder's %q: %+v", e.Verb, taskRow(st, "t1").Next)
+		}
+	}
+	widen, reset := false, false
+	for _, e := range taskRow(st, "t6").Next {
+		widen = widen || e.Verb == "task widen"
+		reset = reset || (e.Verb == "task reset" && strings.Contains(e.MayRefuse, "only its creator lead"))
+	}
+	if !widen || !reset {
+		t.Fatalf("t6 next = %+v, want task widen and task reset with its creator", taskRow(st, "t6").Next)
+	}
+	// t7's live lease lists the holder's entries but not task done (its
+	// report is filed); t8 lists the owner's answer through Buzz
+	holder, done := false, false
+	for _, e := range taskRow(st, "t7").Next {
+		holder = holder || e.Who == task.NextHolder
+		done = done || e.Verb == "task done"
+	}
+	if !holder || done {
+		t.Fatalf("t7 next = %+v, want the holder's entries and no task done", taskRow(st, "t7").Next)
+	}
+	owner := false
+	for _, e := range taskRow(st, "t8").Next {
+		owner = owner || (e.Who == task.NextOwner && e.Verb == "answer through Buzz")
+	}
+	if !owner {
+		t.Fatalf("t8 next = %+v, want the owner's answer through Buzz", taskRow(st, "t8").Next)
+	}
+	// t9's live lease and no report: the holder's task done is listed
+	done = false
+	for _, e := range taskRow(st, "t9").Next {
+		done = done || (e.Who == task.NextHolder && e.Verb == "task done")
+	}
+	if !done {
+		t.Fatalf("t9 next = %+v, want the holder's task done", taskRow(st, "t9").Next)
+	}
+}
