@@ -694,6 +694,11 @@ as #960 corrected it.
   run in CI; the lane's test commands select only `internal/cli`,
   `internal/launchintent` and `internal/adoptionseam` (`ci.yml:147-148`), so it
   also needs an `internal/buzz` run of them.
+  Done in 3.3.x: `scripts/install-amq-release-binaries.sh` installs both from
+  the lane's AMQ release assets (each checked against the release's
+  `checksums.txt`, and on macOS for the release's Developer ID signature), the
+  lane runs `go test ./internal/buzz/...` with `AMQ_SQUAD_TEST_AMQ_BIN` set, and
+  the step fails if either owner dry-run test skips or does not pass.
 
 ### Evidence tooling
 
