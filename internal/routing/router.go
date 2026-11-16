@@ -515,7 +515,7 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 	tbl := r.o.Table
 	spec, ok := tbl.Classes[t.Class]
 	if !ok {
-		return nil, scheduler.Route{Block: "class_unknown", Detail: fmt.Sprintf("class %q is not in the routing table", t.Class)}
+		return nil, scheduler.Route{Block: task.ReasonClassUnknown, Detail: fmt.Sprintf("class %q is not in the routing table", t.Class)}
 	}
 	if slices.Contains(r.unverified, t.Class) {
 		return nil, scheduler.Route{Block: task.ReasonGrantsInvalid, Detail: (&task.VerifierUnconfiguredError{Class: t.Class}).Error()}
@@ -534,7 +534,7 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 		}
 	}
 	if failures >= r.o.MaxAttempts {
-		return nil, scheduler.Route{Block: "retries_exhausted", Detail: fmt.Sprintf("%d failed attempts", failures)}
+		return nil, scheduler.Route{Block: task.ReasonRetriesExhausted, Detail: fmt.Sprintf("%d failed attempts", failures)}
 	}
 	n := t.Attempt + 1
 	f := r.features(t, list)
@@ -650,7 +650,7 @@ func (r *Router) decide(t task.Task, list []task.Task, now time.Time) (*Decision
 		return d, scheduler.Route{Pool: &pick, Detail: "routing: " + d.UsedTier + " " + d.Policy}
 	}
 	if allUsed && len(chain) > 0 {
-		return d, scheduler.Route{Block: "retries_exhausted", Detail: "every entry of tier " + tier + " ran a failed attempt"}
+		return d, scheduler.Route{Block: task.ReasonRetriesExhausted, Detail: "every entry of tier " + tier + " ran a failed attempt"}
 	}
 	return d, scheduler.Route{Wait: waitReason(here), Detail: "routing: " + skipsText(here)}
 }

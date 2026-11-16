@@ -53,16 +53,11 @@ function literals(rel: string, ...patterns: RegExp[]): string[] {
 type ReasonList = "block" | "wait";
 
 // Reasons which the contract has but no words table handles yet, named for S2.
-const NO_WORDS_YET: { code: string; lists: ReasonList[]; why: string }[] = [
-	{ code: "process_exited", lists: ["block", "wait"], why: "a seat's process exit (internal/scheduler GoneProcessExited); no table has words for it; S2" },
-	{ code: "tool_unpinned", lists: ["block"], why: "the pin check's missing pin (internal/registry PinMissing); no table has words for it; S2" },
-];
+const NO_WORDS_YET: { code: string; lists: ReasonList[]; why: string }[] = [];
 
 // Word-map keys which are not represented by state-contract reason codes.
 const NOT_IN_THE_CONTRACT: { key: string; list: ReasonList; why: string }[] = [
 	{ key: "", list: "wait", why: "not a code: the wait field is empty when a task only waits its turn" },
-	{ key: "class_unknown", list: "block", why: "a Go string literal with no constant; S2" },
-	{ key: "retries_exhausted", list: "block", why: "a Go string literal with no constant; S2" },
 ];
 
 // Read and validate the reason half of the generated state contract.
