@@ -145,6 +145,20 @@ its PR. Nothing here is promised by date.
   cleanup: unlinkat <tmp>/…/bare.git/info: directory not empty". 40 runs of
   that test alone and 45 of three sibling tests passed. Cause not
   established.
+- Dated 2026-11-16: `internal/buzz TestOwnerScriptDryRunRejectsThenSendsAgain`
+  (`internal/buzz/enroll_test.go:118`) failed twice in locked `make ci` runs
+  on the lead's host, with the host's amq-remote at v0.140.0: the request was
+  refused `native_error` "its delivery never started". It is the race in
+  amq-remote's admission and reconcile tick named in the `--poll` item under
+  Buzz and AMQ (upstream, every AMQ version through v0.149.1). GitHub CI
+  skips this test (see the real-AMQ lane item under Buzz and AMQ), so the
+  local count is the only evidence; the 3.3.0 soak tallies it.
+- Dated 2026-11-16: `internal/cli
+  TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns`
+  (`internal/cli/scheduler_leasecap_test.go:183`) failed once in a locked
+  `make ci` under load and passed 5 of 5 on rerun. Cause not established
+  (timing under load suspected); the 3.3.0 soak counts it per locked
+  `make ci`.
 
 ### Ledgers, seals and recovery
 
@@ -671,6 +685,15 @@ as #960 corrected it.
   relay record under a root that has had a phone request relayed), and
   narrow the seven added words to the parser's form if decorated lines
   dominate.
+- **The real-AMQ lane does not install amq-remote or amq-owner-sign**
+  (2026-11-16): it installs `amq` alone (`.github/workflows/ci.yml:132`), and
+  `internal/buzz`'s owner dry-run tests skip when either binary is missing
+  (`internal/buzz/enroll_test.go:773-776`), so they skip in CI. Fix (the plan
+  reviewer, for 3.3.x): the lane installs amq-remote and amq-owner-sign at the
+  pin from the notarized release assets, checksums verified, so those tests
+  run in CI; the lane's test commands select only `internal/cli`,
+  `internal/launchintent` and `internal/adoptionseam` (`ci.yml:147-148`), so it
+  also needs an `internal/buzz` run of them.
 
 ### Evidence tooling
 
