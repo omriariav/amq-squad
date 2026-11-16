@@ -164,13 +164,43 @@ func (c *Core) HandleEvent(ctx context.Context, raw []byte) Result {
 	return cc.handleEvent(ctx, raw)
 }
 
-func (c *Core) handleEvent(ctx context.Context, raw []byte) Result { return c.decide(ctx, raw, false) }
+func (c *Core) handleEvent(ctx context.Context, raw []byte) Result {
+	return c.publishLeftWindow(ctx, c.decide(ctx, raw, false))
+}
 
-// afterWindowRead and beforeCommit run in decide after the window re-ask is
-// read and before the commit; they are variables only so the tests can put
-// another handler's window re-ask between the two (A1-3).
+// publishLeftWindow is the last step for every owner event that names a gate
+// and does not decide it: a window re-ask of that gate another handler
+// reserved while this event was being judged, and whose publish failed, is
+// published before this event is answered (the same retry, on a fresh
+// read). A failure there is this event's refusal, reask_publish_failed, so
+// the handler leaves it unhandled and its redelivery tries again. A decided
+// gate gets no window re-ask (ReserveWindow refuses it).
+func (c *Core) publishLeftWindow(ctx context.Context, r Result) Result {
+	if r.GateID == "" || r.Outcome == operatorauth.DecisionApproved || r.Outcome == operatorauth.DecisionDenied || r.Code == RejectPublish {
+		return r
+	}
+	rec, err := c.Store.Load(r.GateID)
+	if err != nil {
+		return r
+	}
+	q, qerr := c.Store.Question(r.GateID)
+	w, werr := c.Store.ReadWindow(r.GateID)
+	if qerr != nil || werr != nil {
+		return r
+	}
+	if err := c.retryWindowPublish(ctx, rec, q, w); err != nil {
+		return rejected(r.GateID, r.EventID, err)
+	}
+	return r
+}
+
+// afterWindowRead, afterVerify and beforeCommit run in decide after the
+// window re-ask is read, after the answer is verified, and before the commit;
+// they are variables only so the tests can put another handler's window
+// re-ask between those steps (A1-3).
 var (
 	afterWindowRead = func(gateID string) {}
+	afterVerify     = func(gateID string) {}
 	beforeCommit    = func(gateID string) {}
 )
 
@@ -223,15 +253,23 @@ func (c *Core) decide(ctx context.Context, raw []byte, again bool) Result {
 	}
 	afterWindowRead(rec.GateID)
 	// a window re-ask reserved but not published (its publish failed) is
-	// published before any verdict that depends on it: the same event, and
-	// only one that verifies as the body's in the gate thread
-	if !c.Store.WindowPublished(rec.GateID) && windowValid(window, rec, q, c.Pin) {
-		if err := c.publishWindow(ctx, *window); err != nil {
-			return rejected(rec.GateID, e.ID, err)
-		}
+	// published before any verdict that depends on it
+	if err := c.retryWindowPublish(ctx, rec, q, window); err != nil {
+		return rejected(rec.GateID, e.ID, err)
 	}
 	now := c.now()
 	o, err := VerifyReasked(raw, rec, q, reask, window, c.Pin, now)
+	afterVerify(rec.GateID)
+	if err != nil {
+		// before any refusal or re-ask: a window re-ask another handler
+		// reserved after this pass's read, whose publish failed, is
+		// published (the same retry, on a fresh read; State counts it open)
+		if w, rerr := c.Store.ReadWindow(rec.GateID); rerr == nil {
+			if perr := c.retryWindowPublish(ctx, rec, q, w); perr != nil {
+				return rejected(rec.GateID, e.ID, perr)
+			}
+		}
+	}
 	if Code(err) == RejectLapsed {
 		// an answer in the thread after the window: the gate is asked again
 		// there with a new window, once (A1-3); this answer is not accepted
@@ -414,6 +452,17 @@ func (c *Core) windowReask(ctx context.Context, rec gatestore.Record, q *gatesto
 		Detail: "the answer came after the gate's window; asked again in the thread with a new window (reply here)"}
 }
 
+// retryWindowPublish publishes the gate's stored window re-ask w when it is
+// valid (windowValid) and not yet published: a reserve whose publish
+// failed. It is the one retry path; handleEvent runs it before any verdict
+// that depends on the window re-ask, and before a thread re-ask.
+func (c *Core) retryWindowPublish(ctx context.Context, rec gatestore.Record, q *gatestore.Question, w *gatestore.Reask) error {
+	if c.Store.WindowPublished(rec.GateID) || !windowValid(w, rec, q, c.Pin) {
+		return nil
+	}
+	return c.publishWindow(ctx, *w)
+}
+
 // publishWindow publishes a reserved window re-ask's exact bytes and marks
 // it published. handleEvent retries it for every owner event of the gate
 // until it succeeds, so the event the window is derived from is the one the
@@ -433,7 +482,11 @@ func (c *Core) publishWindow(ctx context.Context, r gatestore.Reask) error {
 // not count.
 func WindowReaskText(rec gatestore.Record) string {
 	issued, _, na, _ := rec.Window()
-	return "The time to answer this question ran out, so it is asked again here.\nReply yes or no to this message within " + windowWords(na.Sub(issued)) +
+	return windowReaskText(rec, windowWords(na.Sub(issued)))
+}
+
+func windowReaskText(rec gatestore.Record, window string) string {
+	return "The time to answer this question ran out, so it is asked again here.\nReply yes or no to this message within " + window +
 		". An answer dated before this message does not count: answer again.\n\n" + rec.Text
 }
 
@@ -444,11 +497,20 @@ func windowWords(d time.Duration) string {
 		}
 		return fmt.Sprintf("%d hours", d/time.Hour)
 	}
-	m := int((d + time.Minute - 1) / time.Minute)
-	if m == 1 {
-		return "1 minute"
+	// exact, never rounded up: whole minutes, then any seconds (a window is
+	// whole seconds, at least a minute: gatestore.Render)
+	words := countWords(int(d/time.Minute), "minute")
+	if s := int(d % time.Minute / time.Second); s > 0 {
+		words += " " + countWords(s, "second")
 	}
-	return fmt.Sprintf("%d minutes", m)
+	return words
+}
+
+func countWords(n int, unit string) string {
+	if n == 1 {
+		return "1 " + unit
+	}
+	return fmt.Sprintf("%d %ss", n, unit)
 }
 
 // MailboxMessage is the part of an AMQ mailbox message the label path reads.
