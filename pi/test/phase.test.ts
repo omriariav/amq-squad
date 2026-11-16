@@ -155,7 +155,11 @@ function soloWorld() {
 			path.join(soloRoot, "extensions", "amq-squad", "phase.json"),
 			JSON.stringify({ schema: 1, phase: "team", project: "/repo", root: squadRoot, base_root: path.dirname(squadRoot), session: "s1", handle: "cto", digest: DIGEST, at: "2026-11-01T09:00:00.123Z", pid: process.ppid, start: "darwin-tv:1.1" }),
 		);
-	const env: Record<string, string> = { AM_ME: "lead", AM_ROOT: soloRoot, AM_SESSION: "solo", AMQ_SQUAD_BIN: fakeBin(dir), AMQ_SQUAD_SOLO_LEAD: "1", AMQ_SQUAD_PROJECT: "/repo", FAKE_NONCE: NONCE, ...files };
+	// flake 5 (docs/v3-followups.md): the guard's fail-closed timeout is the
+	// product's (5 s, hooks.ts); here each guard call starts a fresh shell,
+	// which host load can hold past 5 s, so the rows give guard a budget load
+	// cannot exhaust (they test the switch, not the timeout)
+	const env: Record<string, string> = { AM_ME: "lead", AM_ROOT: soloRoot, AM_SESSION: "solo", AMQ_SQUAD_BIN: fakeBin(dir), AMQ_SQUAD_SOLO_LEAD: "1", AMQ_SQUAD_PROJECT: "/repo", AMQ_SQUAD_HOOK_TIMEOUT_MS: "600000", FAKE_NONCE: NONCE, ...files };
 	return { dir, soloRoot, squadRoot, team, applyReply, marker, env };
 }
 

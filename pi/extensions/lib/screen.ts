@@ -321,7 +321,10 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 	}
 
 	const open = st.gates.filter((g) => g.state === "open");
-	out.push(`waiting on you (${open.length})`);
+	// A3: where to answer is said once, in the header, so a long question
+	// line clipped at the pane's width never hides it; nothing waiting says
+	// so and gives no instruction.
+	out.push(open.length ? `waiting on you (${open.length}): answer on the phone; /answer shows it` : `waiting on you (0)`);
 	if (!open.length) out.push("  Nothing is waiting on you.");
 	for (const g of open) {
 		const since = st.attention.find((a) => a.kind === "gate" && a.gate_id === g.id)?.since ?? "";
@@ -329,7 +332,7 @@ export function renderScreen(st: ScreenStatus, now: Date = new Date(), key?: Key
 		// phone shows it; the gate id, the action and the digest prefix go
 		// below the rule. The terminal door is not built (Q7 of brief 31-2),
 		// so an open typed gate waits on Buzz.
-		out.push(`  ${gateLabel(g)}  (answer on the phone; /answer shows it)`);
+		out.push(`  ${gateLabel(g)}`);
 		rec(`${g.id}  ${g.action_class}  ${typedPrefix(g.target_digest)}  age ${age(since, now)}  waiting on Buzz`);
 	}
 	const gateAlert = [...st.attention].reverse().find((a) => a.gate_id && a.kind !== "gate");

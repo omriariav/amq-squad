@@ -376,9 +376,22 @@ export class Keys {
 	}
 }
 
+// ACTION_WORDS are the gate actions in words (gatetarget.Actions, the words of
+// gatestore.ClassWords), for a gate whose question cannot be shown.
+export const ACTION_WORDS: Record<string, string> = {
+	credential_change: "a credential change",
+	external_send: "a message outside the squad",
+	github_release: "a GitHub release",
+	package_publish: "a package release",
+	spawn: "a merge or growth past the grant",
+	tag: "a tag",
+};
+
 // gateLabel is a gate's line in a dialog and on the screen: its plain
-// question's first line; for a gate raised before 3.1.1, its kind in words.
+// question's first line; for a gate whose question is empty or has no
+// readable line (raised before 3.1.1, or blank after status's plain pass),
+// what it asks about in words. Never the gate id.
 export function gateLabel(g: { id: string; action_class: string; question?: string }): string {
 	const first = (g.question ?? "").split("\n").find((l) => l.trim() !== "");
-	return first ?? `an owner gate (${g.action_class.replace(/_/g, " ")}) is open`;
+	return first ?? `An owner question about ${ACTION_WORDS[g.action_class] ?? "an action the squad wants to take"}; its words could not be read here`;
 }

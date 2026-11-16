@@ -191,7 +191,7 @@ test("the screen renders from a status fixture: the lead and the root, each bloc
 	assert.ok(train.includes("    ! tag v1.2.0 has no accepted gate"), train.join("\n"));
 	assert.equal(train.at(-1), "  the merge train stopped at PR #812: its CI is not green; fix the failing check and the train tries again");
 	const waiting = block(lines, "waiting on you (1)");
-	assert.deepEqual(waiting.slice(1), ["  Create a tag named v1?  (answer on the phone; /answer shows it)"]);
+	assert.deepEqual(waiting, ["waiting on you (1): answer on the phone; /answer shows it", "  Create a tag named v1?"]);
 	// below the rule: the codes and ids for the record
 	const rec = below(lines);
 	assert.ok(rec.includes("  exit_refused: old-dev ledger_tampered at gone"), rec.join("\n"));
