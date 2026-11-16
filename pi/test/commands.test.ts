@@ -44,11 +44,22 @@ async function load(kind: "lead" | "solo"): Promise<FakePi> {
 	return pi;
 }
 
+// drawn waits for the screen's first draw. The draw waits on the fake
+// amq-squad's status, a fresh shell that host load can hold for seconds;
+// a counted poll (1000 rounds of 10 ms) gave up at about 11 s and the next
+// line read an undefined widget (flake 6, docs/v3-followups.md). It counts
+// no rounds and keeps no deadline of its own: it stops on the test's own
+// signal, which node:test aborts at the test's timeout (DRAW, 600 s, counted
+// from the test's start), so a draw that never comes throws "the screen never
+// drew" within one 10 ms round of the timeout and leaves no timer behind.
+const DRAW = { timeout: 600_000 };
+async function drawn(ok: () => boolean, signal: AbortSignal): Promise<void> { while (!ok()) { if (signal.aborted) throw new Error("the screen never drew"); await new Promise((r) => setTimeout(r, 10)); } }
+
 // Row 1: every action has its own registered command with a one-line plain
 // description; no name is a pi built-in; bare /squad toggles nothing and
 // prints the phase's commands. Reverted (the 3.1.0 /squad with keys), the
 // actions are not registered and /squad toggles the screen.
-test("row 1: one command per action, a one-line plain description each, no pi built-in name", async () => {
+test("row 1: one command per action, a one-line plain description each, no pi built-in name", DRAW, async (t) => {
 	const names = await builtins();
 	assert.ok(names.includes("settings") && names.includes("quit") && names.length >= 20, `pi's built-ins: ${names}`);
 	const lead = await load("lead");
@@ -74,7 +85,7 @@ test("row 1: one command per action, a one-line plain description each, no pi bu
 		const notes: string[] = [];
 		ctx.ui.notify = (m: string) => notes.push(m);
 		await pi.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
-		for (let i = 0; i < 1000 && !(ctx.widgets[key]?.lines ?? []).some((l: string) => l.startsWith("amq-squad: lead") || l.startsWith("amq-squad: solo")); i++) await new Promise((r) => setTimeout(r, 10));
+		await drawn(() => (ctx.widgets[key]?.lines ?? []).some((l: string) => l.startsWith("amq-squad: lead") || l.startsWith("amq-squad: solo")), t.signal);
 		const before = ctx.widgets[key]?.lines;
 		assert.ok(before, `${phase}: no screen`);
 		await pi.commands.get("squad").handler("", ctx);
@@ -91,7 +102,7 @@ test("row 1: one command per action, a one-line plain description each, no pi bu
 // Row 2: the screen's last line lists exactly the commands registered for
 // the current phase, in both phases: the solo plan block and the team
 // screen, and the solo lead's screen after its switch to the team phase.
-test("row 2: the screen's last line lists exactly the current phase's commands", async () => {
+test("row 2: the screen's last line lists exactly the current phase's commands", DRAW, async (t) => {
 	for (const phase of ["solo", "team"] as Phase[]) {
 		const registered = Object.keys(COMMANDS).filter((n) => COMMANDS[n].phases.includes(phase) && COMMANDS[n].listed);
 		assert.deepEqual(phaseCommands(phase), registered.map((n) => COMMANDS[n].listed));
@@ -101,7 +112,7 @@ test("row 2: the screen's last line lists exactly the current phase's commands",
 	const lead = await load("lead");
 	const ctx = fakeCtx({ hasUI: true });
 	await lead.emit("session_start", { type: "session_start", reason: "startup" }, ctx);
-	for (let i = 0; i < 1000 && !(ctx.widgets[SCREEN_KEY]?.lines ?? [])[0]?.startsWith("amq-squad: lead"); i++) await new Promise((r) => setTimeout(r, 10));
+	await drawn(() => (ctx.widgets[SCREEN_KEY]?.lines ?? [])[0]?.startsWith("amq-squad: lead") ?? false, t.signal);
 	const team = ctx.widgets[SCREEN_KEY].lines as string[];
 	assert.equal(team.at(-1), "/add  /reset  /dismiss  /answer  /widen  /team hide");
 	for (const c of team.at(-1)!.split(/ {2}/)) assert.ok(lead.commands.has(c.slice(1).split(" ")[0]), `${c} is not registered`);
@@ -126,7 +137,7 @@ test("row 2: the screen's last line lists exactly the current phase's commands",
 
 // Row 2, the switch: the solo lead's screen after the owner's yes is the
 // team screen with the team phase's commands; the plan block goes.
-test("row 2: after the switch to the team phase the team screen shows the team's commands", async () => {
+test("row 2: after the switch to the team phase the team screen shows the team's commands", DRAW, async (t) => {
 	const { SoloTeam } = await import("../extensions/lib/team.ts");
 	const { installCommands } = await import("../extensions/lib/commands.ts");
 	const { Screen } = await import("../extensions/lib/screen.ts");
@@ -143,7 +154,7 @@ test("row 2: after the switch to the team phase the team screen shows the team's
 	team.render();
 	assert.equal((ctx.widgets[PLAN_KEY].lines as string[]).at(-1), "/plan  /confirm  /team hide");
 	team.switchToTeam({ root: path.join(tmpdir(), "s1"), handle: "cto", session: "s1" });
-	for (let i = 0; i < 1000 && !screen.last; i++) await new Promise((r) => setTimeout(r, 10));
+	await drawn(() => !!screen.last, t.signal);
 	screen.stop();
 	assert.equal(ctx.widgets[PLAN_KEY].lines, undefined, "the plan block stayed");
 	assert.equal((ctx.widgets[SCREEN_KEY].lines as string[]).at(-1), "/add  /reset  /dismiss  /answer  /widen  /team hide");
