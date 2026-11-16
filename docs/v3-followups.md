@@ -61,8 +61,9 @@ its PR. Nothing here is promised by date.
      Done in 3.3.0 A3: the row waited 1000 rounds of 10 ms for the screen's
      first draw, then read the widget anyway. The three screen waits of
      `pi/test/commands.test.ts` now wait for the draw itself and stop on
-     the test's own signal, aborted at its 600 s timeout, throwing "the
-     screen never drew". A status forced to 15 s failed the row with the
+     the test's own signal: a draw that never comes fails the test at its
+     600 s timeout (node reports the timeout), and the wait stops with it,
+     so the file run ends. A status forced to 15 s failed the row with the
      recorded TypeError at 11.5 s before the change and passed after it.
   7. `internal/cli/repass5_fix_test.go:74`
      `TestDecisionAdapterKillsAHungGuardGroup` reported a hung guard and

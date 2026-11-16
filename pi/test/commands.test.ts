@@ -50,8 +50,10 @@ async function load(kind: "lead" | "solo"): Promise<FakePi> {
 // line read an undefined widget (flake 6, docs/v3-followups.md). It counts
 // no rounds and keeps no deadline of its own: it stops on the test's own
 // signal, which node:test aborts at the test's timeout (DRAW, 600 s, counted
-// from the test's start), so a draw that never comes throws "the screen never
-// drew" within one 10 ms round of the timeout and leaves no timer behind.
+// from the test's start). A draw that never comes fails the test at that
+// timeout, reported as node's own "test timed out" (drawn's throw comes after
+// node has already failed the test), and the wait stops with it, so the file
+// run ends.
 const DRAW = { timeout: 600_000 };
 async function drawn(ok: () => boolean, signal: AbortSignal): Promise<void> { while (!ok()) { if (signal.aborted) throw new Error("the screen never drew"); await new Promise((r) => setTimeout(r, 10)); } }
 

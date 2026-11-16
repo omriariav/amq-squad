@@ -393,5 +393,7 @@ export const ACTION_WORDS: Record<string, string> = {
 // what it asks about in words. Never the gate id.
 export function gateLabel(g: { id: string; action_class: string; question?: string }): string {
 	const first = (g.question ?? "").split("\n").find((l) => l.trim() !== "");
-	return first ?? `An owner question about ${ACTION_WORDS[g.action_class] ?? "an action the squad wants to take"}; its words could not be read here`;
+	// an own key only: an action named like an Object.prototype member
+	// ("constructor", "__proto__") gets the generic words, not its value
+	return first ?? `An owner question about ${Object.hasOwn(ACTION_WORDS, g.action_class) ? ACTION_WORDS[g.action_class] : "an action the squad wants to take"}; its words could not be read here`;
 }
