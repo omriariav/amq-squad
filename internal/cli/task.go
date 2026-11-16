@@ -123,6 +123,37 @@ type taskEnvelope struct {
 	Task task.Task `json:"task"`
 }
 
+// taskShowEnvelope is task show --json: the stored task, and beside it (never
+// in it) what can be done to it next (S3-1; additive).
+type taskShowEnvelope struct {
+	Root string           `json:"root"`
+	Task task.Task        `json:"task"`
+	Next []task.NextEntry `json:"next"`
+}
+
+// taskNextCaller is whom task show's next is for: with no --me, every role;
+// with --me, the roles that handle holds: the task's lease holder, and the
+// lead when its launch record names the lead role (status.LeadRole, as the
+// status document's lead_handle). A handle that holds neither gets none.
+func taskNextCaller(root, me string, t task.Task) task.NextCaller {
+	if me == "" {
+		return task.NextCaller{}
+	}
+	roles := []string{}
+	if t.Lease != nil && t.Lease.Holder == me {
+		roles = append(roles, task.NextHolder)
+	}
+	// the record must be this handle's own: a record whose handle is another
+	// seat's names no role for me
+	if rec, err := launch.Read(filepath.Join(root, "agents", me)); err == nil && rec.Handle == me && rec.Role == status.LeadRole {
+		roles = append(roles, task.NextLead)
+	}
+	if len(roles) == 0 {
+		roles = append(roles, "none")
+	}
+	return task.NextCaller{Roles: roles, Handle: me}
+}
+
 type taskAddEnvelope struct {
 	Root     string    `json:"root"`
 	Task     task.Task `json:"task"`
@@ -206,6 +237,15 @@ func (f taskFlags) actor(verb string, required bool) (string, error) {
 		cwd, _ := os.Getwd()
 		if err := ensureLaunchTargetIsNotOperator(cwd, "", "task "+verb, "", me); err != nil {
 			return "", err
+		}
+		// a handle is one path segment: task show and task claim join it into
+		// <root>/agents/<me> (taskNextCaller, taskClaimSeatPool), so it is
+		// checked, after the operator's refusal (which reads no launch record)
+		// and before any lookup, with the CLI's --me check (team.ValidateHandle,
+		// as context_resolution.go checks --me), which admits every handle
+		// squad.yaml admits and refuses "." and "/"
+		if err := team.ValidateHandle(me); err != nil {
+			return "", usageErrorf("invalid --me: %v", err)
 		}
 	}
 	return me, nil
@@ -661,7 +701,7 @@ func runTaskTransition(verb string, args []string) error {
 	}
 	if verb == "show" {
 		if *f.jsonOut {
-			return printJSONEnvelope("task", taskEnvelope{Root: root, Task: t})
+			return printJSONEnvelope("task", taskShowEnvelope{Root: root, Task: t, Next: task.Next(t, now, taskNextCaller(root, me, t))})
 		}
 		printTaskDetails(t)
 		return nil

@@ -118,6 +118,30 @@ serves; the scheduler waits it by name instead of logging a
 the scheduler state's route waits; `""` otherwise. Its attention item reads
 `<id> waits: no seat serves <pool>: <title>`, severity `medium`.
 
+S3-1 (3.3.0) adds `next`, additive: what can be done to the task next, as a
+list of `{verb, who, may_refuse}`, `[]` when nothing can (a completed or
+cancelled task). It is derived only from the task machine's declared moves
+(`internal/task/contract.go`, `task.Moves`) and the task record, never from
+a model or a heuristic (`task.Next`). `verb` is the command
+(`task done`, `task block`, `task fail`, `task release`, `task cancel`,
+`task reset`, `task widen`, `dispatch --task`, or `answer through Buzz`);
+`who` is `lead`, `holder` (the task's lease holder) or `owner` (a task
+blocked for the owner: the owner answers through Buzz); moves only the
+scheduler or the harness makes are never listed. The status rows carry every
+role's entries, each naming its `who`; `task show --json` carries the same
+list beside the stored task (`data.next`, never in `data.task`), filtered by
+`--me` to the roles that handle holds (the lease holder; the lead, by its
+launch record's role). The conditions the record shows (the live lease and
+its holder, the done report, the block route and reason, the creator, the
+refused paths and a typed widen request) are evaluated, and a move they
+refuse is not listed; any other
+condition a move needs is the entry's `may_refuse` (omitted when there is
+none), and the command may still refuse on it. For `dispatch --task` the `may_refuse` names its checks: the task's
+dependencies completed with their PRs merged at the bound head, no active
+task holding its files, the named seat free, cleaned and allowed to run the
+task's class, and, for a class in the verifier gate, the owner grant's
+verifier command.
+
 Attention item: `id` (stable across runs for the same condition), `kind`,
 `severity` (`high`, `medium`, `low`), `subject`, `since`, `seat`, `task_id`,
 `gate_id`, `bucket`, `action`.
