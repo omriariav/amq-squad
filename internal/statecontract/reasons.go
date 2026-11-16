@@ -124,6 +124,8 @@ func BlockReasons() ReasonList {
 			{Code: task.BlockVerdictTreeMismatch, Constant: "task.BlockVerdictTreeMismatch", Writers: []ReasonWriter{{Function: "seatcommit.verify", Door: "param seatcommit.(Result).refuse#0"}}},
 			{Code: task.ReasonGrantsInvalid, Constant: "task.ReasonGrantsInvalid", Writers: []ReasonWriter{{Function: "routing.(*Router).decide", Door: "field scheduler.Route.Block"}, {Function: "scheduler.(*Scheduler).dispatch", Door: "param task.(Store).Block#2"}}},
 			{Code: task.RefusalPRBoundElsewhere, Constant: "task.RefusalPRBoundElsewhere", Writers: []ReasonWriter{{Function: "scheduler.(*Scheduler).applyCommit", Door: "field scheduler.CommitResult.ReasonCode"}}},
+			{Code: task.ReasonClassUnknown, Constant: "task.ReasonClassUnknown", Writers: []ReasonWriter{{Function: "routing.(*Router).decide", Door: "field scheduler.Route.Block"}}},
+			{Code: task.ReasonRetriesExhausted, Constant: "task.ReasonRetriesExhausted", Writers: []ReasonWriter{{Function: "routing.(*Router).decide", Door: "field scheduler.Route.Block"}, {Function: "scheduler.(DefaultRouter).Route", Door: "field scheduler.Route.Block"}}},
 			{Code: task.ReasonRePinAfterAttempt, Constant: "task.ReasonRePinAfterAttempt", Mark: "no writer"},
 			{Code: task.ReasonWidenRequested, Constant: "task.ReasonWidenRequested", Mark: "no writer"},
 			{Code: task.ReasonGrowthGateRequired, Constant: "task.ReasonGrowthGateRequired", Mark: "no writer"},

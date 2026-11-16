@@ -388,7 +388,14 @@
         "outcomes": [
           "failed",
           "expired",
-          "unclaimed"
+          "unclaimed",
+          "cancelled"
+        ],
+        "conditional": [
+          {
+            "outcome": "cancelled",
+            "condition": "the scheduler's Preparer cleans attempts (AttemptCleaner) and the attempt is not recorded cleaned (CleanedAt unset); it is queued as a close-and-clean item"
+          }
         ]
       },
       {
@@ -994,6 +1001,30 @@
             {
               "function": "scheduler.(*Scheduler).applyCommit",
               "door": "field scheduler.CommitResult.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "class_unknown",
+          "constant": "task.ReasonClassUnknown",
+          "writers": [
+            {
+              "function": "routing.(*Router).decide",
+              "door": "field scheduler.Route.Block"
+            }
+          ]
+        },
+        {
+          "code": "retries_exhausted",
+          "constant": "task.ReasonRetriesExhausted",
+          "writers": [
+            {
+              "function": "routing.(*Router).decide",
+              "door": "field scheduler.Route.Block"
+            },
+            {
+              "function": "scheduler.(DefaultRouter).Route",
+              "door": "field scheduler.Route.Block"
             }
           ]
         },
