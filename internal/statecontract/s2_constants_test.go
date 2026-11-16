@@ -73,9 +73,10 @@ var s2OtherVocabulary = map[string]string{
 // s2Expression is one maximal constant string expression outside a const
 // declaration that has a string literal in it, and where it reaches: its
 // folded value, the literal's site, and the door (directly, or through one
-// local variable it is assigned to).
+// local variable it is assigned to), and the function it reaches the door
+// in (S2-3's caller doors are a door in some functions only).
 type s2Expression struct {
-	value, site, door string
+	value, site, door, function string
 }
 
 type s2Module struct {
@@ -183,10 +184,12 @@ func s2ReadModule(t *testing.T) s2Module {
 					if s2InConstDecl(parents, expression) || !s2HasLiteral(expression) {
 						return true
 					}
+					widened := widenReasonExpression(expression, parents, info)
 					found := s2Expression{
-						value: constant.StringVal(info.Types[expression].Value),
-						site:  reasonSite(fset, expression.Pos()),
-						door:  reasonPlace(widenReasonExpression(expression, parents, info), parents, info),
+						value:    constant.StringVal(info.Types[expression].Value),
+						site:     reasonSite(fset, expression.Pos()),
+						door:     reasonPlace(widened, parents, info),
+						function: enclosingReasonFunction(widened, parents, info),
 					}
 					s2Read.expressions = append(s2Read.expressions, found)
 					if local := s2AssignedLocal(parents, info, expression); local != nil {
@@ -227,9 +230,11 @@ func s2ReadModule(t *testing.T) s2Module {
 							break climb
 						}
 					}
-					door := reasonPlace(widenReasonExpression(use, parents, info), parents, info)
+					widened := widenReasonExpression(use, parents, info)
+					door := reasonPlace(widened, parents, info)
+					function := enclosingReasonFunction(widened, parents, info)
 					for _, assigned := range locals[local] {
-						assigned.door = door
+						assigned.door, assigned.function = door, function
 						s2Read.expressions = append(s2Read.expressions, assigned)
 					}
 					return true
