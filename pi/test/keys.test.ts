@@ -12,6 +12,7 @@ import { installScreen, renderScreen, Screen, type ScreenStatus } from "../exten
 import { truncateToWidth } from "../extensions/lib/width.ts";
 import { installCommands } from "../extensions/lib/commands.ts";
 import { ACTION_WORDS, gateLabel, Keys, refusal, WIDEN_REASON } from "../extensions/lib/keys.ts";
+import { RULE } from "../extensions/lib/words.ts";
 import type { Config } from "../extensions/lib/hooks.ts";
 import type { RunOptions, RunResult } from "../extensions/lib/verbs.ts";
 import { FakePi, fakeCtx } from "./fakepi.ts";
@@ -341,7 +342,11 @@ test("answer, Q7 no: every typed gate kind waits on Buzz and no terminal answer 
 		const r = rig((args) => (args[0] === "gate" && args[1] === "status" ? res(0, envelope("gate_status", [gateRow(i)])) : res(1, "", "error: unexpected")), [UNSHOWN[KINDS[i][0]]], () => gateDoc);
 		await r.screen.poll();
 		const out = await r.press("answer");
-		assert.equal(keyLine(out), `  /answer: Waiting on your answer on the phone to "the ${KINDS[i][1]} gate": reply yes or no in the question's Buzz thread; the terminal cannot answer a typed gate.`);
+		// 3.3.x item 4: a question with no plain line is named by what it asks
+		// about (the dialog's words), never by its class ("the grow gate"); the
+		// line is clipped at the widget's 160 columns like any long line
+		assert.equal(keyLine(out), truncateToWidth(`  /answer: Waiting on your answer on the phone to the owner question about ${ACTION_WORDS[KINDS[i][0]]}: reply yes or no in the question's Buzz thread; the terminal cannot answer a typed gate.`, 160));
+		assert.ok(!keyLine(out).includes(`the ${KINDS[i][1]} gate`), keyLine(out));
 		assert.equal(recLine(out), `  /answer: g${i + 1} ${KINDS[i][0]} (${KINDS[i][1]}) ${KINDS[i][2]} prefix ${String(i + 1).repeat(16)}`);
 		assert.deepEqual(r.calls.map((c) => c.args), [["gate", "status", "--gate", `g${i + 1}`, "--json"]]);
 		assert.ok(r.notes.some((n) => n.includes("Buzz thread")));
@@ -373,8 +378,50 @@ test("answer, Q7 no: an unposted question is posted over Buzz; a gate answered o
 	const failedPost = rig((args) => (args[1] === "status" ? res(0, envelope("gate_status", [gateRow(0, "open", false)])) : res(1, "", "error: gate post: no enrolled share for the binding")), [G1], () => gateDoc);
 	await failedPost.screen.poll();
 	const failedLines = await failedPost.press("answer");
-	assert.equal(keyLine(failedLines), '  /answer: The question "the release gate" did not reach the phone: no enrolled share for the binding');
+	assert.equal(keyLine(failedLines), "  /answer: The owner question about a tag did not reach the phone: no enrolled share for the binding");
 	assert.match(recLine(failedLines), /the question was not posted over Buzz: gate post: no enrolled share for the binding$/);
+});
+
+// 3.3.x item 4: two open gates whose labels read the same are numbered in
+// the screen's order, the number first (the dialog clips on the right), and
+// /answer reads the gate the owner named, not the first with that label; a
+// gate with its own label keeps it.
+test("answer: two open gates with one label are numbered and the one named is read", async () => {
+	const Q = "Create a tag named v3.3.1?";
+	const doc: ScreenStatus = {
+		...fixture,
+		gates: [
+			{ id: "g1", action_class: "tag", target_digest: `sha256:${"1".repeat(16)}aa`, state: "open", raised_by: "cto", question: Q },
+			{ id: "g2", action_class: "spawn", target_digest: `sha256:${"2".repeat(16)}aa`, state: "open", raised_by: "cto", question: "Grow the squad to four seats?" },
+			{ id: "g3", action_class: "tag", target_digest: `sha256:${"3".repeat(16)}aa`, state: "open", raised_by: "cto", question: Q },
+		],
+	};
+	const status = (id: string) => res(0, envelope("gate_status", [{ gate_id: id, class: "tag", typed_class: "release", target: "git tag v3.3.1", digest: `sha256:${(id === "g1" ? "1" : "3").repeat(16)}aa`, state: "open", question_sent: true, text: `${Q}\n\n${RULE}\nids` }]));
+	for (const [pick, id] of [[`(2 of 2) ${Q}`, "g3"], [`(1 of 2) ${Q}`, "g1"]]) {
+		const r = rig((args) => (args[0] === "gate" && args[1] === "status" ? status(args[3]) : res(1, "", "error: unexpected")), [pick], () => doc);
+		await r.screen.poll();
+		const out = await r.press("answer");
+		assert.equal(r.asked[0], `answer: which gate (the phone answers it; the terminal cannot) [(1 of 2) ${Q} | Grow the squad to four seats? | (2 of 2) ${Q}]`);
+		assert.deepEqual(r.calls.map((c) => c.args), [["gate", "status", "--gate", id, "--json"]], pick);
+		assert.match(recLine(out), new RegExp(`^  /answer: ${id} tag \\(release\\) git tag v3\\.3\\.1 prefix `), pick);
+		// a readable question is named by its words, never by the gate's id
+		assert.equal(keyLine(out), truncateToWidth(`  /answer: Waiting on your answer on the phone to "${Q}": reply yes or no in the question's Buzz thread; the terminal cannot answer a typed gate.`, 160), pick);
+	}
+	// a question that itself reads like a numbered label: every line is
+	// numbered by its position, and the third gate is the one read
+	const clash: ScreenStatus = { ...doc, gates: [doc.gates[0], { ...doc.gates[2], id: "g2" }, { ...doc.gates[2], id: "g3", question: `(1 of 2) ${Q}` }] };
+	const r = rig((args) => (args[0] === "gate" && args[1] === "status" ? status(args[3]) : res(1, "", "error: unexpected")), [`3. (1 of 2) ${Q}`], () => clash);
+	await r.screen.poll();
+	await r.press("answer");
+	assert.equal(r.asked[0], `answer: which gate (the phone answers it; the terminal cannot) [1. ${Q} | 2. ${Q} | 3. (1 of 2) ${Q}]`);
+	assert.deepEqual(r.calls.map((c) => c.args), [["gate", "status", "--gate", "g3", "--json"]]);
+	// a readable question whose post fails is named by its words, never by
+	// the gate's id
+	const unposted = (id: string) => res(0, envelope("gate_status", [{ gate_id: id, class: "tag", typed_class: "release", target: "git tag v3.3.1", digest: `sha256:${"3".repeat(16)}aa`, state: "open", question_sent: false, text: `${Q}\n\n${RULE}\nids` }]));
+	const failed = rig((args) => (args[1] === "status" ? unposted(args[3]) : res(1, "", "error: gate post: no enrolled share for the binding")), [`(2 of 2) ${Q}`], () => doc);
+	await failed.screen.poll();
+	assert.equal(keyLine(await failed.press("answer")), `  /answer: The question "${Q}" did not reach the phone: no enrolled share for the binding`);
+	assert.deepEqual(failed.calls.map((c) => c.args), [["gate", "status", "--gate", "g3", "--json"], ["gate", "post", "--gate", "g3", "--json"]]);
 });
 
 test("an unknown key, an old /squad subcommand, or a key without the interactive screen, runs nothing", async () => {

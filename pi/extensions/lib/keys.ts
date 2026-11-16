@@ -296,10 +296,13 @@ export class Keys {
 		const k = "answer";
 		const open = st.gates.filter((g) => g.state === "open");
 		if (!open.length) return { key: k, refused: true, line: "Nothing to answer: no owner gate is open.", record: "no_open_gate" };
-		const labels = open.map((g) => gateLabel(g));
+		const labels = answerLabels(open);
 		const pick = await ctx.ui.select("answer: which gate (the phone answers it; the terminal cannot)", labels);
 		if (!pick) return { key: k, refused: false, line: CANCELLED };
-		const id = open[labels.indexOf(pick)].id;
+		const at = labels.indexOf(pick);
+		if (at < 0) return { key: k, refused: false, line: CANCELLED };
+		const row = open[at];
+		const id = row.id;
 		const s = await this.verb(["gate", "status", "--gate", id, "--json"]);
 		if (failed(s)) return { key: k, refused: true, line: sentence("The gate could not be read", refusal(s)), record: `${id}: ${refusalRecord(s)}` };
 		const g = data<GateStatusRow[]>(s.stdout)?.[0];
@@ -311,11 +314,16 @@ export class Keys {
 		// shows them, then the identifiers for the record
 		const plain = plainOf(g.text);
 		const ids = `${g.gate_id} ${g.class} (${g.typed_class}) ${g.target} prefix ${typedPrefix(g.digest)}`;
-		const first = plain.split("\n").find((l) => l.trim()) ?? `the ${g.typed_class || g.class} gate`;
+		// a question with no plain line is named by what it asks about, in
+		// the words the dialog used (gateAbout), never by its class word
+		// ("the grow gate")
+		const line = plain.split("\n").find((l) => l.trim());
+		const named = line ? `"${line}"` : `the owner question about ${gateAbout(row.action_class)}`;
+		const subject = line ? `The question "${line}"` : `The owner question about ${gateAbout(row.action_class)}`;
 		let posted = "";
 		if (!g.question_sent) {
 			const p = await this.verb(["gate", "post", "--gate", id, "--json"]);
-			if (failed(p)) return { key: k, refused: true, line: sentence(`The question "${first}" did not reach the phone`, refusal(p)), record: `${ids}: the question was not posted over Buzz: ${refusalRecord(p)}` };
+			if (failed(p)) return { key: k, refused: true, line: sentence(`${subject} did not reach the phone`, refusal(p)), record: `${ids}: the question was not posted over Buzz: ${refusalRecord(p)}` };
 			posted = "the question was posted over Buzz; ";
 		}
 		const todo = "reply yes or no in the question's Buzz thread; the terminal cannot answer a typed gate";
@@ -324,7 +332,7 @@ export class Keys {
 		} catch {
 			// the line is on the screen either way
 		}
-		return { key: k, refused: false, line: `Waiting on your answer on the phone to "${first}": ${posted}${todo}.`, record: ids };
+		return { key: k, refused: false, line: `Waiting on your answer on the phone to ${named}: ${posted}${todo}.`, record: ids };
 	}
 
 	// widen: the owner's yes to a seat's typed widen request (#844), or to
@@ -387,13 +395,34 @@ export const ACTION_WORDS: Record<string, string> = {
 	tag: "a tag",
 };
 
+// answerLabels are the /answer dialog's lines, one per open gate in the
+// screen's order: each gate's label, and where two or more gates read the
+// same, each of them numbered "(n of m)" in that order, so the pick maps back
+// to the gate the owner named (as /team numbers its plans). The number comes
+// first: the dialog clips a long line on the right, and a number at its end
+// would be cut. A label that is still not unique (a question that itself
+// reads "(1 of 2) ...") makes every line numbered by its position.
+export function answerLabels(open: { id: string; action_class: string; question?: string }[]): string[] {
+	const base = open.map((g) => gateLabel(g));
+	const labels = base.map((l, i) => {
+		const same = base.filter((x) => x === l).length;
+		return same < 2 ? l : `(${base.slice(0, i + 1).filter((x) => x === l).length} of ${same}) ${l}`;
+	});
+	return new Set(labels).size === labels.length ? labels : base.map((l, i) => `${i + 1}. ${l}`);
+}
+
 // gateLabel is a gate's line in a dialog and on the screen: its plain
 // question's first line; for a gate whose question is empty or has no
 // readable line (raised before 3.1.1, or blank after status's plain pass),
 // what it asks about in words. Never the gate id.
 export function gateLabel(g: { id: string; action_class: string; question?: string }): string {
 	const first = (g.question ?? "").split("\n").find((l) => l.trim() !== "");
-	// an own key only: an action named like an Object.prototype member
-	// ("constructor", "__proto__") gets the generic words, not its value
-	return first ?? `An owner question about ${Object.hasOwn(ACTION_WORDS, g.action_class) ? ACTION_WORDS[g.action_class] : "an action the squad wants to take"}; its words could not be read here`;
+	return first ?? `An owner question about ${gateAbout(g.action_class)}; its words could not be read here`;
+}
+
+// gateAbout is what a gate asks about, in words (ACTION_WORDS): an own key
+// only, so an action named like an Object.prototype member ("constructor",
+// "__proto__") gets the generic words, not its value.
+export function gateAbout(action: string): string {
+	return Object.hasOwn(ACTION_WORDS, action) ? ACTION_WORDS[action] : "an action the squad wants to take";
 }
