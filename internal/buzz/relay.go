@@ -621,8 +621,8 @@ func (h *Handler) gateView(now time.Time) (gateView, error) {
 			if q, err := c.Store.Question(id); err == nil && q != nil {
 				g.threads[q.EventID] = true
 			}
-			if ra, err := c.Store.ReadReask(id); err == nil && ra != nil {
-				g.threads[ra.EventID] = true
+			for _, rid := range c.Store.ReaskEventIDs(id) {
+				g.threads[rid] = true
 			}
 			rec, err := c.Store.Load(id)
 			if err != nil {

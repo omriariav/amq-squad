@@ -669,8 +669,8 @@ func (s *leadStarter) gateAnchors() map[string]bool {
 		if q, _ := store.Question(id); q != nil {
 			out[q.EventID] = true
 		}
-		if r, _ := store.ReadReask(id); r != nil {
-			out[r.EventID] = true
+		for _, rid := range store.ReaskEventIDs(id) {
+			out[rid] = true
 		}
 	}
 	return out

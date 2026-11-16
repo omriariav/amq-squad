@@ -28,6 +28,9 @@ Every message gets one reply, ids and code words only, never your text:
 | `accepted <gate> <class> approved` or `accepted <gate> <class> denied` | your answer verified and committed, with the decision as recorded |
 | `refused <gate> <code>` | not accepted; the code is the verifier's (`already_consumed`, `wrong_pubkey`, `outside_window`, `bad_signature`, `bad_tuple`, `not_in_gate_thread`, ...) |
 | `refused <gate> not_in_gate_thread` and `re-ask: answer in the gate thread (event <id>)` | answer again as a reply in that thread |
+| `refused <gate> gate_lapsed` and `re-ask: answer in the gate thread (event <id>)` | your answer came after the question's time ran out; the question is asked again in its thread with a new window, once: answer that message |
+| `refused <gate> answered_before_reask` and `re-ask: answer in the gate thread (event <id>)` | your answer is dated before the question was asked again: answer again in the thread |
+| `refused <gate> reask_publish_failed` | the question could not be asked again (the relay did not take the post); the same question is posted when this answer is delivered again or when you send the next answer for this gate. Until then the gate shows as open, no new question is on your phone, and the new window keeps running |
 | `routed <lead or mailbox>` | delivered (and forwarded to the lead) |
 | `routed <mailbox> not_forwarded <code>` | delivered, not forwarded (`ambiguous_lead`, `not_a_lead`) |
 | `refused - not_fetched` | the relay did not return your message's event; nothing was done, send it again |

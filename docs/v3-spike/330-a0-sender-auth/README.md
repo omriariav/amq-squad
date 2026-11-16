@@ -373,3 +373,7 @@ var noWords = []string{"no", "deny", "n", "stop", "לא"}
 Row 3 holds: the trim, case and one-mark rule is `ParseBare` in `internal/gatestore/plain.go:555-568`, and the list it reads is in `internal/gatestore/words.go:3-21`, with `TestBareWordsAreTheDecidedList`, `TestParseBareBindsEachWordAloneInAnyCaseWithOneMark`, and `TestParseBareBindsNothingForTwoMarksOrAnythingElseOnTheLine`. That the list is the one list is guarded by `TestNoOtherFileSpellsAYesNoList`. Row 1's first layer, the relay's refusal, now reads the same list and covers all eleven words through `TestRelayRefusesALeadLineOfEachWordOfTheList`; row 2 is unchanged, and row 12 is covered by the `TestFourClassesThroughTheCore` control only.
 
 Open question 2 is answered: the existing test is kept and gains a two-mark refusal. `ok?` alone binds, the plan's ruling 4 notwithstanding.
+
+## A1-3: the window
+
+A1-3 is recorded in `docs/v3-spike/330-a1-3-window/README.md`. Row 7 holds for the window re-ask: an answer in the gate thread after the gate's window gets the gate asked again there with a new window, once, and an answer dated at or before that re-ask, or the event that triggered it, approves nothing. Row 8 holds: an accepted event and any later answer are already_consumed across the three re-asks; the window re-ask's trigger is never a decision; the history re-ask's trigger, re-delivered before any answer, can still approve (known difference 7).

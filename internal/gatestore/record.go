@@ -4,6 +4,7 @@
 //	gates/<id>.json            the gate record, created once (O_EXCL, fsynced) before the question is sent
 //	gates/<id>.question.json   the question as posted, created once
 //	reasks/<id>.json           the one "reply here to confirm" re-post (amendment 19), created once
+//	windows/<id>.json          the one window re-ask after a lapse (A1-3), created once
 //	answers/<id>.json          a verified approval: the operatorauth envelope plus the owner's signed event
 //	denials/<id>.json          a verified owner deny: the signed deny record
 //	consumed/{gates,events,locks}/   the single-use ledger: marks written after the answer file, both fsynced
