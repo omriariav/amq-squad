@@ -3,7 +3,9 @@ package gateverify
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -476,8 +478,14 @@ func TestA13AThreadReaskIsNoWindowReask(t *testing.T) {
 // windowReask does, at the fixture clock, as another handler would.
 func a13SignWindow(t *testing.T, f *fixture, rec gatestore.Record, q gatestore.Question, trigger string) gatestore.Reask {
 	t.Helper()
+	return a13SignWindowText(t, f, rec, q, trigger, WindowReaskText(rec))
+}
+
+// a13SignWindowText is a13SignWindow with the window re-ask's text given.
+func a13SignWindowText(t *testing.T, f *fixture, rec gatestore.Record, q gatestore.Question, trigger, text string) gatestore.Reask {
+	t.Helper()
 	extra := [][]string{{"e", q.EventID, f.core.RelayURL, "root"}, {"squad", rec.Squad}}
-	evt, err := f.core.sign(WindowReaskText(rec), extra)
+	evt, err := f.core.sign(text, extra)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,5 +596,236 @@ func TestA13NoWindowReaskAfterAnApproval(t *testing.T) {
 	}
 	if id, ok := a13Train(f).Accepted("spawn", target); !ok || id != rec.GateID {
 		t.Fatalf("the train's lookup: %q %v", id, ok)
+	}
+}
+
+// W18 (window-fix, P2): handler A's pass reads no window re-ask for a late
+// answer outside the thread; handler B then reserves the window re-ask and
+// its publish fails; A, refused not_in_gate_thread, publishes B's window
+// re-ask (the same retry) before it posts the thread re-ask.
+func TestA13AThreadRefusalPublishesAnUnpublishedWindowReask(t *testing.T) {
+	f := newFixture(t)
+	rec, q := f.raise("g-w18", "tag", "git tag v18")
+	_, _, na, _ := rec.Window()
+	f.clock = na.Add(2 * time.Minute)
+	fr := &failRelay{memRelay: f.relay}
+	var order []string
+	fr.onPublish = func(raw []byte) { e, _ := nostr.ParseEvent(raw); order = append(order, e.ID) }
+	f.core.Relay = fr
+	threaded := f.answer(f.owner, tuple("approve", rec), q.EventID, na.Add(time.Minute))
+	fired := false
+	afterWindowRead = func(id string) {
+		if id == rec.GateID && !fired {
+			fired = true
+			fr.fail = true
+			if r := f.core.HandleEvent(ctx, threaded); r.Outcome != "rejected" || r.Code != RejectPublish {
+				t.Errorf("B's lapsed answer while the relay refuses posts: %+v", r)
+			}
+			fr.fail = false
+		}
+	}
+	defer func() { afterWindowRead = func(string) {} }()
+	r := f.core.HandleEvent(ctx, f.answer(f.owner, tuple("approve", rec), "", f.clock))
+	if !fired || r.Outcome != "reasked" || r.Code != RejectThread {
+		t.Fatalf("A's late answer outside the thread: %+v (fired %v)", r, fired)
+	}
+	w, _ := f.store.ReadWindow(rec.GateID)
+	if w == nil || !f.store.WindowPublished(rec.GateID) {
+		t.Fatalf("B's window re-ask was not published by A: %+v", w)
+	}
+	if got, _ := f.relay.FetchByID(ctx, w.EventID); got == nil {
+		t.Fatal("B's window re-ask is not on the relay")
+	}
+	ra, _ := f.store.ReadReask(rec.GateID)
+	if ra == nil || !f.store.ReaskPublished(rec.GateID) {
+		t.Fatalf("the thread re-ask: %+v", ra)
+	}
+	if !slices.Equal(order, []string{w.EventID, ra.EventID}) {
+		t.Fatalf("published %v, want the window re-ask %s, then the thread re-ask %s", order, w.EventID, ra.EventID)
+	}
+}
+
+// W18b (the Codex pass on window-fix): the same race when the gate was
+// already re-asked in its thread, and when A's answer names another thread:
+// A's refusal (not_in_gate_thread, wrong_gate_thread) comes after B's window
+// re-ask is published.
+func TestA13EveryRefusalPublishesAnUnpublishedWindowReask(t *testing.T) {
+	for _, c := range []struct {
+		name, code string
+		reasked    bool
+		thread     string
+	}{{"already re-asked in the thread", RejectThread, true, ""}, {"another thread", RejectWrongThread, false, strings.Repeat("c", 64)}} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			rec, q := f.raise("g-w18b", "tag", "git tag v18b")
+			_, _, na, _ := rec.Window()
+			if c.reasked {
+				f.clock = testNow.Add(time.Minute)
+				if r := f.core.HandleEvent(ctx, f.answer(f.owner, tuple("approve", rec), "", f.clock)); r.Outcome != "reasked" {
+					t.Fatalf("the thread re-ask: %+v", r)
+				}
+			}
+			f.clock = na.Add(2 * time.Minute)
+			fr := &failRelay{memRelay: f.relay}
+			f.core.Relay = fr
+			threaded := f.answer(f.owner, tuple("approve", rec), q.EventID, na.Add(time.Minute))
+			fired := false
+			afterWindowRead = func(id string) {
+				if id == rec.GateID && !fired {
+					fired = true
+					fr.fail = true
+					if r := f.core.HandleEvent(ctx, threaded); r.Code != RejectPublish {
+						t.Errorf("B's lapsed answer while the relay refuses posts: %+v", r)
+					}
+					fr.fail = false
+				}
+			}
+			defer func() { afterWindowRead = func(string) {} }()
+			r := f.core.HandleEvent(ctx, f.answer(f.owner, tuple("approve", rec), c.thread, f.clock))
+			if !fired || r.Outcome != "rejected" || r.Code != c.code {
+				t.Fatalf("A's late answer: %+v (fired %v)", r, fired)
+			}
+			if w, _ := f.store.ReadWindow(rec.GateID); w == nil || !f.store.WindowPublished(rec.GateID) {
+				t.Fatalf("B's window re-ask was not published by A's refusal: %+v", w)
+			}
+		})
+	}
+}
+
+// W20 (the plan reviewer's condition on window-fix): only the exact new
+// words open a window. A window re-ask carrying the old rounded words
+// ("within 2 minutes" for a 61 s window) opens nothing: an answer after it
+// is outside the gate's window, and a reply to it approves nothing.
+func TestA13AWindowReaskWithTheOldWordsOpensNothing(t *testing.T) {
+	f := newFixture(t)
+	rec, q, err := f.core.Raise(ctx, gatestore.Spec{GateID: "g-w20", Action: "tag", Target: "git tag v20", RaisedBy: "lead", Window: 61 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := windowReaskText(rec, "2 minutes")
+	if old == WindowReaskText(rec) {
+		t.Fatalf("the old text is the new one: %q", old)
+	}
+	_, _, na, _ := rec.Window()
+	f.clock = na.Add(time.Minute)
+	stored := a13SignWindowText(t, f, rec, q, strings.Repeat("d4", 32), old)
+	f.clock = f.clock.Add(10 * time.Second)
+	if r := f.core.HandleEvent(ctx, f.answer(f.owner, tuple("approve", rec), q.EventID, f.clock)); r.Outcome != "rejected" || r.Code != RejectWindow {
+		t.Fatalf("an answer after a window re-ask with the old words: %+v", r)
+	}
+	if r := f.core.HandleEvent(ctx, f.answer(f.owner, "yes", stored.EventID, f.clock.Add(time.Second))); r.Outcome == operatorauth.DecisionApproved {
+		t.Fatalf("a reply to the old-words window re-ask approved: %+v", r)
+	}
+	if d := f.store.Decision(rec.GateID); d != "" {
+		t.Fatalf("the gate was decided: %s", d)
+	}
+}
+
+// W19 (window-fix, P3): the window re-ask states the exact window, never
+// rounded up: whole hours and minutes as words, then any seconds.
+func TestA13TheWindowWordsAreExact(t *testing.T) {
+	for d, want := range map[time.Duration]string{
+		61 * time.Second:                "1 minute 1 second",
+		time.Minute:                     "1 minute",
+		30 * time.Minute:                "30 minutes",
+		90*time.Minute + 59*time.Second: "90 minutes 59 seconds",
+		time.Hour:                       "1 hour",
+		2 * time.Hour:                   "2 hours",
+		time.Hour + 30*time.Second:      "60 minutes 30 seconds",
+	} {
+		if got := windowWords(d); got != want {
+			t.Errorf("windowWords(%s) = %q, want %q", d, got, want)
+		}
+	}
+	f := newFixture(t)
+	for _, c := range []struct {
+		window time.Duration
+		words  string
+	}{{61 * time.Second, "within 1 minute 1 second. "}, {30 * time.Minute, "within 30 minutes. "}} {
+		rec, _, err := f.core.Raise(ctx, gatestore.Spec{GateID: fmt.Sprintf("g-w19-%d", int(c.window.Seconds())), Action: "tag", Target: "git tag v19", RaisedBy: "lead", Window: c.window})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if text := WindowReaskText(rec); !strings.Contains(text, "Reply yes or no to this message "+c.words) {
+			t.Errorf("a %s window's re-ask says:\n%s", c.window, text)
+		}
+	}
+}
+
+// W18c (the second Codex pass on window-fix): A's own retry of B's window
+// re-ask fails too: A is refused reask_publish_failed and posts no thread
+// re-ask, so its redelivery tries again.
+func TestA13AFailedRetryOnARefusalPostsNoThreadReask(t *testing.T) {
+	f := newFixture(t)
+	rec, q := f.raise("g-w18c", "tag", "git tag v18c")
+	_, _, na, _ := rec.Window()
+	f.clock = na.Add(2 * time.Minute)
+	fr := &failRelay{memRelay: f.relay}
+	f.core.Relay = fr
+	threaded := f.answer(f.owner, tuple("approve", rec), q.EventID, na.Add(time.Minute))
+	fired := false
+	afterWindowRead = func(id string) {
+		if id == rec.GateID && !fired {
+			fired = true
+			fr.fail = true
+			if r := f.core.HandleEvent(ctx, threaded); r.Code != RejectPublish {
+				t.Errorf("B's lapsed answer while the relay refuses posts: %+v", r)
+			}
+		}
+	}
+	defer func() { afterWindowRead = func(string) {} }()
+	r := f.core.HandleEvent(ctx, f.answer(f.owner, tuple("approve", rec), "", f.clock))
+	if !fired || r.Outcome != "rejected" || r.Code != RejectPublish {
+		t.Fatalf("A's late answer while the relay still refuses posts: %+v (fired %v)", r, fired)
+	}
+	if ra, _ := f.store.ReadReask(rec.GateID); ra != nil {
+		t.Fatalf("a thread re-ask was reserved after the failed window publish: %+v", ra)
+	}
+	if f.store.WindowPublished(rec.GateID) {
+		t.Fatal("the window re-ask is marked published")
+	}
+}
+
+// W21 (the second Codex pass on window-fix): A's answer verifies inside the
+// window; B then reserves the window re-ask and its publish fails while A is
+// still being judged; A is refused afterwards (its question was altered):
+// B's window re-ask is published before A's refusal is returned.
+func TestA13ALaterRefusalPublishesAnUnpublishedWindowReask(t *testing.T) {
+	f := newFixture(t)
+	rec, q := f.raise("g-w21", "tag", "git tag v21")
+	_, _, na, _ := rec.Window()
+	fr := &failRelay{memRelay: f.relay}
+	f.core.Relay = fr
+	inside := na.Add(-30 * time.Second)
+	answer := f.answer(f.owner, tuple("approve", rec), q.EventID, inside)
+	lapsed := f.answer(f.owner, tuple("approve", rec), q.EventID, na.Add(time.Minute))
+	qe, _ := nostr.ParseEvent([]byte(q.RawEvent))
+	fired := false
+	afterVerify = func(id string) {
+		if id == rec.GateID && !fired {
+			fired = true
+			f.clock = na.Add(2 * time.Minute)
+			fr.fail = true
+			if r := f.core.HandleEvent(ctx, lapsed); r.Code != RejectPublish {
+				t.Errorf("B's lapsed answer while the relay refuses posts: %+v", r)
+			}
+			fr.fail = false
+			// the question deleted by the owner: A's history check refuses
+			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", qe.ID}}, qe.CreatedAt+1))
+			f.clock = inside
+		}
+	}
+	defer func() { afterVerify = func(string) {} }()
+	f.clock = inside
+	r := f.core.HandleEvent(ctx, answer)
+	if !fired || r.Outcome != "rejected" || r.Code != RejectAltered {
+		t.Fatalf("A's answer after B's failed window publish: %+v (fired %v)", r, fired)
+	}
+	w, _ := f.store.ReadWindow(rec.GateID)
+	if w == nil || !f.store.WindowPublished(rec.GateID) {
+		t.Fatalf("B's window re-ask was not published before A's refusal: %+v", w)
+	}
+	if got, _ := f.relay.FetchByID(ctx, w.EventID); got == nil {
+		t.Fatal("B's window re-ask is not on the relay")
 	}
 }
