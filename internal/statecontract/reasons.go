@@ -48,6 +48,25 @@ type KeptWord struct {
 	Why   string `json:"why"`
 }
 
+// CallerDoor is a pass-through helper's parameters (scheduler.firstNonEmpty's
+// two) that are launch doors only in Functions, the launch path's callers of
+// it; other functions call it with other values. NotCodes are the words one
+// of those callers passes it that are no code, each with its function and
+// why.
+type CallerDoor struct {
+	Doors     []string     `json:"doors"`
+	Functions []string     `json:"functions"`
+	NotCodes  []CallerWord `json:"not_codes"`
+}
+
+// CallerWord is a literal a launch caller passes a CallerDoor that is no
+// launch code: allowed in Function only.
+type CallerWord struct {
+	Word     string `json:"word"`
+	Function string `json:"function"`
+	Why      string `json:"why"`
+}
+
 // LaunchFamily is the launch path's codes: what a failed launch writes, which
 // reaches a task through Door (the pool's tasks wait on it and, when the
 // launch fails the same way again, block on it). Constants are each on the
@@ -60,6 +79,7 @@ type KeptWord struct {
 type LaunchFamily struct {
 	Door         string        `json:"door"`
 	Doors        []string      `json:"doors"`
+	CallerDoors  []CallerDoor  `json:"caller_doors"`
 	Constants    []string      `json:"constants"`
 	Kept         []KeptWord    `json:"kept"`
 	OutsideDoors []string      `json:"outside_doors"`
@@ -397,6 +417,13 @@ func LaunchReasons() LaunchFamily {
 			"param seatlaunch.firstNonEmptyStr#1",
 			"result seatlaunch.launchFailure#0",
 			"result seatlaunch.launchFailure#1",
+		},
+		CallerDoors: []CallerDoor{
+			{
+				Doors:     []string{"param scheduler.firstNonEmpty#0", "param scheduler.firstNonEmpty#1"},
+				Functions: []string{"scheduler.(*Scheduler).launchRoster", "scheduler.(*Scheduler).noteLaunchFailure", "scheduler.(LaunchFailure).Code"},
+				NotCodes:  []CallerWord{{Word: "-", Function: "scheduler.(*Scheduler).launchRoster", Why: "the roster_launched decision's placeholder for a launch with no id"}},
+			},
 		},
 		Constants: []string{
 			// listed before S2-3

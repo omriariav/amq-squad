@@ -2692,6 +2692,26 @@
         "result seatlaunch.launchFailure#0",
         "result seatlaunch.launchFailure#1"
       ],
+      "caller_doors": [
+        {
+          "doors": [
+            "param scheduler.firstNonEmpty#0",
+            "param scheduler.firstNonEmpty#1"
+          ],
+          "functions": [
+            "scheduler.(*Scheduler).launchRoster",
+            "scheduler.(*Scheduler).noteLaunchFailure",
+            "scheduler.(LaunchFailure).Code"
+          ],
+          "not_codes": [
+            {
+              "word": "-",
+              "function": "scheduler.(*Scheduler).launchRoster",
+              "why": "the roster_launched decision's placeholder for a launch with no id"
+            }
+          ]
+        }
+      ],
       "constants": [
         "claudeseat.TokenInsecure",
         "scheduler.AMQBindingPresent",

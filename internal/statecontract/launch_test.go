@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -105,6 +106,25 @@ var s23NotLaunch = map[string]string{
 // s23OutsideNotExcluded are the Outside constants of no reason family, so on
 // no s2NotTaskReasons entry.
 var s23OutsideNotExcluded = []string{"piruntime.RuntimeMismatchReason"}
+
+// s23NotDoorParams are the helper parameters a family or outside constant
+// is passed to that are no launch door, each with why (s23-door). A
+// parameter of fmt's formatting functions is no door either (s23FormatParam).
+var s23NotDoorParams = map[string]string{
+	"param cli.refuse#0": "amq-squad up's refusal of the pi runtime (cli.(*upRun).checkPiBuild) with the outside code piruntime.ReasonRejected, which never reaches a task",
+}
+
+// s23FormatParam: a parameter of fmt's formatting functions, which format
+// text and are no door (fmt's scanning functions write into their operands
+// and are not skipped).
+func s23FormatParam(door string) bool {
+	for _, function := range []string{"Errorf", "Fprintf", "Printf", "Sprintf", "Fprint", "Print", "Sprint", "Fprintln", "Println", "Sprintln"} {
+		if strings.HasPrefix(door, "param fmt."+function+"#") {
+			return true
+		}
+	}
+	return false
+}
 
 // s23Record reads the launch family as S1-2b recorded it: the values of
 // sites.md 5a and the guarded words of 5c.
@@ -370,5 +390,112 @@ func TestLaunchFamily(t *testing.T) {
 		}
 	}
 
-	t.Logf("launch family: %d constants (%d S2-3, %d before), %d doors, %d kept words, %d outside at %d doors", len(family.Constants), len(s23LaunchLiterals), len(s23ListedBefore), len(family.Doors), len(family.Kept), len(family.Outside), len(family.OutsideDoors))
+	// s23-door: a pass-through helper's parameter is a launch door in its
+	// launch callers (CallerDoors): there a constant is in the family and a
+	// literal or folded expression is empty, a kept word or a listed
+	// non-code; and a family or outside constant passed to any other helper
+	// parameter is at a declared door, or that parameter is classified
+	callers := map[string]map[string]bool{}  // door -> function
+	notCodes := map[string]map[string]bool{} // function -> word
+	for _, group := range family.CallerDoors {
+		if len(group.Doors) == 0 || len(group.Functions) == 0 {
+			t.Errorf("a caller door names no door or no function: %+v", group)
+		}
+		for _, door := range group.Doors {
+			if callers[door] != nil {
+				t.Errorf("the caller door %s is declared twice", door)
+			}
+			callers[door] = map[string]bool{}
+			if doors[door] || outsideDoors[door] {
+				t.Errorf("the caller door %s is also a family or outside door", door)
+			}
+			if function, index, ok := reasonParameterDoor(door); !ok || survey.functions[function] == nil || index >= survey.functions[function].Params().Len() {
+				t.Errorf("the caller door %s is no declared function's parameter", door)
+			}
+			for _, function := range group.Functions {
+				callers[door][function] = true
+			}
+		}
+		for _, function := range group.Functions {
+			if survey.functions[function] == nil {
+				t.Errorf("a caller door names %s, and no such function is declared", function)
+			}
+		}
+		for _, word := range group.NotCodes {
+			if notCodes[word.Function] == nil {
+				notCodes[word.Function] = map[string]bool{}
+			}
+			notCodes[word.Function][word.Word] = true
+			if word.Why == "" || word.Word == "" || kept[word.Word] || !slices.Contains(group.Functions, word.Function) {
+				t.Errorf("a caller door's non-code %q says no why, is empty, is a kept word or names a function the door does not: %+v", word.Word, word)
+			}
+			for list := range codes {
+				for constant, code := range codes[list] {
+					if code == word.Word {
+						t.Errorf("a caller door's non-code %q is the %s code of %s", word.Word, list, constant)
+					}
+				}
+			}
+		}
+	}
+	atCaller := func(door, function string) bool { return callers[door][function] }
+	allowed := func(value, function string) bool { return value == "" || kept[value] || notCodes[function][value] }
+	callerUsed, wordsWritten, notDoorSeen := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, use := range survey.uses {
+		if atCaller(use.door, use.function) {
+			if use.literal {
+				if !allowed(use.value, use.function) {
+					t.Errorf("%s: the string literal %q reaches the launch caller door %s in %s; a launch code is a listed constant", use.site, use.value, use.door, use.function)
+				}
+				wordsWritten[use.function+"\x00"+use.value] = true
+				continue
+			}
+			callerUsed[use.function] = true
+			if !seen[use.constant] {
+				t.Errorf("%s: %s is used at the launch caller door %s in %s and is not in the launch family", use.site, use.constant, use.door, use.function)
+			}
+			continue
+		}
+		if use.literal || (!seen[use.constant] && !outside[use.constant]) || !strings.HasPrefix(use.door, "param ") || doors[use.door] || outsideDoors[use.door] {
+			continue
+		}
+		if s23FormatParam(use.door) {
+			continue
+		}
+		if _, ok := s23NotDoorParams[use.door]; ok {
+			notDoorSeen[use.door] = true
+			continue
+		}
+		t.Errorf("%s: %s is passed to %s in %s, which is no launch door, no caller door in that function and not on s23NotDoorParams", use.site, use.constant, use.door, use.function)
+	}
+	for _, expression := range s2ReadModule(t).expressions {
+		if strings.HasPrefix(expression.site, "spike/") || !atCaller(expression.door, expression.function) {
+			continue
+		}
+		wordsWritten[expression.function+"\x00"+expression.value] = true
+		if !allowed(expression.value, expression.function) {
+			t.Errorf("%s: the string expression %q reaches the launch caller door %s in %s; a launch code is a listed constant", expression.site, expression.value, expression.door, expression.function)
+		}
+	}
+	for _, group := range family.CallerDoors {
+		used := false
+		for _, function := range group.Functions {
+			used = used || callerUsed[function]
+		}
+		if !used {
+			t.Errorf("no function of the caller door %v passes it a family constant", group.Doors)
+		}
+		for _, word := range group.NotCodes {
+			if !wordsWritten[word.Function+"\x00"+word.Word] {
+				t.Errorf("a caller door's non-code %q is passed to it by %s no more", word.Word, word.Function)
+			}
+		}
+	}
+	for _, door := range sortedKeys(s23NotDoorParams) {
+		if !notDoorSeen[door] {
+			t.Errorf("s23NotDoorParams is stale: no family or outside constant is passed to %s", door)
+		}
+	}
+
+	t.Logf("launch family: %d constants (%d S2-3, %d before), %d doors, %d kept words, %d outside at %d doors, %d caller doors", len(family.Constants), len(s23LaunchLiterals), len(s23ListedBefore), len(family.Doors), len(family.Kept), len(family.Outside), len(family.OutsideDoors), len(family.CallerDoors))
 }

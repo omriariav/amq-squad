@@ -829,3 +829,67 @@ func TestA13ALaterRefusalPublishesAnUnpublishedWindowReask(t *testing.T) {
 		t.Fatal("B's window re-ask is not on the relay")
 	}
 }
+
+// W21b (the Codex pass on #1018): W21 with the relay still refusing posts
+// when A's pass reaches its single exit (publishLeftWindow): A is refused
+// reask_publish_failed, not its own refusal (the code on which the Buzz
+// handler leaves the event unhandled); B's window re-ask stays unpublished;
+// and A's redelivery, with the relay back, publishes that same window re-ask
+// and is refused answered_before_reask.
+func TestA13AFailedPublishAtTheExitIsThePublishRefusal(t *testing.T) {
+	f := newFixture(t)
+	rec, q := f.raise("g-w21b", "tag", "git tag v21b")
+	_, _, na, _ := rec.Window()
+	fr := &failRelay{memRelay: f.relay}
+	f.core.Relay = fr
+	inside := na.Add(-30 * time.Second)
+	answer := f.answer(f.owner, tuple("approve", rec), q.EventID, inside)
+	lapsed := f.answer(f.owner, tuple("approve", rec), q.EventID, na.Add(time.Minute))
+	qe, _ := nostr.ParseEvent([]byte(q.RawEvent))
+	fired := false
+	afterVerify = func(id string) {
+		if id == rec.GateID && !fired {
+			fired = true
+			f.clock = na.Add(2 * time.Minute)
+			fr.fail = true
+			if r := f.core.HandleEvent(ctx, lapsed); r.Code != RejectPublish {
+				t.Errorf("B's lapsed answer while the relay refuses posts: %+v", r)
+			}
+			// the relay keeps refusing posts through A's exit
+			f.relay.inject(f.signed(f.owner, KindDeletion, "", [][]string{{"e", qe.ID}}, qe.CreatedAt+1))
+			f.clock = inside
+		}
+	}
+	defer func() { afterVerify = func(string) {} }()
+	f.clock = inside
+	r := f.core.HandleEvent(ctx, answer)
+	if !fired || r.Outcome != "rejected" || r.Code != RejectPublish {
+		t.Fatalf("A's answer while the relay refuses posts at the exit: %+v (fired %v), want %s", r, fired, RejectPublish)
+	}
+	w, _ := f.store.ReadWindow(rec.GateID)
+	if w == nil {
+		t.Fatal("B's window re-ask is not stored")
+	}
+	if f.store.WindowPublished(rec.GateID) {
+		t.Fatal("the window re-ask is marked published after the failed publish at the exit")
+	}
+	if got, _ := f.relay.FetchByID(ctx, w.EventID); got != nil {
+		t.Fatal("the window re-ask is on the relay after the failed publish at the exit")
+	}
+	// the redelivery, the relay back: the same window re-ask is published
+	fr.fail = false
+	// A's answer predates the window re-ask its redelivery now reads
+	if r := f.core.HandleEvent(ctx, answer); r.Outcome != "rejected" || r.Code != RejectBeforeReask {
+		t.Fatalf("A's redelivery with the relay back: %+v, want %s", r, RejectBeforeReask)
+	}
+	if d := f.store.Decision(rec.GateID); d != "" {
+		t.Fatalf("the gate was decided: %s", d)
+	}
+	again, _ := f.store.ReadWindow(rec.GateID)
+	if again == nil || again.EventID != w.EventID || !f.store.WindowPublished(rec.GateID) {
+		t.Fatalf("the redelivery published %+v, want the window re-ask %s published", again, w.EventID)
+	}
+	if got, _ := f.relay.FetchByID(ctx, w.EventID); got == nil {
+		t.Fatalf("the window re-ask %s is not on the relay after the redelivery", w.EventID)
+	}
+}
