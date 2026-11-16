@@ -27,6 +27,11 @@ It is never `null`: a completed or cancelled task has `[]`.
   `lead_handle`); a handle that holds neither gets `[]`.
 - `status --json`: each task row's `next`, every role's entries, each
   naming its `who`.
+- `next` lists the moves for the lead, holder and owner roles; a handle
+  holding none of them may still run moves it doesn't list (a non-lead
+  creator's reset; a pending task's block and cancel; a leased task's
+  release, `internal/task/lease.go:896`). (The plan reviewer's ruling on
+  Codex's pass on #1020.)
 - The stored task record (`task.Task`) has no `next` field and its file is
   unchanged.
 - pi does not read `next` in 3.3.0 (ruling 7): no pi code changes. The pi
@@ -148,6 +153,11 @@ refusal; Codex's pass on the round-2 prototype found `--me USER` refused as
 `invalid --me` when the check ran first. The handle check is what keeps the read
 inside the root: the record check alone would not, since a foreign record
 can carry the traversal string as its handle.
+
+Task verbs now refuse a --me or AM_ME that is not a valid handle
+(`team.ValidateHandle`); every handle a v3 squad can hold passes it. (v3 reads no team.json as a squad: `team.Read`,
+`internal/team/team.go:252`, loads squad.yaml only, and `migrate` refuses a
+profile whose squad.yaml does not load, `internal/migrate/plan.go:191`.)
 
 Nothing reads `next` to decide anything: its only non-test uses are the
 envelopes that carry it (`task show`'s and the status task row). Known
