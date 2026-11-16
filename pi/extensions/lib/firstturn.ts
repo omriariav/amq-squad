@@ -15,6 +15,7 @@
 // a changed line is sent.
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { GATE_STORE_DIRS } from "./gatestore.ts";
 import { contextOf, type Config, type ContextData, type Runner } from "./hooks.ts";
 import { defaultStat, type Stat } from "./screen.ts";
 
@@ -105,9 +106,10 @@ export function hostPollPaths(root: string, me = ""): string[] {
 }
 
 // GATE_DIRS are the gate store's directories the key lists entry by entry
-// (a write inside a directory does not touch its parent's mtime): the
-// questions, the approvals, the denials and the consumed marks.
-const GATE_DIRS = ["gates", "answers", "denials", path.join("consumed", "gates")];
+// (a write inside a directory does not touch its parent's mtime): every
+// directory the store writes (GATE_STORE_DIRS, generated from Go's
+// gatestore.TopDirs), the consumed marks by their gates directory.
+export const GATE_DIRS = GATE_STORE_DIRS.map((d) => (d === "consumed" ? path.join("consumed", "gates") : d));
 
 // GIT_DIRS_TIMEOUT_MS bounds the one git call that finds the repository's
 // git directories (a linked worktree's .git is a pointer file).
@@ -149,7 +151,7 @@ export class HostFacts {
 		const ext = path.join(this.cfg.root, "extensions", "amq-squad");
 		const parts = [this.cfg.root, ...hostPollPaths(this.cfg.root, this.cfg.me).map(st)];
 		for (const d of GATE_DIRS) parts.push(listing(path.join(ext, d), st));
-		parts.push(`expired:${expiredGates(path.join(ext, "gates"), this.now())}`);
+		parts.push(`expired:${expiredGates(ext, this.now())}`);
 		const git = await this.gitDirs(project);
 		if (git) {
 			parts.push(st(path.join(git.dir, "HEAD")), st(path.join(git.dir, "logs", "HEAD")), st(path.join(git.common, "packed-refs")));
@@ -199,8 +201,15 @@ function listing(dir: string, st: (p: string) => string): string {
 	return names.map((n) => `${n}:${st(path.join(dir, n))}`).join(",");
 }
 
-// expiredGates counts the gate records whose not_after has passed.
-function expiredGates(dir: string, now: Date): number {
+// expiredGates counts the gate records under ext whose window has passed:
+// the record's not_after, or, for a gate asked again after a lapse
+// (windows/<id>.json, A1-3), the window re-ask's derived end, Go's
+// Reask.WindowEnd: its raw event's created_at plus the record's own window
+// length (not_after - issued_at). An advisory read, like Go's
+// gatestore.Store.State: the created_at is not signature-checked here (the
+// core and every consumer check the window re-ask; known difference 9).
+function expiredGates(ext: string, now: Date): number {
+	const dir = path.join(ext, "gates");
 	let n = 0;
 	let names: string[] = [];
 	try {
@@ -211,13 +220,38 @@ function expiredGates(dir: string, now: Date): number {
 	for (const name of names) {
 		if (!name.endsWith(".json") || name.endsWith(".question.json")) continue;
 		try {
-			const t = Date.parse(JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")).not_after ?? "");
-			if (Number.isFinite(t) && t <= now.getTime()) n++;
+			const rec = JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"));
+			const t = windowEnd(ext, name, Date.parse(rec.issued_at ?? ""), Date.parse(rec.not_after ?? ""));
+			// expired strictly after the end, as Go's State (now.After)
+			if (Number.isFinite(t) && t < now.getTime()) n++;
 		} catch {
 			// not a gate record
 		}
 	}
 	return n;
+}
+
+// WINDOW_FIELDS are the fields of a window re-ask record (Go's
+// gatestore.Reask, decoded with unknown fields refused).
+const WINDOW_FIELDS = new Set(["gate_id", "trigger_event_id", "event_id", "raw_event", "at"]);
+
+// windowEnd is when a gate's window ends: notAfter, or the derived end of
+// its window re-ask (windows/<name>) when one is stored and Go's reader
+// would read it (gatestore's read and Reask.WindowEnd): string fields it
+// knows only, this gate's id, a 64-hex event id, a raw event whose
+// created_at is a positive integer.
+function windowEnd(ext: string, name: string, issued: number, notAfter: number): number {
+	try {
+		const w = JSON.parse(fs.readFileSync(path.join(ext, "windows", name), "utf8"));
+		const known = w !== null && typeof w === "object" && !Array.isArray(w) && Object.entries(w).every(([k, v]) => WINDOW_FIELDS.has(k) && typeof v === "string");
+		if (known && /^[0-9a-f]{64}$/.test(w.event_id ?? "")) {
+			const at = JSON.parse(w.raw_event).created_at;
+			if (w.gate_id === name.slice(0, -".json".length) && Number.isSafeInteger(at) && at > 0 && Number.isFinite(issued) && Number.isFinite(notAfter)) return at * 1000 + (notAfter - issued);
+		}
+	} catch {
+		// no window re-ask, or not one Go's reader reads: the record's window
+	}
+	return notAfter;
 }
 
 // headRef is the ref a HEAD file names ("ref: refs/heads/x"), "" for a
