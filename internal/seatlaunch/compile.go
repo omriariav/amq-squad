@@ -95,7 +95,7 @@ var Runtimes = []string{"claude", "codex", "cursor-agent", "grok", "pi"}
 
 // ReasonPiShimMissing refuses a pi seat when the launch named no pi shim, or
 // a provider that is not the shim (R2: never a pi from PATH).
-const ReasonPiShimMissing = "pi_not_embedded"
+const ReasonPiShimMissing = seatexec.PiNotEmbedded
 
 // ClaudePermissionMode is the permission mode every Claude seat is launched
 // with, recorded in its launch record and checked by seat-exec together with

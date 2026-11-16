@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -45,17 +46,29 @@ type reasonListStats struct {
 }
 
 func TestReasonsAreTiedToTheirWriters(t *testing.T) {
-	survey := surveyReasonUses(t)
+	survey := cachedReasonSurvey(t)
 	notReasons := NotReasons()
 	notSet := checkNotReasons(t, notReasons)
 	block := checkReasonList(t, "block", BlockReasons(), notSet, survey)
 	wait := checkReasonList(t, "wait", WaitReasons(), notSet, survey)
-	entries := block.entries + wait.entries + len(notReasons)
+	entries := block.entries + wait.entries + len(notReasons) + len(LaunchReasons().Outside)
 	checkReasonCodes(t, survey, entries)
 
 	t.Logf("block: entries=%d writers=%d doors=%d open_doors=%d uses_at_doors=%d literal_sites_at_doors=%d", block.entries, block.writers, block.doors, block.openDoors, block.uses, block.literalUses)
 	t.Logf("wait: entries=%d writers=%d doors=%d open_doors=%d uses_at_doors=%d literal_sites_at_doors=%d", wait.entries, wait.writers, wait.doors, wait.openDoors, wait.uses, wait.literalUses)
 	t.Logf("packages=%d entries=%d", survey.packages, entries)
+}
+
+var (
+	reasonSurveyOnce sync.Once
+	reasonSurveyRead reasonSurvey
+)
+
+// cachedReasonSurvey surveys the module once for the tests that read it
+// (TestReasonsAreTiedToTheirWriters, TestLaunchFamily).
+func cachedReasonSurvey(t *testing.T) reasonSurvey {
+	reasonSurveyOnce.Do(func() { reasonSurveyRead = surveyReasonUses(t) })
+	return reasonSurveyRead
 }
 
 func surveyReasonUses(t *testing.T) reasonSurvey {

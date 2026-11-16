@@ -30,6 +30,7 @@ type ReasonsContract struct {
 	Block      ReasonList    `json:"block"`
 	Wait       ReasonList    `json:"wait"`
 	NotReasons []ReasonEntry `json:"not_reasons"`
+	Launch     LaunchFamily  `json:"launch"`
 }
 
 // Build builds the current state contract from package declarations.
@@ -40,7 +41,7 @@ func Build() Contract {
 			States: task.States(), Moves: task.Moves(), Outcomes: task.Outcomes(),
 			Routes: task.Routes(), BlockGroup: task.BlockGroup(), OutcomeSets: task.OutcomeSets(),
 		},
-		Reasons: ReasonsContract{Block: BlockReasons(), Wait: WaitReasons(), NotReasons: NotReasons()},
+		Reasons: ReasonsContract{Block: BlockReasons(), Wait: WaitReasons(), NotReasons: NotReasons(), Launch: LaunchReasons()},
 	}
 }
 

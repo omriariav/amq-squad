@@ -25,6 +25,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/fsanchor"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
+	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
 
 // proofServer is the launcher's end of the seat proof (item 4, lead ruling):
@@ -274,7 +275,7 @@ func (s *proofServer) serve() {
 			s.overflow++
 			s.mu.Unlock()
 			conn.Close()
-			s.reject(launch.ProofMessage{}, 0, "proof_connections_full")
+			s.reject(launch.ProofMessage{}, 0, ReasonProofConnectionsFull)
 			continue
 		}
 		s.wg.Add(1)
@@ -286,7 +287,7 @@ func (s *proofServer) serve() {
 			conn.SetWriteDeadline(time.Now().Add(s.lim.read))
 			var msg launch.ProofMessage
 			line, err := bufio.NewReader(&limitedReader{conn, 64 << 10}).ReadBytes('\n')
-			reply := launch.ProofReply{Code: "proof_malformed", Detail: "no proof message"}
+			reply := launch.ProofReply{Code: ReasonProofMalformed, Detail: "no proof message"}
 			if err == nil && json.Unmarshal(line, &msg) == nil {
 				peer, known := peerOf(conn)
 				if s.lim.judge != nil {
@@ -339,63 +340,63 @@ func (s *proofServer) judgeLocked(m launch.ProofMessage, peer int, peerKnown boo
 	defer s.mu.Unlock()
 	seat := s.seats[m.Handle]
 	if seat == nil || m.LaunchID != s.launchID {
-		return launch.ProofReply{Code: "proof_unknown", Detail: "no ticket for this handle in this launch"}
+		return launch.ProofReply{Code: ReasonProofUnknown, Detail: "no ticket for this handle in this launch"}
 	}
 	if subtle.ConstantTimeCompare([]byte(m.Token), []byte(seat.token)) != 1 {
 		// Anyone who can reach the socket can send this: log and drop it.
-		s.reject(m, peer, "proof_token_invalid")
-		return launch.ProofReply{Code: "proof_token_invalid", Detail: "not this seat's token; dropped"}
+		s.reject(m, peer, ReasonProofTokenInvalid)
+		return launch.ProofReply{Code: ReasonProofTokenInvalid, Detail: "not this seat's token; dropped"}
 	}
 	if seat.consumed {
-		return s.forged(m.Handle, seat, "proof_replayed", fmt.Sprintf("a second valid proof for a consumed token (first pid %d, now pid %d)", seat.pid, m.PID))
+		return s.forged(m.Handle, seat, ReasonProofReplayed, fmt.Sprintf("a second valid proof for a consumed token (first pid %d, now pid %d)", seat.pid, m.PID))
 	}
 	if seat.refused != "" {
 		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}
 	}
 	if !s.clock().Before(seat.deadline) {
-		seat.refused, seat.detail = "proof_expired", fmt.Sprintf("the token's %s window has passed", launch.ProofTTL)
+		seat.refused, seat.detail = seatexec.ReasonProofExpired, fmt.Sprintf("the token's %s window has passed", launch.ProofTTL)
 		if err := s.markToken(m.Handle, seat.requestID, launch.TokenExpired); err != nil {
 			seat.detail += "; the expired marker could not be written: " + err.Error()
 		}
 		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}
 	}
 	if !peerKnown {
-		return launch.ProofReply{Code: "proof_origin_unknown", Detail: "the kernel did not report the sender; the proof cannot be bound to a process"}
+		return launch.ProofReply{Code: ReasonProofOriginUnknown, Detail: "the kernel did not report the sender; the proof cannot be bound to a process"}
 	}
 	if peer != m.PID {
-		return s.forged(m.Handle, seat, "proof_origin", fmt.Sprintf("a valid token claims pid %d but was sent by pid %d", m.PID, peer))
+		return s.forged(m.Handle, seat, ReasonProofOrigin, fmt.Sprintf("a valid token claims pid %d but was sent by pid %d", m.PID, peer))
 	}
 	if m.RequestID != seat.requestID {
-		return s.forged(m.Handle, seat, "proof_origin", "a valid token names another request id")
+		return s.forged(m.Handle, seat, ReasonProofOrigin, "a valid token names another request id")
 	}
 	now, ok := startTokenOf(m.PID)
 	if !ok {
-		return launch.ProofReply{Code: "proof_origin_unknown", Detail: fmt.Sprintf("the start stamp of pid %d cannot be read", m.PID)}
+		return launch.ProofReply{Code: ReasonProofOriginUnknown, Detail: fmt.Sprintf("the start stamp of pid %d cannot be read", m.PID)}
 	}
 	if now != m.Start {
-		return s.forged(m.Handle, seat, "proof_origin", fmt.Sprintf("pid %d does not carry the claimed start stamp", m.PID))
+		return s.forged(m.Handle, seat, ReasonProofOrigin, fmt.Sprintf("pid %d does not carry the claimed start stamp", m.PID))
 	}
 	if m.Root != s.root || m.Me != m.Handle || m.Session != s.session {
-		return s.forged(m.Handle, seat, "proof_origin", "the proved identity is not this seat's")
+		return s.forged(m.Handle, seat, ReasonProofOrigin, "the proved identity is not this seat's")
 	}
 	shell, shellStart := pane.shell, pane.shellStart
 	if !pane.ok {
-		return launch.ProofReply{Code: "proof_origin_unknown", Detail: "the seat's pane and its shell are not known yet"}
+		return launch.ProofReply{Code: ReasonProofOriginUnknown, Detail: "the seat's pane and its shell are not known yet"}
 	}
 	in, known := inChain(m.PID, m.Start, shell, shellStart)
 	if !known {
 		// A process entry vanished or changed mid-walk (fix 3c (e)): not up,
 		// not an alarm.
-		return launch.ProofReply{Code: "proof_origin_unknown", Detail: "the process chain changed while it was read"}
+		return launch.ProofReply{Code: ReasonProofOriginUnknown, Detail: "the process chain changed while it was read"}
 	}
 	if !in {
-		return s.forged(m.Handle, seat, "proof_origin", fmt.Sprintf("pid %d does not descend from the pane shell pid %d", m.PID, shell))
+		return s.forged(m.Handle, seat, ReasonProofOrigin, fmt.Sprintf("pid %d does not descend from the pane shell pid %d", m.PID, shell))
 	}
 	// The consumed marker first (fix 3c (f)): a marker that cannot be
 	// written fails the seat's launch, so a readable token never stays
 	// valid behind an accepted proof.
 	if err := s.markToken(m.Handle, seat.requestID, launch.TokenConsumed); err != nil {
-		seat.refused, seat.detail = "proof_marker_failed", err.Error()
+		seat.refused, seat.detail = ReasonProofMarkerFailed, err.Error()
 		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}
 	}
 	seat.consumed, seat.pid, seat.start = true, m.PID, m.Start
@@ -406,7 +407,7 @@ func (s *proofServer) judgeLocked(m launch.ProofMessage, peer int, peerKnown boo
 	if err := launch.WriteProof(s.root, launch.ProofEntry{Handle: m.Handle, LaunchID: s.launchID, RequestID: m.RequestID, PID: m.PID, Start: m.Start, At: s.now().UTC(),
 		PaneShell: shell, PaneShellStart: shellStart, PaneID: pane.id}); err != nil {
 		seat.consumed = false
-		seat.refused, seat.detail = "proof_ledger_failed", err.Error()
+		seat.refused, seat.detail = ReasonProofLedgerFailed, err.Error()
 		return launch.ProofReply{Code: seat.refused, Detail: seat.detail}
 	}
 	return launch.ProofReply{OK: true}
@@ -421,8 +422,8 @@ func (s *proofServer) forged(handle string, seat *proofSeat, code, detail string
 			detail += "; closing the proved seat failed: " + err.Error()
 		}
 	}
-	seat.refused, seat.detail = "identity_forged", code+": "+detail
-	return launch.ProofReply{Code: "identity_forged", Detail: code + ": " + detail}
+	seat.refused, seat.detail = ReasonIdentityForged, code+": "+detail
+	return launch.ProofReply{Code: ReasonIdentityForged, Detail: code + ": " + detail}
 }
 
 // reject logs a dropped proof in the core-owned launch directory, at most

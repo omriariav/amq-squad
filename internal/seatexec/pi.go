@@ -65,16 +65,16 @@ func LedgerHasToolResult(path string) (bool, error) {
 
 // PiNotEmbedded refuses a pi seat whose argv[0] is not this binary's pi
 // launch shim (so not the embedded runtime the launch probed).
-const PiNotEmbedded = "pi_not_embedded"
+const PiNotEmbedded = piruntime.ReasonNotEmbedded
 
 // piShimProvider checks argv[0] is this amq-squad's pi launch shim and
 // returns the binary that runs the embedded runtime (this one).
 func piShimProvider(o Options, rec launch.Record) (string, error) {
 	if base := filepath.Base(o.Argv[0]); base != "pi" {
-		return "", refusef("runtime_mismatch", "provider %q is not the recorded runtime %q", base, rec.Runtime)
+		return "", refusef(ReasonRuntimeMismatch, "provider %q is not the recorded runtime %q", base, rec.Runtime)
 	}
 	if !filepath.IsAbs(rec.PiAgentDir) || filepath.Clean(rec.PiAgentDir) != rec.PiAgentDir {
-		return "", refusef("record_invalid", "the launch record names no absolute pi agent dir (%q)", rec.PiAgentDir)
+		return "", refusef(ReasonRecordInvalid, "the launch record names no absolute pi agent dir (%q)", rec.PiAgentDir)
 	}
 	// The shim the launch record names (Codex A small (a)): never a path
 	// derived from this process's HOME.

@@ -87,13 +87,13 @@ func prepare(o Options) (execPlan, error) {
 	var plan execPlan
 	me, rootPath := Getenv(o.Env, "AM_ME"), Getenv(o.Env, "AM_ROOT")
 	if !handlePattern.MatchString(o.Seat) {
-		return plan, refusef("seat_invalid", "--seat %q is not a valid handle", o.Seat)
+		return plan, refusef(ReasonSeatInvalid, "--seat %q is not a valid handle", o.Seat)
 	}
 	if me != o.Seat {
-		return plan, refusef("identity_mismatch", "--seat %q disagrees with AM_ME=%q", o.Seat, me)
+		return plan, refusef(ReasonIdentityMismatch, "--seat %q disagrees with AM_ME=%q", o.Seat, me)
 	}
 	if len(o.Argv) == 0 {
-		return plan, refusef("argv_missing", "no provider argv after --seat")
+		return plan, refusef(ReasonArgvMissing, "no provider argv after --seat")
 	}
 	root, err := openRoot(rootPath, o.UID)
 	if err != nil {
@@ -103,16 +103,16 @@ func prepare(o Options) (execPlan, error) {
 
 	staged, err := root.walk("extensions/amq-squad/launch/"+o.Seat, false)
 	if err != nil {
-		return plan, asRefusal("record_missing", err)
+		return plan, asRefusal(ReasonRecordMissing, err)
 	}
 	defer staged.close()
 	raw, err := staged.readFile(launch.FileName, maxFile)
 	if err != nil {
-		return plan, asRefusal("record_missing", err)
+		return plan, asRefusal(ReasonRecordMissing, err)
 	}
 	rec, err := launch.Decode(raw)
 	if err != nil {
-		return plan, refusef("record_invalid", "staged launch record: %v", err)
+		return plan, refusef(ReasonRecordInvalid, "staged launch record: %v", err)
 	}
 	if err := checkIdentity(rec, o); err != nil {
 		return plan, err
@@ -121,7 +121,7 @@ func prepare(o Options) (execPlan, error) {
 	// published as the seat's exec record (not left as a missing record).
 	ext, err := root.walk("agents/"+o.Seat, false)
 	if err != nil {
-		return plan, asRefusal("mailbox_missing", err)
+		return plan, asRefusal(ReasonMailboxMissing, err)
 	}
 	pub, err := ext.walk("extensions/"+launch.LayerName, true)
 	ext.close()
@@ -133,10 +133,10 @@ func prepare(o Options) (execPlan, error) {
 	plan.rec.Proof = nil // the published copy never carries the token
 	role, err := staged.readFile(launch.RoleFileName, maxFile)
 	if err != nil {
-		return plan, asRefusal("role_missing", err)
+		return plan, asRefusal(ReasonRoleMissing, err)
 	}
 	if sum := sha(role); sum != rec.RoleSHA256 {
-		return plan, refusef("role_mismatch", "role.md sha256 %s does not match the launch record's %s", sum, rec.RoleSHA256)
+		return plan, refusef(ReasonRoleMismatch, "role.md sha256 %s does not match the launch record's %s", sum, rec.RoleSHA256)
 	}
 	rules, err := readRules(rec)
 	if err != nil {
@@ -256,22 +256,27 @@ func prepare(o Options) (execPlan, error) {
 func sendProof(o Options, rec launch.Record, started string) error {
 	t := rec.Proof
 	if t == nil || t.Dir == "" || t.Name == "" || t.Token == "" {
-		return refusef("proof_ticket_missing", "the staged launch record carries no proof ticket")
+		return refusef(ReasonProofTicketMissing, "the staged launch record carries no proof ticket")
 	}
 	switch t.Token {
 	case launch.TokenConsumed:
-		return refusef("proof_ticket_consumed", "the seat's proof token was already used")
+		return refusef(ReasonProofTicketConsumed, "the seat's proof token was already used")
 	case launch.TokenExpired:
-		return refusef("proof_expired", "the seat's proof token expired")
+		return refusef(ReasonProofExpired, "the seat's proof token expired")
 	}
 	msg := launch.ProofMessage{LaunchID: rec.LaunchID, RequestID: rec.RequestID, Handle: rec.Handle, Token: t.Token,
 		Root: rec.Root, Me: rec.Handle, Session: rec.Session, PID: os.Getpid(), Start: started}
 	reply, err := o.SendProof(*t, msg)
 	if err != nil {
-		return refusef("proof_unacknowledged", "the launcher did not take the proof: %v", err)
+		return refusef(ReasonProofUnacknowledged, "the launcher did not take the proof: %v", err)
 	}
 	if !reply.OK {
-		return refusef(firstNonEmpty(reply.Code, "proof_refused"), "the launcher refused the proof: %s", reply.Detail)
+		// a blank code is no code (firstNonEmpty trims), as before S2-3
+		code := firstNonEmpty(reply.Code)
+		if code == "" {
+			return refusef(ReasonProofRefused, "the launcher refused the proof: %s", reply.Detail)
+		}
+		return refusef(code, "the launcher refused the proof: %s", reply.Detail)
 	}
 	return nil
 }
@@ -284,10 +289,10 @@ func readRules(rec launch.Record) ([]byte, error) {
 	}
 	rules, err := os.ReadFile(rec.RulesPath)
 	if err != nil {
-		return nil, refusef("rules_missing", "rules file: %v", err)
+		return nil, refusef(ReasonRulesMissing, "rules file: %v", err)
 	}
 	if sum := sha(rules); sum != rec.RulesSHA256 {
-		return nil, refusef("rules_mismatch", "rules sha256 %s does not match the launch record's %s", sum, rec.RulesSHA256)
+		return nil, refusef(ReasonRulesMismatch, "rules sha256 %s does not match the launch record's %s", sum, rec.RulesSHA256)
 	}
 	return rules, nil
 }
@@ -302,7 +307,7 @@ func recheck(rec launch.Record, staged, pub *anchor, hasRules bool) error {
 		name string
 	}{{staged, launch.RoleFileName}, {pub, launch.RoleFileName}} {
 		if b, err := f.dir.readFile(f.name, maxFile); err != nil || sha(b) != rec.RoleSHA256 {
-			return refusef("role_mismatch", "%s changed before exec", filepath.Join(f.dir.path, f.name))
+			return refusef(ReasonRoleMismatch, "%s changed before exec", filepath.Join(f.dir.path, f.name))
 		}
 	}
 	if !hasRules {
@@ -312,7 +317,7 @@ func recheck(rec launch.Record, staged, pub *anchor, hasRules bool) error {
 		return err
 	}
 	if b, err := pub.readFile(rulesSnapshotName, maxFile); err != nil || sha(b) != rec.RulesSHA256 {
-		return refusef("rules_mismatch", "the rules snapshot changed before exec")
+		return refusef(ReasonRulesMismatch, "the rules snapshot changed before exec")
 	}
 	return nil
 }
@@ -328,7 +333,7 @@ func CheckCodexSandbox(argv []string) error {
 	for _, o := range codexOptions(argv) {
 		switch o.name {
 		case "--dangerously-bypass-approvals-and-sandbox", "--yolo", "--full-auto":
-			return refusef("codex_sandbox_missing", "Codex argv carries %s; seat-exec requires the workspace-write sandbox", o.raw)
+			return refusef(ReasonCodexSandboxMissing, "Codex argv carries %s; seat-exec requires the workspace-write sandbox", o.raw)
 		case "--sandbox":
 			mode = o.value
 		case "--ask-for-approval":
@@ -340,17 +345,17 @@ func CheckCodexSandbox(argv []string) error {
 			// form, and only with a value that narrows (CheckCodexSandboxPins
 			// checks the record's value).
 			if v := strings.TrimSpace(o.value); strings.HasPrefix(v, "sandbox_mode") || (strings.HasPrefix(v, "sandbox_workspace_write") && !narrowingPin(v)) {
-				return refusef("codex_sandbox_missing", "Codex argv overrides the sandbox with %s", o.raw)
+				return refusef(ReasonCodexSandboxMissing, "Codex argv overrides the sandbox with %s", o.raw)
 			} else if strings.HasPrefix(v, "approval_policy") {
-				return refusef("codex_approval_missing", "Codex argv overrides the approval policy with %s", o.raw)
+				return refusef(ReasonCodexApprovalMissing, "Codex argv overrides the approval policy with %s", o.raw)
 			}
 		}
 	}
 	if mode != "workspace-write" && mode != "read-only" {
-		return refusef("codex_sandbox_missing", "Codex argv has sandbox %q; seat-exec requires --sandbox workspace-write (or read-only)", mode)
+		return refusef(ReasonCodexSandboxMissing, "Codex argv has sandbox %q; seat-exec requires --sandbox workspace-write (or read-only)", mode)
 	}
 	if approval != "on-request" {
-		return refusef("codex_approval_missing", "Codex argv has approval policy %q; seat-exec requires --ask-for-approval on-request", approval)
+		return refusef(ReasonCodexApprovalMissing, "Codex argv has approval policy %q; seat-exec requires --ask-for-approval on-request", approval)
 	}
 	return nil
 }
@@ -430,7 +435,7 @@ func checkIdentity(rec launch.Record, o Options) error {
 			return refusef(IdentityIncomplete, "the launch record has no value for %s (R52: the launch sets the complete identity; seat-exec fails closed whatever amq would accept)", name)
 		}
 		if got := Getenv(o.Env, name); got != "" && got != want[name] {
-			return refusef("identity_mismatch", "%s=%q disagrees with the launch record's %q", name, got, want[name])
+			return refusef(ReasonIdentityMismatch, "%s=%q disagrees with the launch record's %q", name, got, want[name])
 		}
 	}
 	return nil
@@ -482,11 +487,11 @@ func piAgentDir(rec launch.Record, home string) string {
 // recorded runtime.
 func providerPath(runtime, argv0 string, lookPath func(string) (string, error)) (string, error) {
 	if base := filepath.Base(argv0); base != runtime {
-		return "", refusef("runtime_mismatch", "provider %q is not the recorded runtime %q", base, runtime)
+		return "", refusef(ReasonRuntimeMismatch, "provider %q is not the recorded runtime %q", base, runtime)
 	}
 	path, err := lookPath(argv0)
 	if err != nil {
-		return "", refusef("provider_missing", "%v", err)
+		return "", refusef(ReasonProviderMissing, "%v", err)
 	}
 	return path, nil
 }
@@ -510,10 +515,10 @@ func identityProof(o Options, rec launch.Record, env []string) (string, error) {
 	if err != nil && (ctx.Err() != nil || errors.Is(err, exec.ErrWaitDelay)) {
 		// P2-5: amq, or a descendant holding its output, outlived the bound
 		// and its group was killed. A timeout is a refusal, never a pass.
-		return "", refusef("identity_proof_timeout", "amq env did not finish within the proof bound: %v", err)
+		return "", refusef(ReasonIdentityProofTimeout, "amq env did not finish within the proof bound: %v", err)
 	}
 	if err != nil {
-		return "", refusef("identity_proof_failed", "amq env failed: %v: %s", err, trimOut(out))
+		return "", refusef(ReasonIdentityProofFailed, "amq env failed: %v: %s", err, trimOut(out))
 	}
 	var got struct {
 		Root        string `json:"root"`
@@ -521,13 +526,13 @@ func identityProof(o Options, rec launch.Record, env []string) (string, error) {
 		SessionName string `json:"session_name"`
 	}
 	if err := json.Unmarshal(firstObject(out), &got); err != nil {
-		return "", refusef("identity_proof_failed", "amq env returned no identity: %s", trimOut(out))
+		return "", refusef(ReasonIdentityProofFailed, "amq env returned no identity: %s", trimOut(out))
 	}
 	if rec.Session != "" && got.SessionName == "" {
-		return "", refusef("identity_proof_failed", "amq env resolved no session; the launch record says %q", rec.Session)
+		return "", refusef(ReasonIdentityProofFailed, "amq env resolved no session; the launch record says %q", rec.Session)
 	}
 	if filepath.Clean(got.Root) != filepath.Clean(rec.Root) || got.Me != rec.Handle || got.SessionName != rec.Session {
-		return "", refusef("identity_proof_failed", "amq resolved root %q, handle %q, session %q; the launch record says %q, %q, %q", got.Root, got.Me, got.SessionName, rec.Root, rec.Handle, rec.Session)
+		return "", refusef(ReasonIdentityProofFailed, "amq resolved root %q, handle %q, session %q; the launch record says %q, %q, %q", got.Root, got.Me, got.SessionName, rec.Root, rec.Handle, rec.Session)
 	}
 	return "amq env", nil
 }
