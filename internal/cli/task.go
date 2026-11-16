@@ -123,6 +123,35 @@ type taskEnvelope struct {
 	Task task.Task `json:"task"`
 }
 
+// taskShowEnvelope is task show --json: the stored task, and beside it (never
+// in it) what can be done to it next (S3-1; additive).
+type taskShowEnvelope struct {
+	Root string           `json:"root"`
+	Task task.Task        `json:"task"`
+	Next []task.NextEntry `json:"next"`
+}
+
+// taskNextCaller is whom task show's next is for: with no --me, every role;
+// with --me, the roles that handle holds: the task's lease holder, and the
+// lead when its launch record names the lead role (status.LeadRole, as the
+// status document's lead_handle). A handle that holds neither gets none.
+func taskNextCaller(root, me string, t task.Task) task.NextCaller {
+	if me == "" {
+		return task.NextCaller{}
+	}
+	roles := []string{}
+	if t.Lease != nil && t.Lease.Holder == me {
+		roles = append(roles, task.NextHolder)
+	}
+	if rec, err := launch.Read(filepath.Join(root, "agents", me)); err == nil && rec.Role == status.LeadRole {
+		roles = append(roles, task.NextLead)
+	}
+	if len(roles) == 0 {
+		roles = append(roles, "none")
+	}
+	return task.NextCaller{Roles: roles, Handle: me}
+}
+
 type taskAddEnvelope struct {
 	Root     string    `json:"root"`
 	Task     task.Task `json:"task"`
@@ -661,7 +690,7 @@ func runTaskTransition(verb string, args []string) error {
 	}
 	if verb == "show" {
 		if *f.jsonOut {
-			return printJSONEnvelope("task", taskEnvelope{Root: root, Task: t})
+			return printJSONEnvelope("task", taskShowEnvelope{Root: root, Task: t, Next: task.Next(t, now, taskNextCaller(root, me, t))})
 		}
 		printTaskDetails(t)
 		return nil

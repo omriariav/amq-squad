@@ -26,16 +26,16 @@ import (
 
 // Reason codes of a refusal (task.RefuseCommit's reason code).
 const (
-	ReasonProtected      = "protected_path"         // a changed path is protected by the grant
-	ReasonLinkTarget     = "link_target_refused"    // a changed symlink's tree destination is refused
-	ReasonOutside        = "outside_declared_files" // a changed path is outside the task's declared files (S6 W5)
-	ReasonSizeCap        = "size_cap_exceeded"      // the diff is over the size cap
-	ReasonNested         = "nested_repository"      // a changed path is a gitlink or a nested repository
-	ReasonBaseUnrecorded = "base_unrecorded"        // no core-recorded base for the seat's branch
-	ReasonWorktree       = "worktree_mismatch"      // the record's worktree or branch is not what the repository shows
-	ReasonPushRejected   = "push_rejected"          // the remote refused a fast-forward push (no force push, ever)
-	ReasonGrants         = "grants_invalid"         // the grant could not be read; nothing commits
-	ReasonCommitFailed   = "commit_failed"          // the step kept failing (repeated deferrals)
+	ReasonProtected      = task.WidenReasonProtected // a changed path is protected by the grant
+	ReasonLinkTarget     = "link_target_refused"     // a changed symlink's tree destination is refused
+	ReasonOutside        = task.WidenReasonOutside   // a changed path is outside the task's declared files (S6 W5)
+	ReasonSizeCap        = "size_cap_exceeded"       // the diff is over the size cap
+	ReasonNested         = "nested_repository"       // a changed path is a gitlink or a nested repository
+	ReasonBaseUnrecorded = "base_unrecorded"         // no core-recorded base for the seat's branch
+	ReasonWorktree       = "worktree_mismatch"       // the record's worktree or branch is not what the repository shows
+	ReasonPushRejected   = "push_rejected"           // the remote refused a fast-forward push (no force push, ever)
+	ReasonGrants         = "grants_invalid"          // the grant could not be read; nothing commits
+	ReasonCommitFailed   = "commit_failed"           // the step kept failing (repeated deferrals)
 	// ReasonPRBoundElsewhere: an open PR on the seat branch is not this
 	// task's harness PR (another task's, another repository's, another base);
 	// it is never reused (P2, the reviewer's pre-clearance).

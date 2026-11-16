@@ -298,6 +298,7 @@ func classifyTask(t task.Task, now time.Time) Task {
 		BlockReason: t.BlockReason, DependsOn: append([]string{}, t.DependsOn...), ProjectPath: t.ProjectPath,
 		CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt,
 		Evidence: t.Evidence, PRRepository: t.PRRepository, PRNumber: t.PRNumber, PRHead: t.PRHead, WaitHolders: []string{},
+		Next: task.Next(t, now, task.NextCaller{}),
 	}
 	if t.Pool != nil {
 		row.Pool = &Pool{Runtime: t.Pool.Runtime, Model: t.Pool.Model, Effort: t.Pool.Effort}
