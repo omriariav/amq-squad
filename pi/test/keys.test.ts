@@ -505,6 +505,15 @@ test("A3 (a): a gate whose question cannot be shown is named in words, never by 
 	assert.equal(gateLabel({ id: "g9", action_class: "tag", question: "\n  Create a tag named v1?\nWhy." }), "  Create a tag named v1?");
 });
 
+// a3-fix (Codex on #1009): an action named like an Object.prototype member
+// is not an own key of ACTION_WORDS, so it gets the generic words, never the
+// prototype's value ("function Object() { [native code] }", "[object Object]").
+test("a3-fix: an action named like an Object.prototype member gets the generic words", () => {
+	for (const a of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"]) {
+		assert.equal(gateLabel({ id: "g9", action_class: a, question: "" }), "An owner question about an action the squad wants to take; its words could not be read here", a);
+	}
+});
+
 // A3 (c), through the widget at the lead pane's width (80 columns, the
 // measured pane): the header says where to answer, whole and unclipped; each
 // open gate's line is its plain first question line (or its words, (a)),
