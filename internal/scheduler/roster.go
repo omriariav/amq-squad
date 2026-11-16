@@ -365,7 +365,7 @@ func (s *Scheduler) rosterStep(list []task.Task, now time.Time, cfg Config, log 
 func (s *Scheduler) launchRoster(now time.Time, log func(Decision)) error {
 	rl, ok := s.Launcher.(RosterLauncher)
 	if !ok {
-		e := &RosterLaunchError{Stage: "launch_error", Detail: "the seat launcher cannot launch a roster"}
+		e := &RosterLaunchError{Stage: ReasonLaunchError, Detail: "the seat launcher cannot launch a roster"}
 		log(Decision{Kind: "roster_launch_failed", Reason: e.Error()})
 		return e
 	}
@@ -388,7 +388,7 @@ func (s *Scheduler) launchRoster(now time.Time, log func(Decision)) error {
 	s.seatStart, s.relaunchAt = nil, time.Time{}
 	out := rl.LaunchRoster(reqs)
 	if out.Stage != RosterApplied {
-		e := &RosterLaunchError{Stage: firstNonEmpty(out.Stage, "launch_error"), ReasonCode: out.ReasonCode, Detail: redact.Block(out.Detail)}
+		e := &RosterLaunchError{Stage: firstNonEmpty(out.Stage, ReasonLaunchError), ReasonCode: out.ReasonCode, Detail: redact.Block(out.Detail)}
 		log(Decision{Kind: "roster_launch_failed", Reason: e.Error()})
 		// Each seat's failure is a decision too, and the state is written
 		// before the process ends (3.0.1 t17).
@@ -398,7 +398,7 @@ func (s *Scheduler) launchRoster(now time.Time, log func(Decision)) error {
 	log(Decision{Kind: "roster_launched", Reason: fmt.Sprintf("launch %s: %d seats in one apply", firstNonEmpty(out.LaunchID, "-"), len(reqs))})
 	for _, st := range out.Seats {
 		if !st.Up {
-			log(Decision{Kind: "seat_not_up", Seat: st.Handle, Reason: redact.Block(strings.TrimSpace(firstNonEmpty(st.ReasonCode, "not_started") + ": " + st.Detail))})
+			log(Decision{Kind: "seat_not_up", Seat: st.Handle, Reason: redact.Block(strings.TrimSpace(firstNonEmpty(st.ReasonCode, ReasonNotStarted) + ": " + st.Detail))})
 		}
 	}
 	return nil

@@ -30,11 +30,11 @@ const dirFlags = unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLO
 // itself gets the owner and mode check.
 func openRoot(path string, uid int) (*anchor, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return nil, refusef("root_invalid", "AMQ root %q is not a clean absolute path", path)
+		return nil, refusef(ReasonRootInvalid, "AMQ root %q is not a clean absolute path", path)
 	}
 	fd, err := unix.Open("/", dirFlags, 0)
 	if err != nil {
-		return nil, refusef("root_unreadable", "open /: %v", err)
+		return nil, refusef(ReasonRootUnreadable, "open /: %v", err)
 	}
 	a := &anchor{fd: fd, path: "/", uid: uid}
 	for _, name := range strings.Split(strings.TrimPrefix(path, "/"), "/") {
@@ -59,12 +59,12 @@ func (a *anchor) close() { unix.Close(a.fd) }
 
 func (a *anchor) open(name string, checked bool) (*anchor, error) {
 	if name == "" || name == "." || name == ".." || strings.Contains(name, "/") {
-		return nil, refusef("path_invalid", "bad path component %q under %s", name, a.path)
+		return nil, refusef(ReasonPathInvalid, "bad path component %q under %s", name, a.path)
 	}
 	fd, err := unix.Openat(a.fd, name, dirFlags, 0)
 	full := filepath.Join(a.path, name)
 	if err == unix.ELOOP || err == unix.ENOTDIR {
-		return nil, refusef("symlink_in_path", "%s is a symlink or not a directory", full)
+		return nil, refusef(ReasonSymlinkInPath, "%s is a symlink or not a directory", full)
 	}
 	if err != nil {
 		return nil, &notExist{path: full, err: err}
@@ -83,13 +83,13 @@ func (a *anchor) open(name string, checked bool) (*anchor, error) {
 func (a *anchor) check() error {
 	var st unix.Stat_t
 	if err := unix.Fstat(a.fd, &st); err != nil {
-		return refusef("stat_failed", "stat %s: %v", a.path, err)
+		return refusef(ReasonStatFailed, "stat %s: %v", a.path, err)
 	}
 	if int(st.Uid) != a.uid {
-		return refusef("wrong_owner", "%s is owned by uid %d, not %d", a.path, st.Uid, a.uid)
+		return refusef(ReasonWrongOwner, "%s is owned by uid %d, not %d", a.path, st.Uid, a.uid)
 	}
 	if st.Mode&0o022 != 0 {
-		return refusef("dir_writable_by_others", "%s has mode %o (group or world writable)", a.path, st.Mode&0o777)
+		return refusef(ReasonDirWritableByOthers, "%s has mode %o (group or world writable)", a.path, st.Mode&0o777)
 	}
 	return nil
 }
@@ -102,7 +102,7 @@ func (a *anchor) walk(rel string, create bool) (*anchor, error) {
 		next, err := cur.open(name, true)
 		if _, missing := err.(*notExist); missing && create {
 			if mkErr := unix.Mkdirat(cur.fd, name, 0o700); mkErr != nil && mkErr != unix.EEXIST {
-				err = refusef("mkdir_failed", "mkdir %s: %v", filepath.Join(cur.path, name), mkErr)
+				err = refusef(ReasonMkdirFailed, "mkdir %s: %v", filepath.Join(cur.path, name), mkErr)
 			} else {
 				next, err = cur.open(name, true)
 			}
@@ -123,7 +123,7 @@ func (a *anchor) readFile(name string, limit int64) ([]byte, error) {
 	fd, err := unix.Openat(a.fd, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		if err == unix.ELOOP {
-			return nil, refusef("symlink_in_path", "%s is a symlink", filepath.Join(a.path, name))
+			return nil, refusef(ReasonSymlinkInPath, "%s is a symlink", filepath.Join(a.path, name))
 		}
 		return nil, &notExist{path: filepath.Join(a.path, name), err: err}
 	}
@@ -145,7 +145,7 @@ func (a *anchor) writeFileMode(name string, data []byte, mode uint32) error {
 	tmp := fmt.Sprintf(".%s.%d.tmp", name, os.Getpid())
 	fd, err := unix.Openat(a.fd, tmp, unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, mode)
 	if err != nil {
-		return refusef("write_failed", "create %s: %v", filepath.Join(a.path, tmp), err)
+		return refusef(ReasonWriteFailed, "create %s: %v", filepath.Join(a.path, tmp), err)
 	}
 	f := os.NewFile(uintptr(fd), tmp)
 	_, werr := f.Write(data)
@@ -160,7 +160,7 @@ func (a *anchor) writeFileMode(name string, data []byte, mode uint32) error {
 	}
 	if werr != nil {
 		unix.Unlinkat(a.fd, tmp, 0)
-		return refusef("write_failed", "publish %s: %v", filepath.Join(a.path, name), werr)
+		return refusef(ReasonWriteFailed, "publish %s: %v", filepath.Join(a.path, name), werr)
 	}
 	return nil
 }

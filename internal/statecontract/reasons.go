@@ -8,12 +8,14 @@ package statecontract
 
 import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
+	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/registry"
 	"github.com/omriariav/amq-squad/v3/internal/routing"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
 	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
+	"github.com/omriariav/amq-squad/v3/internal/seatlaunch"
 	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -35,6 +37,33 @@ type ReasonEntry struct {
 type OpenDoor struct {
 	Name      string   `json:"name"`
 	Functions []string `json:"functions"`
+}
+
+// KeptWord is a launch stage or seat-state word the launch path writes as a
+// string literal and that never reaches a task: Guard is the function that
+// keeps it from scheduler.(LaunchFailure).Code.
+type KeptWord struct {
+	Word  string `json:"word"`
+	Guard string `json:"guard"`
+	Why   string `json:"why"`
+}
+
+// LaunchFamily is the launch path's codes: what a failed launch writes, which
+// reaches a task through Door (the pool's tasks wait on it and, when the
+// launch fails the same way again, block on it). Constants are each on the
+// block and wait lists; Doors are the declared doors of both lists where the
+// launch path writes them, and no string literal reaches them but a Kept word.
+// Outside are the launch path's codes that never reach a task: the
+// seat-prepare refusals, the pi runtime's refusals and the proof server's
+// alarm and log codes (OutsideDoors), each on no block or wait list; pi words
+// them with the family.
+type LaunchFamily struct {
+	Door         string        `json:"door"`
+	Doors        []string      `json:"doors"`
+	Constants    []string      `json:"constants"`
+	Kept         []KeptWord    `json:"kept"`
+	OutsideDoors []string      `json:"outside_doors"`
+	Outside      []ReasonEntry `json:"outside"`
 }
 
 // ReasonList is one vocabulary: open, with its named doors.
@@ -63,20 +92,32 @@ func BlockReasons() ReasonList {
 			{Name: "parameter reasonCode of task.(Store).RefuseCommit, which no code outside tests calls", Functions: []string{"task.(Store).RefuseCommit"}},
 		},
 		Doors: []string{
+			"field launch.ProofReply.Code",
+			"field piruntime.ResumeRefusal.Code",
 			"field scheduler.CommitResult.ReasonCode",
 			"field scheduler.Event.ReasonCode",
+			"field scheduler.RosterLaunchError.Stage",
 			"field scheduler.RosterOutcome.ReasonCode",
+			"field scheduler.RosterOutcome.Stage",
 			"field scheduler.Route.Block",
 			"field seatcommit.Result.ReasonCode",
 			"field seatcommit.Violation.Reason",
+			"field seatlaunch.Result.Stage",
+			"field seatlaunch.SeatState.ReasonCode",
+			"field seatlaunch.SeatState.State",
+			"field seatlaunch.proofSeat.refused",
 			"local code in scheduler.(*Scheduler).commit",
 			"param seatcommit.(Result).refuse#0",
+			"param seatexec.asRefusal#0",
 			"param seatexec.refusef#0",
+			"param seatlaunch.firstNonEmptyStr#1",
 			"param task.(Store).Block#2",
 			"param task.(Store).Escalate#1",
 			"param task.block#1",
 			"result registry.OpenPinned#1",
 			"result seatcommit.planVerifier#1",
+			"result seatlaunch.launchFailure#0",
+			"result seatlaunch.launchFailure#1",
 		},
 		Entries: []ReasonEntry{
 			{Code: claudeseat.TokenInsecure, Constant: "claudeseat.TokenInsecure", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}}},
@@ -140,6 +181,61 @@ func BlockReasons() ReasonList {
 			{Code: routing.ReasonInvalid, Constant: "routing.ReasonInvalid", Mark: "no writer"},
 			{Code: scheduler.AMQBindingPresent, Constant: "scheduler.AMQBindingPresent", Mark: "no writer"},
 			{Code: schedproc.ReasonSeatHeadDetachedUnmerged, Constant: "schedproc.ReasonSeatHeadDetachedUnmerged", Mark: "no writer"},
+			// S2-3: the launch family's constants that were string literals (LaunchReasons)
+			{Code: piruntime.ReasonLedgerUnreadable, Constant: "piruntime.ReasonLedgerUnreadable", Writers: []ReasonWriter{{Function: "piruntime.CheckResume", Door: "field piruntime.ResumeRefusal.Code"}}},
+			{Code: piruntime.ReasonPiResumeContextLost, Constant: "piruntime.ReasonPiResumeContextLost", Writers: []ReasonWriter{{Function: "piruntime.CheckResume", Door: "field piruntime.ResumeRefusal.Code"}}},
+			{Code: piruntime.ReasonPiSessionIDInvalid, Constant: "piruntime.ReasonPiSessionIDInvalid", Writers: []ReasonWriter{{Function: "piruntime.CheckResume", Door: "field piruntime.ResumeRefusal.Code"}}},
+			{Code: piruntime.ReasonPiSessionIDMissing, Constant: "piruntime.ReasonPiSessionIDMissing", Writers: []ReasonWriter{{Function: "piruntime.CheckResume", Door: "field piruntime.ResumeRefusal.Code"}}},
+			{Code: piruntime.ReasonPiSessionUnreadable, Constant: "piruntime.ReasonPiSessionUnreadable", Writers: []ReasonWriter{{Function: "piruntime.CheckResume", Door: "field piruntime.ResumeRefusal.Code"}}},
+			{Code: scheduler.ReasonLaunchError, Constant: "scheduler.ReasonLaunchError", Writers: []ReasonWriter{{Function: "schedproc.(*Launcher).LaunchRoster", Door: "field scheduler.RosterOutcome.Stage"}, {Function: "scheduler.(*Scheduler).launchRoster", Door: "field scheduler.RosterLaunchError.Stage"}, {Function: "seatlaunch.(*Launcher).LaunchRoster", Door: "field scheduler.RosterOutcome.Stage"}, {Function: "seatlaunch.launchFailure", Door: "param seatlaunch.firstNonEmptyStr#1"}, {Function: "seatlaunch.rosterOutcome", Door: "field scheduler.RosterOutcome.Stage"}}},
+			{Code: scheduler.ReasonNotStarted, Constant: "scheduler.ReasonNotStarted", Writers: []ReasonWriter{{Function: "seatlaunch.WaitSeats", Door: "field seatlaunch.SeatState.State"}}},
+			{Code: seatexec.ReasonArgvMissing, Constant: "seatexec.ReasonArgvMissing", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonCodexApprovalMissing, Constant: "seatexec.ReasonCodexApprovalMissing", Writers: []ReasonWriter{{Function: "seatexec.CheckCodexSandbox", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonCodexSandboxMissing, Constant: "seatexec.ReasonCodexSandboxMissing", Writers: []ReasonWriter{{Function: "seatexec.CheckCodexSandbox", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonDirWritableByOthers, Constant: "seatexec.ReasonDirWritableByOthers", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).check", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonEnvNeedsInvalid, Constant: "seatexec.ReasonEnvNeedsInvalid", Writers: []ReasonWriter{{Function: "seatexec.ValidateNeeds", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonIdentityMismatch, Constant: "seatexec.ReasonIdentityMismatch", Writers: []ReasonWriter{{Function: "seatexec.checkIdentity", Door: "param seatexec.refusef#0"}, {Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonIdentityProofFailed, Constant: "seatexec.ReasonIdentityProofFailed", Writers: []ReasonWriter{{Function: "seatexec.identityProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonIdentityProofTimeout, Constant: "seatexec.ReasonIdentityProofTimeout", Writers: []ReasonWriter{{Function: "seatexec.identityProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonMailboxMissing, Constant: "seatexec.ReasonMailboxMissing", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.asRefusal#0"}}},
+			{Code: seatexec.ReasonMkdirFailed, Constant: "seatexec.ReasonMkdirFailed", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).walk", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonPathInvalid, Constant: "seatexec.ReasonPathInvalid", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).open", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonProofExpired, Constant: "seatexec.ReasonProofExpired", Writers: []ReasonWriter{{Function: "seatexec.sendProof", Door: "param seatexec.refusef#0"}, {Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field seatlaunch.proofSeat.refused"}}},
+			{Code: seatexec.ReasonProofRefused, Constant: "seatexec.ReasonProofRefused", Writers: []ReasonWriter{{Function: "seatexec.sendProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonProofTicketConsumed, Constant: "seatexec.ReasonProofTicketConsumed", Writers: []ReasonWriter{{Function: "seatexec.sendProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonProofTicketMissing, Constant: "seatexec.ReasonProofTicketMissing", Writers: []ReasonWriter{{Function: "seatexec.sendProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonProofUnacknowledged, Constant: "seatexec.ReasonProofUnacknowledged", Writers: []ReasonWriter{{Function: "seatexec.sendProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonProviderMissing, Constant: "seatexec.ReasonProviderMissing", Writers: []ReasonWriter{{Function: "seatexec.providerPath", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRecordInvalid, Constant: "seatexec.ReasonRecordInvalid", Writers: []ReasonWriter{{Function: "seatexec.piShimProvider", Door: "param seatexec.refusef#0"}, {Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRecordMissing, Constant: "seatexec.ReasonRecordMissing", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.asRefusal#0"}}},
+			{Code: seatexec.ReasonRoleMismatch, Constant: "seatexec.ReasonRoleMismatch", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}, {Function: "seatexec.recheck", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRoleMissing, Constant: "seatexec.ReasonRoleMissing", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.asRefusal#0"}}},
+			{Code: seatexec.ReasonRootInvalid, Constant: "seatexec.ReasonRootInvalid", Writers: []ReasonWriter{{Function: "seatexec.openRoot", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRootUnreadable, Constant: "seatexec.ReasonRootUnreadable", Writers: []ReasonWriter{{Function: "seatexec.openRoot", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRulesMismatch, Constant: "seatexec.ReasonRulesMismatch", Writers: []ReasonWriter{{Function: "seatexec.readRules", Door: "param seatexec.refusef#0"}, {Function: "seatexec.recheck", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRulesMissing, Constant: "seatexec.ReasonRulesMissing", Writers: []ReasonWriter{{Function: "seatexec.readRules", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRuntimeMismatch, Constant: "seatexec.ReasonRuntimeMismatch", Writers: []ReasonWriter{{Function: "seatexec.piShimProvider", Door: "param seatexec.refusef#0"}, {Function: "seatexec.providerPath", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonSeatInvalid, Constant: "seatexec.ReasonSeatInvalid", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonStatFailed, Constant: "seatexec.ReasonStatFailed", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).check", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonSymlinkInPath, Constant: "seatexec.ReasonSymlinkInPath", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).open", Door: "param seatexec.refusef#0"}, {Function: "seatexec.(*anchor).readFile", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonWriteFailed, Constant: "seatexec.ReasonWriteFailed", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).writeFileMode", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonWrongOwner, Constant: "seatexec.ReasonWrongOwner", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).check", Door: "param seatexec.refusef#0"}}},
+			{Code: seatlaunch.ReasonApplyAmbiguous, Constant: "seatlaunch.ReasonApplyAmbiguous", Writers: []ReasonWriter{{Function: "seatlaunch.launchFailure", Door: "result seatlaunch.launchFailure#1"}}},
+			{Code: seatlaunch.ReasonApplyFailed, Constant: "seatlaunch.ReasonApplyFailed", Writers: []ReasonWriter{{Function: "seatlaunch.Launch", Door: "field seatlaunch.Result.Stage"}, {Function: "seatlaunch.rosterOutcome", Door: "field scheduler.RosterOutcome.Stage"}}},
+			{Code: seatlaunch.ReasonDecisionsPending, Constant: "seatlaunch.ReasonDecisionsPending", Writers: []ReasonWriter{{Function: "seatlaunch.Launch", Door: "field seatlaunch.Result.Stage"}}},
+			{Code: seatlaunch.ReasonIdentityForged, Constant: "seatlaunch.ReasonIdentityForged", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).forged", Door: "field launch.ProofReply.Code"}, {Function: "seatlaunch.(*proofServer).forged", Door: "field seatlaunch.proofSeat.refused"}}},
+			{Code: seatlaunch.ReasonNoProof, Constant: "seatlaunch.ReasonNoProof", Writers: []ReasonWriter{{Function: "seatlaunch.WaitSeats", Door: "field seatlaunch.SeatState.ReasonCode"}}},
+			{Code: seatlaunch.ReasonNotObserved, Constant: "seatlaunch.ReasonNotObserved", Writers: []ReasonWriter{{Function: "seatlaunch.launchFailure", Door: "result seatlaunch.launchFailure#1"}}},
+			{Code: seatlaunch.ReasonPrepareRefused, Constant: "seatlaunch.ReasonPrepareRefused", Writers: []ReasonWriter{{Function: "seatlaunch.Launch", Door: "field seatlaunch.Result.Stage"}}},
+			{Code: seatlaunch.ReasonProofLedgerFailed, Constant: "seatlaunch.ReasonProofLedgerFailed", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field seatlaunch.proofSeat.refused"}}},
+			{Code: seatlaunch.ReasonProofMalformed, Constant: "seatlaunch.ReasonProofMalformed", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).serve", Door: "field launch.ProofReply.Code"}}},
+			{Code: seatlaunch.ReasonProofMarkerFailed, Constant: "seatlaunch.ReasonProofMarkerFailed", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field seatlaunch.proofSeat.refused"}}},
+			{Code: seatlaunch.ReasonProofOriginUnknown, Constant: "seatlaunch.ReasonProofOriginUnknown", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field launch.ProofReply.Code"}}},
+			{Code: seatlaunch.ReasonProofTokenInvalid, Constant: "seatlaunch.ReasonProofTokenInvalid", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field launch.ProofReply.Code"}}},
+			{Code: seatlaunch.ReasonProofUnknown, Constant: "seatlaunch.ReasonProofUnknown", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field launch.ProofReply.Code"}}},
+			{Code: seatlaunch.ReasonRefused, Constant: "seatlaunch.ReasonRefused", Writers: []ReasonWriter{{Function: "seatlaunch.seatState", Door: "field seatlaunch.SeatState.State"}}},
+			{Code: seatlaunch.ReasonResourcePresent, Constant: "seatlaunch.ReasonResourcePresent", Writers: []ReasonWriter{{Function: "seatlaunch.Launch", Door: "field seatlaunch.Result.Stage"}}},
+			{Code: seatlaunch.ReasonSeatNotUp, Constant: "seatlaunch.ReasonSeatNotUp", Writers: []ReasonWriter{{Function: "seatlaunch.launchFailure", Door: "result seatlaunch.launchFailure#0"}}},
 		},
 	}
 }
@@ -162,13 +258,25 @@ func WaitReasons() ReasonList {
 		},
 		Doors: []string{
 			"element in routing.waitReason",
+			"field launch.ProofReply.Code",
+			"field piruntime.ResumeRefusal.Code",
 			"field scheduler.Event.ReasonCode",
+			"field scheduler.RosterLaunchError.Stage",
 			"field scheduler.RosterOutcome.ReasonCode",
+			"field scheduler.RosterOutcome.Stage",
 			"field scheduler.Route.Wait",
+			"field seatlaunch.Result.Stage",
+			"field seatlaunch.SeatState.ReasonCode",
+			"field seatlaunch.SeatState.State",
+			"field seatlaunch.proofSeat.refused",
 			"param scheduler.(*Scheduler).wait#1",
 			"param scheduler.firstNonEmpty#1",
+			"param seatexec.asRefusal#0",
 			"param seatexec.refusef#0",
+			"param seatlaunch.firstNonEmptyStr#1",
 			"result routing.waitReason#0",
+			"result seatlaunch.launchFailure#0",
+			"result seatlaunch.launchFailure#1",
 			"result task.Blocker#0",
 		},
 		Entries: []ReasonEntry{
@@ -196,6 +304,61 @@ func WaitReasons() ReasonList {
 			{Code: task.WaitConcurrencyCap, Constant: "task.WaitConcurrencyCap", Mark: "no writer"},
 			{Code: task.WaitCostCap, Constant: "task.WaitCostCap", Mark: "no writer"},
 			{Code: task.WaitReviewerFamily, Constant: "task.WaitReviewerFamily", Mark: "no writer"},
+			// S2-3: the launch family's constants that were string literals (LaunchReasons)
+			{Code: piruntime.ReasonLedgerUnreadable, Constant: "piruntime.ReasonLedgerUnreadable", Writers: []ReasonWriter{{Function: "piruntime.CheckResume", Door: "field piruntime.ResumeRefusal.Code"}}},
+			{Code: piruntime.ReasonPiResumeContextLost, Constant: "piruntime.ReasonPiResumeContextLost", Writers: []ReasonWriter{{Function: "piruntime.CheckResume", Door: "field piruntime.ResumeRefusal.Code"}}},
+			{Code: piruntime.ReasonPiSessionIDInvalid, Constant: "piruntime.ReasonPiSessionIDInvalid", Writers: []ReasonWriter{{Function: "piruntime.CheckResume", Door: "field piruntime.ResumeRefusal.Code"}}},
+			{Code: piruntime.ReasonPiSessionIDMissing, Constant: "piruntime.ReasonPiSessionIDMissing", Writers: []ReasonWriter{{Function: "piruntime.CheckResume", Door: "field piruntime.ResumeRefusal.Code"}}},
+			{Code: piruntime.ReasonPiSessionUnreadable, Constant: "piruntime.ReasonPiSessionUnreadable", Writers: []ReasonWriter{{Function: "piruntime.CheckResume", Door: "field piruntime.ResumeRefusal.Code"}}},
+			{Code: scheduler.ReasonLaunchError, Constant: "scheduler.ReasonLaunchError", Writers: []ReasonWriter{{Function: "schedproc.(*Launcher).LaunchRoster", Door: "field scheduler.RosterOutcome.Stage"}, {Function: "scheduler.(*Scheduler).launchRoster", Door: "field scheduler.RosterLaunchError.Stage"}, {Function: "scheduler.(*Scheduler).launchRoster", Door: "param scheduler.firstNonEmpty#1"}, {Function: "scheduler.(*Scheduler).noteLaunchFailure", Door: "param scheduler.firstNonEmpty#1"}, {Function: "seatlaunch.(*Launcher).LaunchRoster", Door: "field scheduler.RosterOutcome.Stage"}, {Function: "seatlaunch.launchFailure", Door: "param seatlaunch.firstNonEmptyStr#1"}, {Function: "seatlaunch.rosterOutcome", Door: "field scheduler.RosterOutcome.Stage"}}},
+			{Code: scheduler.ReasonNotStarted, Constant: "scheduler.ReasonNotStarted", Writers: []ReasonWriter{{Function: "scheduler.(*Scheduler).launchRoster", Door: "param scheduler.firstNonEmpty#1"}, {Function: "seatlaunch.WaitSeats", Door: "field seatlaunch.SeatState.State"}}},
+			{Code: seatexec.ReasonArgvMissing, Constant: "seatexec.ReasonArgvMissing", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonCodexApprovalMissing, Constant: "seatexec.ReasonCodexApprovalMissing", Writers: []ReasonWriter{{Function: "seatexec.CheckCodexSandbox", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonCodexSandboxMissing, Constant: "seatexec.ReasonCodexSandboxMissing", Writers: []ReasonWriter{{Function: "seatexec.CheckCodexSandbox", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonDirWritableByOthers, Constant: "seatexec.ReasonDirWritableByOthers", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).check", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonEnvNeedsInvalid, Constant: "seatexec.ReasonEnvNeedsInvalid", Writers: []ReasonWriter{{Function: "seatexec.ValidateNeeds", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonIdentityMismatch, Constant: "seatexec.ReasonIdentityMismatch", Writers: []ReasonWriter{{Function: "seatexec.checkIdentity", Door: "param seatexec.refusef#0"}, {Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonIdentityProofFailed, Constant: "seatexec.ReasonIdentityProofFailed", Writers: []ReasonWriter{{Function: "seatexec.identityProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonIdentityProofTimeout, Constant: "seatexec.ReasonIdentityProofTimeout", Writers: []ReasonWriter{{Function: "seatexec.identityProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonMailboxMissing, Constant: "seatexec.ReasonMailboxMissing", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.asRefusal#0"}}},
+			{Code: seatexec.ReasonMkdirFailed, Constant: "seatexec.ReasonMkdirFailed", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).walk", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonPathInvalid, Constant: "seatexec.ReasonPathInvalid", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).open", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonProofExpired, Constant: "seatexec.ReasonProofExpired", Writers: []ReasonWriter{{Function: "seatexec.sendProof", Door: "param seatexec.refusef#0"}, {Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field seatlaunch.proofSeat.refused"}}},
+			{Code: seatexec.ReasonProofRefused, Constant: "seatexec.ReasonProofRefused", Writers: []ReasonWriter{{Function: "seatexec.sendProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonProofTicketConsumed, Constant: "seatexec.ReasonProofTicketConsumed", Writers: []ReasonWriter{{Function: "seatexec.sendProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonProofTicketMissing, Constant: "seatexec.ReasonProofTicketMissing", Writers: []ReasonWriter{{Function: "seatexec.sendProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonProofUnacknowledged, Constant: "seatexec.ReasonProofUnacknowledged", Writers: []ReasonWriter{{Function: "seatexec.sendProof", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonProviderMissing, Constant: "seatexec.ReasonProviderMissing", Writers: []ReasonWriter{{Function: "seatexec.providerPath", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRecordInvalid, Constant: "seatexec.ReasonRecordInvalid", Writers: []ReasonWriter{{Function: "seatexec.piShimProvider", Door: "param seatexec.refusef#0"}, {Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRecordMissing, Constant: "seatexec.ReasonRecordMissing", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.asRefusal#0"}}},
+			{Code: seatexec.ReasonRoleMismatch, Constant: "seatexec.ReasonRoleMismatch", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}, {Function: "seatexec.recheck", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRoleMissing, Constant: "seatexec.ReasonRoleMissing", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.asRefusal#0"}}},
+			{Code: seatexec.ReasonRootInvalid, Constant: "seatexec.ReasonRootInvalid", Writers: []ReasonWriter{{Function: "seatexec.openRoot", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRootUnreadable, Constant: "seatexec.ReasonRootUnreadable", Writers: []ReasonWriter{{Function: "seatexec.openRoot", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRulesMismatch, Constant: "seatexec.ReasonRulesMismatch", Writers: []ReasonWriter{{Function: "seatexec.readRules", Door: "param seatexec.refusef#0"}, {Function: "seatexec.recheck", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRulesMissing, Constant: "seatexec.ReasonRulesMissing", Writers: []ReasonWriter{{Function: "seatexec.readRules", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonRuntimeMismatch, Constant: "seatexec.ReasonRuntimeMismatch", Writers: []ReasonWriter{{Function: "seatexec.piShimProvider", Door: "param seatexec.refusef#0"}, {Function: "seatexec.providerPath", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonSeatInvalid, Constant: "seatexec.ReasonSeatInvalid", Writers: []ReasonWriter{{Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonStatFailed, Constant: "seatexec.ReasonStatFailed", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).check", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonSymlinkInPath, Constant: "seatexec.ReasonSymlinkInPath", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).open", Door: "param seatexec.refusef#0"}, {Function: "seatexec.(*anchor).readFile", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonWriteFailed, Constant: "seatexec.ReasonWriteFailed", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).writeFileMode", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ReasonWrongOwner, Constant: "seatexec.ReasonWrongOwner", Writers: []ReasonWriter{{Function: "seatexec.(*anchor).check", Door: "param seatexec.refusef#0"}}},
+			{Code: seatlaunch.ReasonApplyAmbiguous, Constant: "seatlaunch.ReasonApplyAmbiguous", Writers: []ReasonWriter{{Function: "seatlaunch.launchFailure", Door: "result seatlaunch.launchFailure#1"}}},
+			{Code: seatlaunch.ReasonApplyFailed, Constant: "seatlaunch.ReasonApplyFailed", Writers: []ReasonWriter{{Function: "seatlaunch.Launch", Door: "field seatlaunch.Result.Stage"}, {Function: "seatlaunch.rosterOutcome", Door: "field scheduler.RosterOutcome.Stage"}}},
+			{Code: seatlaunch.ReasonDecisionsPending, Constant: "seatlaunch.ReasonDecisionsPending", Writers: []ReasonWriter{{Function: "seatlaunch.Launch", Door: "field seatlaunch.Result.Stage"}}},
+			{Code: seatlaunch.ReasonIdentityForged, Constant: "seatlaunch.ReasonIdentityForged", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).forged", Door: "field launch.ProofReply.Code"}, {Function: "seatlaunch.(*proofServer).forged", Door: "field seatlaunch.proofSeat.refused"}}},
+			{Code: seatlaunch.ReasonNoProof, Constant: "seatlaunch.ReasonNoProof", Writers: []ReasonWriter{{Function: "seatlaunch.WaitSeats", Door: "field seatlaunch.SeatState.ReasonCode"}}},
+			{Code: seatlaunch.ReasonNotObserved, Constant: "seatlaunch.ReasonNotObserved", Writers: []ReasonWriter{{Function: "seatlaunch.launchFailure", Door: "result seatlaunch.launchFailure#1"}}},
+			{Code: seatlaunch.ReasonPrepareRefused, Constant: "seatlaunch.ReasonPrepareRefused", Writers: []ReasonWriter{{Function: "seatlaunch.Launch", Door: "field seatlaunch.Result.Stage"}}},
+			{Code: seatlaunch.ReasonProofLedgerFailed, Constant: "seatlaunch.ReasonProofLedgerFailed", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field seatlaunch.proofSeat.refused"}}},
+			{Code: seatlaunch.ReasonProofMalformed, Constant: "seatlaunch.ReasonProofMalformed", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).serve", Door: "field launch.ProofReply.Code"}}},
+			{Code: seatlaunch.ReasonProofMarkerFailed, Constant: "seatlaunch.ReasonProofMarkerFailed", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field seatlaunch.proofSeat.refused"}}},
+			{Code: seatlaunch.ReasonProofOriginUnknown, Constant: "seatlaunch.ReasonProofOriginUnknown", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field launch.ProofReply.Code"}}},
+			{Code: seatlaunch.ReasonProofTokenInvalid, Constant: "seatlaunch.ReasonProofTokenInvalid", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field launch.ProofReply.Code"}}},
+			{Code: seatlaunch.ReasonProofUnknown, Constant: "seatlaunch.ReasonProofUnknown", Writers: []ReasonWriter{{Function: "seatlaunch.(*proofServer).judgeLocked", Door: "field launch.ProofReply.Code"}}},
+			{Code: seatlaunch.ReasonRefused, Constant: "seatlaunch.ReasonRefused", Writers: []ReasonWriter{{Function: "seatlaunch.seatState", Door: "field seatlaunch.SeatState.State"}}},
+			{Code: seatlaunch.ReasonResourcePresent, Constant: "seatlaunch.ReasonResourcePresent", Writers: []ReasonWriter{{Function: "seatlaunch.Launch", Door: "field seatlaunch.Result.Stage"}}},
+			{Code: seatlaunch.ReasonSeatNotUp, Constant: "seatlaunch.ReasonSeatNotUp", Writers: []ReasonWriter{{Function: "seatlaunch.launchFailure", Door: "result seatlaunch.launchFailure#0"}}},
 		},
 	}
 }
@@ -210,5 +373,121 @@ func NotReasons() []ReasonEntry {
 		{Code: task.RefusalClaimOfferExpired, Constant: "task.RefusalClaimOfferExpired"},
 		{Code: task.RefusalClaimPoolMismatch, Constant: "task.RefusalClaimPoolMismatch"},
 		{Code: task.RefusalClaimPoolUnknown, Constant: "task.RefusalClaimPoolUnknown"},
+	}
+}
+
+// LaunchReasons returns the launch family (S2-3, 3.3.0): the constants the
+// launch path writes, the doors it writes them at, and the four stage and
+// state words it writes as literals, each with its guard
+// (docs/v3-spike/330-s1-2b-reasons/sites.md 5a and 5c).
+func LaunchReasons() LaunchFamily {
+	return LaunchFamily{
+		Door: "scheduler.(LaunchFailure).Code",
+		Doors: []string{
+			"field launch.ProofReply.Code",
+			"field piruntime.ResumeRefusal.Code",
+			"field scheduler.RosterLaunchError.Stage",
+			"field scheduler.RosterOutcome.Stage",
+			"field seatlaunch.Result.Stage",
+			"field seatlaunch.SeatState.ReasonCode",
+			"field seatlaunch.SeatState.State",
+			"field seatlaunch.proofSeat.refused",
+			"param seatexec.asRefusal#0",
+			"param seatexec.refusef#0",
+			"param seatlaunch.firstNonEmptyStr#1",
+			"result seatlaunch.launchFailure#0",
+			"result seatlaunch.launchFailure#1",
+		},
+		Constants: []string{
+			// listed before S2-3
+			"claudeseat.TokenInsecure",
+			"scheduler.AMQBindingPresent",
+			"scheduler.ReasonResourcePresent",
+			"seatexec.ClaudeHooksMissing",
+			"seatexec.ClaudePermissionMismatch",
+			"seatexec.IdentityIncomplete",
+			"seatexec.PiNotEmbedded",
+			"seatexec.SandboxPinsMissing",
+			// S2-3: the 54 launch codes that were string literals
+			"piruntime.ReasonLedgerUnreadable",
+			"piruntime.ReasonPiResumeContextLost",
+			"piruntime.ReasonPiSessionIDInvalid",
+			"piruntime.ReasonPiSessionIDMissing",
+			"piruntime.ReasonPiSessionUnreadable",
+			"scheduler.ReasonLaunchError",
+			"scheduler.ReasonNotStarted",
+			"seatexec.ReasonArgvMissing",
+			"seatexec.ReasonCodexApprovalMissing",
+			"seatexec.ReasonCodexSandboxMissing",
+			"seatexec.ReasonDirWritableByOthers",
+			"seatexec.ReasonEnvNeedsInvalid",
+			"seatexec.ReasonIdentityMismatch",
+			"seatexec.ReasonIdentityProofFailed",
+			"seatexec.ReasonIdentityProofTimeout",
+			"seatexec.ReasonMailboxMissing",
+			"seatexec.ReasonMkdirFailed",
+			"seatexec.ReasonPathInvalid",
+			"seatexec.ReasonProofExpired",
+			"seatexec.ReasonProofRefused",
+			"seatexec.ReasonProofTicketConsumed",
+			"seatexec.ReasonProofTicketMissing",
+			"seatexec.ReasonProofUnacknowledged",
+			"seatexec.ReasonProviderMissing",
+			"seatexec.ReasonRecordInvalid",
+			"seatexec.ReasonRecordMissing",
+			"seatexec.ReasonRoleMismatch",
+			"seatexec.ReasonRoleMissing",
+			"seatexec.ReasonRootInvalid",
+			"seatexec.ReasonRootUnreadable",
+			"seatexec.ReasonRulesMismatch",
+			"seatexec.ReasonRulesMissing",
+			"seatexec.ReasonRuntimeMismatch",
+			"seatexec.ReasonSeatInvalid",
+			"seatexec.ReasonStatFailed",
+			"seatexec.ReasonSymlinkInPath",
+			"seatexec.ReasonWriteFailed",
+			"seatexec.ReasonWrongOwner",
+			"seatlaunch.ReasonApplyAmbiguous",
+			"seatlaunch.ReasonApplyFailed",
+			"seatlaunch.ReasonDecisionsPending",
+			"seatlaunch.ReasonIdentityForged",
+			"seatlaunch.ReasonNoProof",
+			"seatlaunch.ReasonNotObserved",
+			"seatlaunch.ReasonPrepareRefused",
+			"seatlaunch.ReasonProofLedgerFailed",
+			"seatlaunch.ReasonProofMalformed",
+			"seatlaunch.ReasonProofMarkerFailed",
+			"seatlaunch.ReasonProofOriginUnknown",
+			"seatlaunch.ReasonProofTokenInvalid",
+			"seatlaunch.ReasonProofUnknown",
+			"seatlaunch.ReasonRefused",
+			"seatlaunch.ReasonResourcePresent",
+			"seatlaunch.ReasonSeatNotUp",
+		},
+		Kept: []KeptWord{
+			{Word: "pending", Guard: "seatlaunch.WaitSeats", Why: "seatState starts every seat at pending; before WaitSeats returns, a seat still pending is rewritten to not_started with the reason code no_proof"},
+			{Word: "up", Guard: "seatlaunch.(*Launcher).settleOne", Why: "set only with Up true, and a seat that is up settles as up or closing, never as a failure"},
+			{Word: "prepared", Guard: "seatlaunch.Launch", Why: "set only in Launch's dry-run arm, and no code outside tests sets Options.DryRun"},
+			{Word: "applied", Guard: "seatlaunch.launchFailure", Why: "launchFailure returns the roster's stage only when it is not applied"},
+		},
+		OutsideDoors: []string{
+			"param seatlaunch.(*proofServer).forged#2",
+			"param seatlaunch.(*proofServer).reject#2",
+		},
+		Outside: []ReasonEntry{
+			{Code: piruntime.ReasonRejected, Constant: "piruntime.ReasonRejected"},
+			{Code: piruntime.RuntimeMismatchReason, Constant: "piruntime.RuntimeMismatchReason"},
+			{Code: schedproc.ReasonBaseFetchUnauthenticated, Constant: "schedproc.ReasonBaseFetchUnauthenticated"},
+			{Code: schedproc.ReasonBaseTipMoved, Constant: "schedproc.ReasonBaseTipMoved"},
+			{Code: schedproc.ReasonSeatBranchUnmerged, Constant: "schedproc.ReasonSeatBranchUnmerged"},
+			{Code: schedproc.ReasonSeatBranchUnpushed, Constant: "schedproc.ReasonSeatBranchUnpushed"},
+			{Code: schedproc.ReasonSeatGitdirForeign, Constant: "schedproc.ReasonSeatGitdirForeign"},
+			{Code: schedproc.ReasonSeatHeadUnreadable, Constant: "schedproc.ReasonSeatHeadUnreadable"},
+			{Code: schedproc.ReasonSeatWorktreeCheckFailed, Constant: "schedproc.ReasonSeatWorktreeCheckFailed"},
+			{Code: schedproc.ReasonSeatWorktreeDirty, Constant: "schedproc.ReasonSeatWorktreeDirty"},
+			{Code: seatlaunch.ReasonProofConnectionsFull, Constant: "seatlaunch.ReasonProofConnectionsFull"},
+			{Code: seatlaunch.ReasonProofOrigin, Constant: "seatlaunch.ReasonProofOrigin"},
+			{Code: seatlaunch.ReasonProofReplayed, Constant: "seatlaunch.ReasonProofReplayed"},
+		},
 	}
 }

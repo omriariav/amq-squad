@@ -23,7 +23,7 @@ import (
 
 // s2DeclaringPackages are the packages whose constants the reason lists name
 // (reasons.go's imports).
-var s2DeclaringPackages = []string{"claudeseat", "registry", "routing", "schedproc", "scheduler", "seatcommit", "seatexec", "task"}
+var s2DeclaringPackages = []string{"claudeseat", "piruntime", "registry", "routing", "schedproc", "scheduler", "seatcommit", "seatexec", "seatlaunch", "task"}
 
 // s2FixedFamilies are name words that make a constant a reason constant
 // whatever the lists hold. The lists add the leading word of each listed
@@ -54,6 +54,20 @@ var s2NotTaskReasons = map[string]string{
 	"schedproc.ReasonSeatWorktreeCheckFailed":  "a seat-prepare refusal code (schedproc), never a task field",
 	"schedproc.ReasonSeatWorktreeDirty":        "a seat-prepare refusal code (schedproc), never a task field",
 	"claudeseat.TokenVar":                      "the name of the environment variable that carries the Claude token, not a code",
+	// S2-3: piruntime and seatlaunch are declaring packages
+	"piruntime.ReasonRejected":              "the pi runtime's re-hash refusal, which amq-squad up refuses with (cli up.go), never a task field",
+	"seatlaunch.ClaudePermissionMode":       "the permission mode every Claude seat launches with, not a code",
+	"seatlaunch.PiWakeAuditReason":          "a pi seat's disabled-wake audit sentence sent to AMQ, not a code",
+	"seatlaunch.ReasonProofConnectionsFull": "the proof server's dropped-proof log code, never a reply's code or a task field",
+	"seatlaunch.ReasonProofOrigin":          "a forged proof's alarm code, in the identity_forged refusal's detail, never a task field",
+	"seatlaunch.ReasonProofReplayed":        "a forged proof's alarm code, in the identity_forged refusal's detail, never a task field",
+}
+
+// s2OtherVocabulary are the constants of a declaring package whose value is
+// a listed reason's code by the word only: each is a value of another
+// vocabulary and never a task's reason. Adding an entry is a plan ruling.
+var s2OtherVocabulary = map[string]string{
+	"registry.StateRefused": "a registry entry's state (registry.State); the word is also the launch seat state seatlaunch.ReasonRefused",
 }
 
 // s2Expression is one maximal constant string expression outside a const
@@ -360,6 +374,24 @@ func TestEveryReasonConstantIsListed(t *testing.T) {
 	for _, entry := range NotReasons() {
 		listed[entry.Constant] = true
 	}
+	// the constant a listed alias names is that alias's code under its
+	// first name (seatexec.ClaudeHooksMissing = claudeseat.HooksMissing), and
+	// so is any other alias of it (seatlaunch.ReasonPiShimMissing =
+	// seatexec.PiNotEmbedded, which names piruntime.ReasonNotEmbedded)
+	covered := map[string]bool{}
+	for name := range listed {
+		covered[name] = true
+		for current := name; read.aliases[current] != ""; current = read.aliases[current] {
+			covered[read.aliases[current]] = true
+		}
+	}
+	for _, name := range sortedKeys(read.aliases) {
+		for current := name; read.aliases[current] != ""; current = read.aliases[current] {
+			if covered[read.aliases[current]] && !listed[name] {
+				covered[name] = true
+			}
+		}
+	}
 	families := s2Families()
 	found := map[string]string{}
 	for name, site := range read.constants {
@@ -380,7 +412,7 @@ func TestEveryReasonConstantIsListed(t *testing.T) {
 		switch {
 		case listed[name] && excluded:
 			t.Errorf("%s is on a reason list and on s2NotTaskReasons", name)
-		case !listed[name] && !excluded:
+		case !listed[name] && !excluded && !covered[name]:
 			t.Errorf("%s: %s is of a reason family and is on no reason list (block, wait, not-a-reason) and not on s2NotTaskReasons", found[name], name)
 		}
 	}
@@ -414,17 +446,11 @@ func TestEveryReasonConstantIsListed(t *testing.T) {
 	for _, entry := range NotReasons() {
 		codes[entry.Code] = entry.Constant
 	}
-	// the constant a listed alias names is that alias's code under its
-	// first name (seatexec.ClaudeHooksMissing = claudeseat.HooksMissing)
-	covered := map[string]bool{}
-	for name := range listed {
-		covered[name] = true
-		for current := name; read.aliases[current] != ""; current = read.aliases[current] {
-			covered[read.aliases[current]] = true
-		}
-	}
 	for _, name := range sortedKeys(read.values) {
 		if covered[name] {
+			continue
+		}
+		if _, other := s2OtherVocabulary[name]; other {
 			continue
 		}
 		if other := codes[read.values[name]]; other != "" {
@@ -433,6 +459,16 @@ func TestEveryReasonConstantIsListed(t *testing.T) {
 				site = read.locals[name]
 			}
 			t.Errorf("%s: %s has the value %q of the listed %s and is on no list", site, name, read.values[name], other)
+		}
+	}
+	for _, name := range sortedKeys(s2OtherVocabulary) {
+		switch {
+		case read.values[name] == "":
+			t.Errorf("s2OtherVocabulary is stale: %s is no string constant of a declaring package", name)
+		case codes[read.values[name]] == "":
+			t.Errorf("s2OtherVocabulary is stale: %s has the value %q, which no list holds", name, read.values[name])
+		case listed[name]:
+			t.Errorf("%s is on a reason list and on s2OtherVocabulary", name)
 		}
 	}
 	t.Logf("families: %s; string constants of a reason family: %d; not task reasons %d", strings.Join(sortedKeys(families), " "), len(found), len(s2NotTaskReasons))

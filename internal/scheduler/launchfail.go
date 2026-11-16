@@ -159,12 +159,22 @@ func (s *Scheduler) checkLiveness(now time.Time, log func(Decision)) {
 	}
 }
 
+// The launch codes the scheduler and the roster launch write (S2-3, 3.3.0). Each reaches a task through
+// scheduler.(LaunchFailure).Code: the pool's tasks wait on it and, when the
+// launch fails the same way again, block on it. Each is on the state
+// contract's block and wait lists (internal/statecontract reasons.go), and
+// its value is the string literal it replaced, byte for byte.
+const (
+	ReasonLaunchError = "launch_error"
+	ReasonNotStarted  = "not_started"
+)
+
 // noteLaunchFailure logs a SeatLaunchFailed as seat_launch_failed and keeps
 // it as its pool's last failure: a second launch attempt that fails with
 // the same reason counts the repeat.
 func (s *Scheduler) noteLaunchFailure(ev Event, log func(Decision)) {
 	detail := redact.Block(strings.TrimSpace(ev.Detail))
-	stage := firstNonEmpty(ev.Stage, "launch_error")
+	stage := firstNonEmpty(ev.Stage, ReasonLaunchError)
 	taskID := ""
 	for _, r := range s.requests {
 		if r.req.ID == ev.RequestID {

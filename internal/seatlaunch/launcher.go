@@ -227,15 +227,15 @@ func (l *Launcher) settleOne(r *request, known map[string]bool, attempt string, 
 func launchFailure(res Result, err error, seat *SeatState, ambiguous bool) (stage, code, detail string) {
 	o := rosterOutcome(res, err)
 	if o.Stage != scheduler.RosterApplied {
-		return firstNonEmptyStr(o.Stage, "launch_error"), o.ReasonCode, o.Detail
+		return firstNonEmptyStr(o.Stage, scheduler.ReasonLaunchError), o.ReasonCode, o.Detail
 	}
 	switch {
 	case ambiguous:
-		return "seat_not_up", "apply_ambiguous", "AMQ observed more than one pane for the seat, or a pane for a handle the launch does not know; only its proof or a confirmed close settles it"
+		return ReasonSeatNotUp, ReasonApplyAmbiguous, "AMQ observed more than one pane for the seat, or a pane for a handle the launch does not know; only its proof or a confirmed close settles it"
 	case seat == nil:
-		return "seat_not_up", "not_observed", "the applied launch reported no state for the seat"
+		return ReasonSeatNotUp, ReasonNotObserved, "the applied launch reported no state for the seat"
 	}
-	return "seat_not_up", firstNonEmptyStr(seat.ReasonCode, seat.State), seat.Detail
+	return ReasonSeatNotUp, firstNonEmptyStr(seat.ReasonCode, seat.State), seat.Detail
 }
 
 func firstNonEmptyStr(a, b string) string {
@@ -262,7 +262,7 @@ func placedSeat(res Result, err error, seat *SeatState) bool {
 	if d := string(res.Apply.Disposition); d == "not_applied" || d == "rolled_back" {
 		return false
 	}
-	if seat != nil && seat.State == "refused" {
+	if seat != nil && seat.State == ReasonRefused {
 		return false // seat-exec exited before exec: nothing runs
 	}
 	return true

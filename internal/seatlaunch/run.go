@@ -21,6 +21,7 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
+	"github.com/omriariav/amq-squad/v3/internal/scheduler"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
 	"github.com/omriariav/amq-squad/v3/internal/seatexec"
 )
@@ -244,7 +245,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	}
 	res.Prepare, res.FailureDetail = &prepared, amqDetail(detail)
 	if prepared.Outcome != launchapi.PrepareOutcomeReady && prepared.Outcome != launchapi.PrepareOutcomeActionRequired {
-		res.Stage = "prepare_refused"
+		res.Stage = ReasonPrepareRefused
 		res.NextActions = []string{"fix the cause named by the prepare reason (" + prepared.Reason + "), then run the same amq-squad launch again"}
 		return res, nil
 	}
@@ -260,7 +261,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	}
 	if o.BeforeApply != nil && !o.DryRun {
 		if reason, detail := o.BeforeApply(prepared); reason != "" {
-			res.Stage, res.FailureDetail = "resource_present", amqDetail(reason+": "+detail)
+			res.Stage, res.FailureDetail = ReasonResourcePresent, amqDetail(reason+": "+detail)
 			res.NextActions = []string{"the named panes must end before the launch can apply (" + reason + ")"}
 			return res, nil
 		}
@@ -272,7 +273,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 		return res, nil
 	}
 	if len(missing) > 0 {
-		res.Stage, res.Pending = "decisions_pending", missing
+		res.Stage, res.Pending = ReasonDecisionsPending, missing
 		res.NextActions = nextActions(q, missing, prepared.SubjectDigest)
 		return res, nil
 	}
@@ -337,7 +338,7 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	res.Apply, res.FailureDetail = &applied, amqDetail(detail)
 	recordApply(c, applied, detail, o.Now())
 	if applied.Outcome != "applied" {
-		res.Stage = "apply_failed"
+		res.Stage = ReasonApplyFailed
 		res.NextActions = []string{"fix the cause named by reason_code and failure_detail, then run the same amq-squad launch again"}
 		return res, nil
 	}
@@ -455,7 +456,7 @@ func WaitSeats(ctx context.Context, q Squad, launchID string, srv *proofServer, 
 		if done || time.Now().After(deadline) || ctx.Err() != nil {
 			for i := range states {
 				if states[i].State == "pending" {
-					states[i].State, states[i].ReasonCode = "not_started", "no_proof"
+					states[i].State, states[i].ReasonCode = scheduler.ReasonNotStarted, ReasonNoProof
 					states[i].Detail = fmt.Sprintf("no accepted proof within %s", wait)
 				}
 			}
@@ -474,14 +475,14 @@ func seatState(q Squad, s Seat, launchID string, srv *proofServer) SeatState {
 			return st
 		}
 		if refused != "" {
-			st.State, st.ReasonCode, st.Detail = "refused", refused, detail
+			st.State, st.ReasonCode, st.Detail = ReasonRefused, refused, detail
 			return st
 		}
 	}
 	// Evidence only: seat-exec's own refusal for this launch.
 	rec, err := launch.Read(filepath.Join(q.SessionRoot(), "agents", s.Handle))
 	if err == nil && rec.Exec != nil && rec.Exec.Outcome == "refused" && launchID != "" && rec.LaunchID == launchID && rec.RequestID == s.RequestID {
-		st.State, st.ReasonCode, st.Detail = "refused", rec.Exec.ReasonCode, rec.Exec.Detail
+		st.State, st.ReasonCode, st.Detail = ReasonRefused, rec.Exec.ReasonCode, rec.Exec.Detail
 	}
 	return st
 }

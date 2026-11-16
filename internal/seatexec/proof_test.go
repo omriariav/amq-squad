@@ -51,6 +51,19 @@ func TestSeatExecRefusesWithoutAnAcceptedProof(t *testing.T) {
 	if err := f.run(Options{}); refusalCode(err) != "identity_forged" || f.execPath != "" {
 		t.Fatalf("a refused proof: %v (exec %q)", err, f.execPath)
 	}
+	// S2-3: a refusal with no code refuses with ReasonProofRefused
+	e := newFixture(t, "claude")
+	e.stage()
+	e.proofReply = &launch.ProofReply{Detail: "no code"}
+	if err := e.run(Options{}); refusalCode(err) != ReasonProofRefused || e.execPath != "" {
+		t.Fatalf("a refused proof with no code: %v (exec %q)", err, e.execPath)
+	}
+	b := newFixture(t, "claude")
+	b.stage()
+	b.proofReply = &launch.ProofReply{Code: " \t", Detail: "a blank code"}
+	if err := b.run(Options{}); refusalCode(err) != ReasonProofRefused || b.execPath != "" {
+		t.Fatalf("a refused proof with a blank code: %v (exec %q)", err, b.execPath)
+	}
 	g := newFixture(t, "claude")
 	g.stage()
 	err := g.run(Options{SendProof: func(launch.ProofTicket, launch.ProofMessage) (launch.ProofReply, error) {

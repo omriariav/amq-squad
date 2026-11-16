@@ -165,21 +165,21 @@ var needName = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 func ValidateNeeds(envNeeds, credNeeds []string) error {
 	for _, n := range envNeeds {
 		if !needName.MatchString(n) {
-			return refusef("env_needs_invalid", "env_needs entry %q is not a variable name", n)
+			return refusef(ReasonEnvNeedsInvalid, "env_needs entry %q is not a variable name", n)
 		}
 		if Scrubbed(n) {
-			return refusef("env_needs_invalid", "env_needs names %s, a scrubbed-class variable; only credential_needs may keep a credential", n)
+			return refusef(ReasonEnvNeedsInvalid, "env_needs names %s, a scrubbed-class variable; only credential_needs may keep a credential", n)
 		}
 	}
 	for _, n := range credNeeds {
 		if !needName.MatchString(n) {
-			return refusef("env_needs_invalid", "credential_needs entry %q is not a variable name", n)
+			return refusef(ReasonEnvNeedsInvalid, "credential_needs entry %q is not a variable name", n)
 		}
 		if hostSession(n) {
-			return refusef("env_needs_invalid", "credential_needs names %s, a host agent-session variable", n)
+			return refusef(ReasonEnvNeedsInvalid, "credential_needs names %s, a host agent-session variable", n)
 		}
 		if NeverNeeded(n) {
-			return refusef("env_needs_invalid", "credential_needs names %s, a forge credential carrier that never reaches a seat (R33, 3-2)", n)
+			return refusef(ReasonEnvNeedsInvalid, "credential_needs names %s, a forge credential carrier that never reaches a seat (R33, 3-2)", n)
 		}
 	}
 	return nil

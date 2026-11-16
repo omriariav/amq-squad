@@ -27,7 +27,7 @@ import (
 // CancelSeatRequest like any request. It returns once the launch settled.
 func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOutcome {
 	fail := func(format string, a ...any) scheduler.RosterOutcome {
-		return scheduler.RosterOutcome{Stage: "launch_error", Detail: fmt.Sprintf(format, a...)}
+		return scheduler.RosterOutcome{Stage: scheduler.ReasonLaunchError, Detail: fmt.Sprintf(format, a...)}
 	}
 	if l.PlanRoster == nil {
 		return fail("this launcher has no roster planner")
@@ -240,21 +240,21 @@ func rosterOutcome(res Result, err error) scheduler.RosterOutcome {
 	out := scheduler.RosterOutcome{LaunchID: res.LaunchID, Stage: res.Stage, Detail: amqDetail(res.FailureDetail)}
 	switch {
 	case err != nil && res.ApplyStarted:
-		out.Stage, out.Detail = "apply_failed", amqDetail(err.Error())
+		out.Stage, out.Detail = ReasonApplyFailed, amqDetail(err.Error())
 	case err != nil:
-		out.Stage, out.Detail = "launch_error", amqDetail(err.Error())
-	case res.Stage == "prepare_refused" && res.Prepare != nil:
+		out.Stage, out.Detail = scheduler.ReasonLaunchError, amqDetail(err.Error())
+	case res.Stage == ReasonPrepareRefused && res.Prepare != nil:
 		out.ReasonCode = res.Prepare.Reason
-	case res.Stage == "decisions_pending":
+	case res.Stage == ReasonDecisionsPending:
 		var kinds []string
 		for _, a := range res.Pending {
 			kinds = append(kinds, string(a.Kind))
 		}
 		out.ReasonCode = strings.Join(kinds, ",")
 		out.Detail = strings.Join(res.NextActions, "; ")
-	case res.Stage == "apply_failed" && res.Apply != nil:
+	case res.Stage == ReasonApplyFailed && res.Apply != nil:
 		out.ReasonCode = res.Apply.ReasonCode
-	case res.Stage == "resource_present":
+	case res.Stage == ReasonResourcePresent:
 		out.ReasonCode = scheduler.ReasonResourcePresent
 	case res.Stage == "applied":
 		for _, s := range res.Seats {

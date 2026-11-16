@@ -6,7 +6,7 @@ import (
 
 // Failed reports whether the launch did not bring every seat up.
 func (r Result) Failed() bool {
-	if r.Stage == "apply_failed" || r.Stage == "prepare_refused" {
+	if r.Stage == ReasonApplyFailed || r.Stage == ReasonPrepareRefused {
 		return true
 	}
 	for _, s := range r.Seats {

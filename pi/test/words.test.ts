@@ -43,13 +43,6 @@ function constants(rel: string, name: RegExp): string[] {
 	return out;
 }
 
-// literals is every snake_case string literal in a Go file at the
-// positions a pattern names (its first group).
-function literals(rel: string, ...patterns: RegExp[]): string[] {
-	const src = go(rel);
-	return patterns.flatMap((re) => [...src.matchAll(re)].flatMap((m) => m.slice(1).filter(Boolean)));
-}
-
 type ReasonList = "block" | "wait";
 
 // Reasons which the contract has but no words table handles yet, named for S2.
@@ -104,41 +97,46 @@ function reasonWordProblems(list: ReasonList, codes: Set<string>, table: Record<
 	return problems;
 }
 
-// The launch path's codes (internal/scheduler launchfail.go: a failed
-// launch's Code(), its reason code else its stage, is the pool's tasks'
-// wait reason and, repeated, their block reason): seat-exec's refusals, the
-// proof server's, the launcher's stages, codes and seat states, the pi and
-// Claude checks, and their constants. The success stages (prepared counts:
-// a launch can stop there) "applied" and "up" are no failure, and "none" is
-// a message's placeholder (roster.go's error text), never a code.
-const LAUNCH_FILES = [
-	...goFiles("internal/seatexec"),
-	...goFiles("internal/seatlaunch"),
-	"internal/schedproc/slots.go",
-	"internal/scheduler/launchfail.go",
-	"internal/scheduler/roster.go",
-	"internal/piruntime/session.go",
-	"internal/piruntime/refusal.go",
-	"internal/piruntime/launch.go",
-	"internal/claudeseat/claudeseat.go",
-	"internal/claudeseat/token.go",
-];
-const LAUNCH_LITERALS = [
-	/(?:refusef|asRefusal)\(\s*"([a-z][a-z0-9_]*)"/g,
-	/ResumeRefusal\{\s*"([a-z][a-z0-9_]*)"/g,
-	/\bCode:\s*"([a-z][a-z0-9_]*)"/g,
-	/\b(?:forged|reject)\([^"\n]*"([a-z][a-z0-9_]*)"/g,
-	/\.refused(?:,\s*[\w.]+)*\s*=\s*"([a-z][a-z0-9_]*)"/g,
-	/\bStage\s*(?:=|:|==)\s*"([a-z][a-z0-9_]*)"/g,
-	/\bState:\s*"([a-z][a-z0-9_]*)"/g,
-	/State,\s*[\w.\[\]]*ReasonCode(?:,\s*[\w.\[\]]+)*\s*=\s*"([a-z][a-z0-9_]*)",\s*(?:"([a-z][a-z0-9_]*)")?/g,
-	/return\s+"([a-z][a-z0-9_]*)",\s*"([a-z][a-z0-9_]*)"/g,
-	/firstNonEmpty(?:Str)?\([^)"\n]*,\s*"([a-z][a-z0-9_]*)"\)/g,
-];
-const LAUNCH_CONSTS = /^(Reason|PiNotEmbedded$|SandboxPinsMissing$|IdentityIncomplete$|PermissionMismatch$|HooksMissing$|TokenInsecure$|RuntimeMismatchReason$|AMQBindingPresent$)/;
-function goLaunchCodes(): string[] {
-	return LAUNCH_FILES.flatMap((f) => [...literals(f, ...LAUNCH_LITERALS), ...constants(f, LAUNCH_CONSTS)]).filter((c) => !["applied", "up", "none", "git", "main"].includes(c));
+// The launch path's codes: a failed launch's Code() (internal/scheduler
+// launchfail.go), its reason code else its stage, is the pool's tasks' wait
+// reason and, repeated, their block reason. The state contract names the
+// family (reasons.launch, S2-3): its constants, each on the block and wait
+// lists, and the stage and state words the launch path keeps as string
+// literals, each with the function that keeps it from a task.
+function stateContractLaunch(): { codes: Map<string, string>; kept: Set<string>; outside: Map<string, string> } {
+	const contract = JSON.parse(fs.readFileSync(path.join(here, "state-contract.json"), "utf8")) as any;
+	const launch = contract?.reasons?.launch;
+	assert.equal(launch?.door, "scheduler.(LaunchFailure).Code", "pi/test/state-contract.json: reasons.launch names no launch failure door");
+	assert.ok(Array.isArray(launch?.constants) && launch.constants.length > 0, "pi/test/state-contract.json: reasons.launch.constants is missing or empty");
+	assert.ok(Array.isArray(launch?.kept), "pi/test/state-contract.json: reasons.launch.kept is missing");
+	const byConstant = new Map<string, string>();
+	for (const list of ["block", "wait"]) for (const entry of contract.reasons[list].entries) byConstant.set(entry.constant, entry.code);
+	const codes = new Map<string, string>();
+	for (const constant of launch.constants) {
+		const code = byConstant.get(constant);
+		assert.ok(typeof code === "string" && code.length > 0, `pi/test/state-contract.json: reasons.launch names ${constant}, which is on neither the block nor the wait list`);
+		codes.set(constant, code);
+	}
+	const kept = new Set<string>();
+	for (const word of launch.kept) {
+		assert.ok(typeof word?.word === "string" && word.word.length > 0 && typeof word?.guard === "string" && word.guard.length > 0, `pi/test/state-contract.json: a kept launch word has no word or no guard: ${JSON.stringify(word)}`);
+		kept.add(word.word);
+	}
+	assert.ok(Array.isArray(launch?.outside) && launch.outside.length > 0, "pi/test/state-contract.json: reasons.launch.outside is missing or empty");
+	const outside = new Map<string, string>();
+	for (const entry of launch.outside) {
+		assert.ok(typeof entry?.code === "string" && entry.code.length > 0 && typeof entry?.constant === "string", `pi/test/state-contract.json: an outside launch code has no code: ${JSON.stringify(entry)}`);
+		outside.set(entry.constant, entry.code);
+	}
+	return { codes, kept, outside };
 }
+
+// The kept words that are no failure and so have no words: the success
+// stage and the success state (a launch stops at prepared, so it has words).
+const KEPT_WITHOUT_WORDS: { word: string; why: string }[] = [
+	{ word: "applied", why: "the roster's success stage; launchFailure never returns it" },
+	{ word: "up", why: "the success state; a seat that is up settles as up or closing" },
+];
 
 // The seat warning codes status shows: Go's schedproc.ClearableWarnings,
 // which a status row keeps equal to status's own list.
@@ -171,15 +169,10 @@ function goSeatCodes(): string[] {
 
 // Row 7: launch, seat, train and relay maps still agree with Go's sources;
 // the state-contract tests below check wait and block maps in both directions.
-test("row 7: every launch code, seat code, train rule and kind and relay name in Go's sources maps to plain words", () => {
-	assert.ok(LAUNCH_FILES.includes("internal/schedproc/slots.go"), "the seat base launch branch is outside the launch-code scan");
+test("row 7: every seat code, train rule and kind and relay name in Go's sources maps to plain words", () => {
 	const seats = goSeatCodes();
 	assert.ok(seats.length >= 8, `the seat codes were not found: ${seats}`);
 	const has = (t: object, k: string) => Object.hasOwn(t, k);
-	const launch = goLaunchCodes();
-	assert.ok(launch.length >= 60, `the launch codes were not found: ${launch}`);
-	// a launch code is a wait reason and, repeated, a block reason
-	for (const r of launch) assert.ok(has(LAUNCH_WORDS, r) || has(BLOCK_WORDS, r) || has(WAIT_WORDS, r), `launch code ${r} has no words`);
 	for (const r of seats) assert.ok(has(SEAT_DOING, r), `seat reason code ${r} has no words`);
 	const rules = goTrainRules();
 	assert.ok(rules.length >= 11, `the train rules were not found: ${rules}`);
@@ -207,6 +200,40 @@ test("row 7: every launch code, seat code, train rule and kind and relay name in
 	assert.deepEqual(seatDoing({ handle: "dev", state: "online", reason_code: "made_up_code" }, undefined), { text: "waiting", record: "dev: made_up_code" });
 	// the lead's hold
 	assert.equal(blockWords({ id: "t9", task_state: "blocked", block_reason: "hold" }).line, "t9 held by the lead");
+});
+
+// Row 7 (S2-3): the contract's launch family and LAUNCH_WORDS agree both
+// ways. The count is internal/statecontract launch_test.go's: 54 S2-3
+// constants and 8 listed before, 4 kept words and 13 outside codes.
+test("row 7: the state contract's launch family and LAUNCH_WORDS agree both ways", () => {
+	const { codes, kept, outside } = stateContractLaunch();
+	assert.equal(codes.size, 62, `the contract's launch family holds ${codes.size} constants; 54 S2-3 constants and 8 listed before`);
+	assert.equal(kept.size, 4, `the contract's launch family keeps ${kept.size} words; pending, up, prepared and applied`);
+	assert.equal(outside.size, 13, `the contract's launch family has ${outside.size} outside codes; 13`);
+	const { block, wait } = stateContractReasons();
+	const family = new Set(codes.values());
+	const outsideCodes = new Set(outside.values());
+	const without = (word: string) => KEPT_WITHOUT_WORDS.some((entry) => entry.word === word);
+	const problems: string[] = [];
+	for (const [constant, code] of [...codes, ...outside].sort()) {
+		if (!Object.hasOwn(LAUNCH_WORDS, code)) problems.push(`contract to words: the launch code ${JSON.stringify(code)} (${constant}) of pi/test/state-contract.json is no key of LAUNCH_WORDS`);
+	}
+	for (const word of [...kept].sort()) {
+		if (!without(word) && !Object.hasOwn(LAUNCH_WORDS, word)) problems.push(`contract to words: the kept launch word ${JSON.stringify(word)} is no key of LAUNCH_WORDS and not on KEPT_WITHOUT_WORDS`);
+	}
+	for (const [constant, code] of [...outside].sort()) {
+		if (family.has(code) || block.has(code) || wait.has(code)) problems.push(`the outside launch code ${JSON.stringify(code)} (${constant}) is a block or wait code of pi/test/state-contract.json`);
+	}
+	for (const key of Object.keys(LAUNCH_WORDS).sort()) {
+		if (!family.has(key) && !kept.has(key) && !outsideCodes.has(key)) {
+			problems.push(`words to contract: the LAUNCH_WORDS key ${JSON.stringify(key)} is no code of the launch family of pi/test/state-contract.json, no kept word and no outside code`);
+		}
+	}
+	for (const entry of KEPT_WITHOUT_WORDS) {
+		if (!kept.has(entry.word)) problems.push(`KEPT_WITHOUT_WORDS is stale: ${JSON.stringify(entry.word)} is no kept word of pi/test/state-contract.json; take it off the list`);
+		if (Object.hasOwn(LAUNCH_WORDS, entry.word)) problems.push(`KEPT_WITHOUT_WORDS is stale: ${JSON.stringify(entry.word)} is a key of LAUNCH_WORDS; take it off the list`);
+	}
+	assert.ok(problems.length === 0, problems.join("\n"));
 });
 
 // The generated contract's block reasons and BLOCK_WORDS agree both ways.

@@ -89,16 +89,16 @@ func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOu
 	for _, r := range reqs {
 		got := l.ByRuntime[r.Pool.Runtime]
 		if got == nil {
-			return scheduler.RosterOutcome{Stage: "launch_error", Detail: fmt.Sprintf("no launcher for runtime %s (seat %s)", r.Pool.Runtime, r.Handle)}
+			return scheduler.RosterOutcome{Stage: scheduler.ReasonLaunchError, Detail: fmt.Sprintf("no launcher for runtime %s (seat %s)", r.Pool.Runtime, r.Handle)}
 		}
 		if inner != nil && got != inner {
-			return scheduler.RosterOutcome{Stage: "launch_error", Detail: "the roster's runtimes go to different launchers, which cannot share one apply"}
+			return scheduler.RosterOutcome{Stage: scheduler.ReasonLaunchError, Detail: "the roster's runtimes go to different launchers, which cannot share one apply"}
 		}
 		inner = got
 	}
 	rl, ok := inner.(scheduler.RosterLauncher)
 	if !ok {
-		return scheduler.RosterOutcome{Stage: "launch_error", Detail: "the seat launcher cannot launch a roster"}
+		return scheduler.RosterOutcome{Stage: scheduler.ReasonLaunchError, Detail: "the seat launcher cannot launch a roster"}
 	}
 	l.mu.Lock()
 	if l.reqRun == nil {
