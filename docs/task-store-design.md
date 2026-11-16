@@ -100,6 +100,12 @@ in a new directory, so there is nothing to migrate in place.
 
 ## States
 
+The states and the moves below are generated from the task machine's
+declarations (`internal/task/contract.go`: `task.States`, `task.Moves`), the
+same declarations as `pi/test/state-contract.json`; do not edit between the
+markers.
+
+<!-- BEGIN generated: task states (go test ./internal/statecontract/ -run TestTaskStoreDesignTablesAreCurrent -update-docs) -->
 | state | lease | meaning |
 | --- | --- | --- |
 | `pending` | none | queued; `wait_reason` names why it is not dispatched yet |
@@ -107,6 +113,7 @@ in a new directory, so there is nothing to migrate in place.
 | `blocked` | none | stopped on a decision the lead owes (`block_route: lead`) or, routed, the owner (`block_route: owner`) |
 | `completed` | none | terminal; the done report passed the commit step |
 | `cancelled` | none | terminal; the lead cancelled it |
+<!-- END generated: task states -->
 
 v2's `failed` is not a task state in 3.0: a failed attempt ends the lease,
 is recorded in `attempts`, and the task returns to `pending`, where the
@@ -126,6 +133,46 @@ migrated):
 | `failed` | an attempt row with outcome `failed`; the task goes back to `pending`, or to `blocked` with `retries_exhausted` |
 | `blocked` | `blocked` with `block_route: lead` |
 | `cancelled` | `cancelled` |
+
+## Moves
+
+Every move the store makes. `via` names the store methods that make it and
+`writer` the one that writes the state. `who` is who may make it:
+`asserted_handle`, a caller-supplied handle the store accepts without
+checking it; `scheduler` and `harness_shell`, the scheduler's and the
+harness commit step's own paths; `live_holder`, the seat holding the task's
+live lease; `creator`, the handle recorded as the task's creator;
+`proven_lead`, the lead, once the scheduler's decision socket has proven its
+origin. `needs` is the rest of the condition when it fits one sentence, and
+empty otherwise. The block group, named at the end of the generated block, is
+the fields a move that clears it empties.
+
+<!-- BEGIN generated: task moves (go test ./internal/statecontract/ -run TestTaskStoreDesignTablesAreCurrent -update-docs) -->
+| from | via | writer | to | who | clears the block group | needs |
+| --- | --- | --- | --- | --- | --- | --- |
+| (a new task) | `Add`, `AddWithFileWaits` | `AddWithFileWaits` | `pending` | `asserted_handle` | `false` |  |
+| `pending` | `Grant`, `GrantClean`, `Claim`, `ClaimServing` | `grant` | `in_progress` | `scheduler`, `asserted_handle` | `false` |  |
+| `pending` | `Block`, `BlockWithPaths` | `block` | `blocked` | `scheduler`, `asserted_handle` | `false` |  |
+| `pending` | `Cancel` | `Cancel` | `cancelled` | `asserted_handle` | `false` |  |
+| `in_progress` | `Done` | `complete` | `completed` | `live_holder` | `true` | Done has no prior report and no declared files; when a verdict is required or a sealed verdict is present, that verdict passes |
+| `in_progress` | `Complete`, `CompleteBound` | `complete` | `completed` | `scheduler`, `harness_shell` | `true` | a report exists; CompleteBound also has a nonnegative PR number and, when positive, a valid free binding; when a verdict is required or a sealed verdict is present, that verdict passes |
+| `in_progress` | `Done`, `Complete`, `CompleteBound` | `block` | `blocked` | `live_holder`, `scheduler`, `harness_shell` | `false` | Done has no prior report and no declared files; Complete and CompleteBound have a report; CompleteBound also has a nonnegative PR number and, when positive, a valid free binding; a verdict is required but absent, or a sealed verdict is present and does not pass |
+| `in_progress` | `RefuseCommit`, `RefuseCommitPaths` | `block` | `blocked` | `scheduler`, `harness_shell` | `false` | paths are exact, a report exists, the route is empty, lead, or owner, and the reason code is non-empty |
+| `in_progress` | `Block`, `BlockWithPaths` | `block` | `blocked` | `live_holder` | `false` |  |
+| `in_progress` | `Fail` | `Fail` | `pending` | `live_holder` | `false` |  |
+| `in_progress` | `Release` | `Release` | `pending` | `asserted_handle` | `false` |  |
+| `in_progress` | `ExpireDue` | `ExpireDue` | `pending` | `scheduler` | `false` | no report; the lease is due |
+| `in_progress` | `Cancel` | `Cancel` | `cancelled` | `asserted_handle` | `false` |  |
+| `blocked` | `ResetBy` | `ResetBy` | `pending` | `creator`, `asserted_handle` | `true` | the caller is non-empty, the route is not owner, and the caller matches the creator when recorded; when no creator is recorded, any non-empty caller is accepted |
+| `blocked` | `Reset` | `Reset` | `pending` | `scheduler` | `true` |  |
+| `blocked` | `ResetIfBlocked` | `ResetIfBlocked` | `pending` | `scheduler` | `true` | the block reason matches, and the optional match function is absent or accepts the task |
+| `blocked` | `Widen`, `WidenGated` | `WidenGated` | `pending` | `proven_lead` | `true` | added paths and their union are valid and non-empty, reason and actor are non-empty, actor is not holder or reporter, no active file conflicts, the task has no report and has refused paths, and the block reason is widen_requested or growth_gate_required |
+| `blocked` | `Widen`, `WidenGated` | `WidenGated` | `in_progress` | `proven_lead` | `true` | added paths and their union are valid and non-empty, reason and actor are non-empty, actor is not holder or reporter, no active file conflicts, and a report exists |
+| `blocked` | `Escalate` | `block` | `blocked` | `proven_lead` | `false` | the reason code is non-empty |
+| `blocked` | `Cancel` | `Cancel` | `cancelled` | `asserted_handle` | `false` |  |
+
+The block group: `block_reason`, `block_route`, `block_detail`, `block_attempt`, `refused_paths`.
+<!-- END generated: task moves -->
 
 ## Leases
 
