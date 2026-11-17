@@ -7,10 +7,11 @@ planning sessions that made them; nothing here is a release blocker.
 ## 3.3.x
 
 The list after the 3.3.0 release (2026-11-17), in the plan reviewer's order:
-items 1 to 3 are ruled first, second and third. Nothing here is promised by date.
+items 1 to 4 are ruled first to fourth (reordered 2026-11-18). Nothing here is
+promised by date.
 
-1. **The gate identity on a fresh session root** (3.3.0's known limit 7; a
-   3.3.1 candidate).
+1. **Done (#1033): the gate identity on a fresh session root** (3.3.0's known
+   limit 7).
    - The defect: a gate raised as the first write into a new session takes the
      store's squad identity before the root exists. `gate raise` takes
      `core.Store.Squad()` (`internal/cli/gate_store.go:99`), and `release
@@ -29,27 +30,48 @@ items 1 to 3 are ruled first, second and third. Nothing here is promised by date
    - Until then: `mkdir -p <project>/.agent-mail/<session>` before `release
      prepare` or `gate raise` (RELEASING.md). The 3.3.0 cut used it, and both
      of its records carried the real identity.
-2. **The relay retry on `native_error` "its delivery never started".** Measure
-   first whether a retry is idempotent on amq-remote's request id. Three local
-   sightings in about 11 locked `make ci` runs since 2026-11-16, all in
-   `internal/buzz TestOwnerScriptDryRunRejectsThenSendsAgain`. The GitHub
-   real-AMQ lane, which runs it from #1027 on, has needed no re-run for it.
-   The race is upstream (the `--poll` item under Buzz and AMQ). The sightings
-   are those of the dated 2026-11-16 entry under Flakes and test robustness.
-3. **U2 adoption.** Its first step is a measurement at the then-latest AMQ, not
-   a pin move.
-4. **`remote status` checks the wrong root for the login service.** It calls
+2. **The relay retry on `native_error` "its delivery never started": upstream
+   only.** amq-squad is not on the path (ruled 2026-11-18). In amq-remote
+   v0.140.0:
+   - the admission unlocks (`internal/remote/core/admission.go:268`) before it
+     calls the mailbox adapter's `Submit` (`:272`);
+   - serve's reconcile tick calls `Lookup` (`internal/remote/core/reconcile.go:110-116`,
+     `:453`), which writes the tombstone "its delivery never started"
+     (`internal/remote/mailbox/mailbox.go:351`);
+   - `Submit` then returns `native_error` (`:235-241`);
+   - the phone's text is amq-remote's own `notDelivered` (`:736-737`).
+   amq-squad never submits or admits. It reads the share's inbox only after a
+   delivery (`internal/buzz/inbound.go:146`; `internal/buzz/amqinbox.go:20-25`;
+   `internal/cli/remote.go:63`). Its `amq-remote` calls are `up`
+   (`internal/buzz/endpoint.go:108`), `service status`
+   (`internal/buzz/service.go:37`) and version probes, and the owner script
+   calls `version`, `share`, `up` and `doctor`. In
+   `TestOwnerScriptDryRunRejectsThenSendsAgain`, the test's `ownerDMSender`
+   (`internal/buzz/helpers_test.go:216-250`) plays the phone; the real
+   amq-remote submits. The test's resend budget is unchanged. Sightings: three
+   local in about 11 locked `make ci` runs since 2026-11-16 (the dated entry
+   under Flakes and test robustness).
+3. **C5a PR 1: 3.3.1's gate.** 3.3.0's known limit 8: a seat able to write its
+   own agent directory can be treated as the lead for Buzz routing and `task
+   show`; gate approvals are unaffected. C5a PR 1 moves the trusted harness
+   files out of the agent directory (the C5 entry under Leases, renewal and
+   seats).
+4. **U2's adoption choice, the owner's, after C5a PR 1.** AMQ's token admits
+   the whole `<session root>/agents` tree (finding 4, under the C5 entry), so
+   v0.140.0 with `writable_roots=[]` stays until C5a PR 1 lands and the owner
+   chooses. A per-handle form is asked of AMQ's author (the owner's message).
+5. **`remote status` checks the wrong root for the login service.** It calls
    `ServiceWarning(…, "")` with an empty root (`internal/cli/remote.go:508`),
    so `amq-remote service status` reports on amq-remote's default root, not on
    the share root the relay runs. The warning can name a root nothing uses.
-5. **The live phone attach runs on a rehearsal fleet file.** Its `--fleet-file`
+6. **The live phone attach runs on a rehearsal fleet file.** Its `--fleet-file`
    is a scratch fleet from the 2026-11 rehearsals, which drives presence (the
    operator row reads stale) and lead routing. Gate routing is unaffected: the
    attach's own `--project`/`--session` store is its main store. A proper live
    fleet file is the owner's setup choice.
-6. **One `/answer` test item:** a question row that is only blank, and a
+7. **One `/answer` test item:** a question row that is only blank, and a
    fixture with two same-label gates in reversed order (Codex's P2 on #1026).
-7. **Launch door folding: six limits of the launch family's static guard**
+8. **Launch door folding: six limits of the launch family's static guard**
    (S2-3, #1022). None of them is caught:
    - a code computed by a call no check folds;
    - an expression of constants only;
@@ -431,6 +453,20 @@ as #962 corrected it.
     from rc.2, 2026-11-10. Alone it changes nothing the owner sees; the
     known limit is the rc.2 notes' sentence on a Codex seat's drain
     approval. Brief: brief-320-C5a-v2.md.
+  - 3.3.1's gating item (ruled 2026-11-18; 3.3.0's known limit 8): a seat
+    able to write its own agent directory can be treated as the lead for
+    Buzz routing and `task show`; gate approvals are unaffected. C5a PR 1
+    fixes it by moving the trusted harness files out of the agent directory.
+  - U2's finding 4 (measured 2026-11-18 at AMQ v0.153.0): AMQ's mailbox token
+    (v0.145.0, #1496; `internal/launch/adapter_codex.go:270-285` at v0.153.0)
+    makes the whole `<session root>/agents` tree writable, not the seat's own
+    mailbox. Launch records there were trusted: `agents/<handle>/launch.json`
+    (`internal/launch/record.go:24`) is read by `task show`'s lead role
+    (`internal/cli/task.go:148`), Buzz lead routing
+    (`internal/buzz/leads.go:130`) and the roster
+    (`internal/scheduler/roster.go:139`). Ruled: stay on v0.140.0 with
+    `writable_roots=[]`; C5a PR 1 first; U2's adoption is then the owner's
+    choice.
   - A fact for C5a (measured 2026-11-11 at t153's block; the reviewer: "it is
     the same boundary C5 is about"): a carried task needs the worktree index
     writable, and a seat worktree's index lives under the main repository's
