@@ -274,6 +274,61 @@ make-ci-tally.tsv lists the cycle's 8 locked `make ci` runs: all exit 0, no flak
 See "One gate series" and the phone test, attempt 2. RELEASING.md now creates the
 release session's root before `release prepare`.
 
+## After rc.1: the 3.3.0 final (2026-11-17)
+
+This section was added on v3 after the release; `release/v3.3`'s copy of this note
+predates it. Its source is the lead session's approvals record (entries of
+2026-11-17) and the lead's private evidence directory for the final's cut
+(`<home>/.lead-private/v330/cut-final`, not copied here).
+
+- The cut followed the release PR #1028, merged into `release/v3.3` as
+  19c70cbe8354b062930fd831c57c3d31252c3794.
+- Known limit 7's workaround, on the real cut: `mkdir -p
+  <project>/.agent-mail/v330final` first, then `release prepare` at 19c70cbe by
+  the installed v3.3.0-rc.1, at 2026-11-17T20:27:16Z. It raised two gates, both
+  with `question_sent` and both unanswered (route A): rel-tag-c6c0c95beb46100c4134
+  (`git tag v3.3.0 19c70cbe… on omriariav/amq-squad`) and
+  rel-gh-39817bd7c5203caad3e4.
+- Both gate records carry the squad `root-sha256:f410b4fe…`, not the missing-root
+  form for that session, `root-sha256:face7045…`. The workaround works.
+- The prepared body digest is sha256 4913c227…, equal to the notes at 19c70cbe.
+- The owner's word, "Yes, publish v3.3.0", was given in the lead session at
+  21:03:38Z. He was told the route, `--latest` and not a prerelease, that both
+  gates were raised and unanswered, and the native_error count (3 local
+  sightings in about 11 locked `make ci` runs since 2026-11-16).
+- The publish, by hand under route A: the tag from 21:03:39Z to 21:03:40Z on
+  19c70cbe, the release from 21:03:41Z to 21:03:42Z
+  (https://github.com/omriariav/amq-squad/releases/tag/v3.3.0). Read back:
+  prerelease false, draft false, target 19c70cbe, `releases/latest` v3.3.0. The
+  body is byte-equal to the notes (sha256 4913c227…). No permission refusal.
+- The build from the tag: exit 0 in 19 s; `build/pi/amq-squad` prints `amq-squad
+  v3.3.0`, sha256 20864753f3f4790ecaa99aa0a1be7d459eeaffa4ba3c5764e2cb46e855e8252b.
+  `make release-smoke VERSION=v3.3.0`: exit 0. The rc.1 binary was kept as a
+  backup first.
+- The owner's word, three separate questions at 21:05:17Z: "Yes, install it",
+  "Yes, restart the lead" and "Yes, restart it" (the phone attach).
+- Installed at 21:05:18Z; the installed sha256 equals the build's.
+- The lead restart: SIGTERM to the rc.1 lead, pid 62484, at 21:05:25Z (gone in
+  1 s), then `up --binary` with the tag build, exit 0:
+  - compile ok, install ok (v3.3.0 by temp name and rename), session skipped;
+  - doctor 41 checks, none failed (5 warnings);
+  - lead ok, tmux ok, `roster_adopted` with no launch;
+  - the new lead is pid 93917 and its scheduler pid 93919;
+  - dev, dev2 and reviewer adopted at 21:05:28Z;
+  - no `Failed to load extension` line on the screens.
+- The phone attach restart: no gate open in v31 or owner45 first; SIGTERM to the
+  attach pid 8076 at 21:06:08Z (gone in 1 s). The new attach, pid 94647, started
+  at 21:06:09Z with the same command line. Its text inode equals the installed
+  file's, it printed an `attached` line, and its stderr is empty.
+- The join into main: #1029, merged at its green head 19c70cbe. main is
+  71036d154cd47e727c6725a5485785353c4d38c2, and `git diff 19c70cbe main` is
+  empty, so main's tree is the released tree.
+- The merge-back into v3: #1031, one merge commit of `release/v3.3` into v3's
+  tip. v3 is a0803a7ca36539a64e3c3c61052856d48289fa8b, and the soak drivers
+  #1026 and #1027 are kept. The first form, #1030 (`release/v3.3` itself as the
+  head), was behind v3; it was closed as replaced by #1031, since `release/v3.3`
+  is not written to.
+
 ## The files
 
 The `<home>` placeholder replaces the home path in every file.
