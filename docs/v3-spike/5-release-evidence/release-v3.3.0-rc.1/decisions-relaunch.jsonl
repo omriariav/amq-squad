@@ -1,0 +1,12 @@
+{"at":"2026-11-16T16:21:09.623335Z","kind":"roster_adopted","seat":"dev,reviewer,dev2","reason":"every roster seat is live from the previous incarnation; no launch"}
+{"at":"2026-11-16T16:21:09.628008Z","kind":"decision_socket_open","reason":"<home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/launch/scheduler-decide.sock"}
+{"at":"2026-11-16T16:24:00.277164Z","kind":"seat_index_refreshed","seat":"dev2","reason":"seat dev2's index was stale; refreshed"}
+{"at":"2026-11-16T16:24:01.432204Z","kind":"roster_relaunch_requested","reason":"rc.1 soak: seats launched by v3.3.0-rc.1"}
+{"at":"2026-11-16T16:24:01.436537Z","kind":"seat_closed","seat":"dev","reason":"roster_relaunch"}
+{"at":"2026-11-16T16:24:01.440552Z","kind":"seat_closed","seat":"dev2","reason":"roster_relaunch"}
+{"at":"2026-11-16T16:24:01.444486Z","kind":"seat_closed","seat":"reviewer","reason":"roster_relaunch"}
+{"at":"2026-11-16T16:24:01.44874Z","kind":"roster_reloaded","reason":"squad.yaml compiled again at the relaunch's drain: a roster of 3 seats; added none; removed none (each closed in the drain, not launched again); at most 4 leases at once"}
+{"at":"2026-11-16T16:24:01.452557Z","kind":"roster_launched","reason":"launch cf6d2c3b9e7865d82d9727449c55885d: 3 seats in one apply"}
+{"at":"2026-11-16T16:24:01.456652Z","kind":"seat_up","seat":"dev","pool":"codex:gpt-5.6-terra:medium"}
+{"at":"2026-11-16T16:24:01.460495Z","kind":"seat_up","seat":"reviewer","pool":"codex:gpt-5.6-sol:high"}
+{"at":"2026-11-16T16:24:01.464628Z","kind":"seat_up","seat":"dev2","pool":"codex:gpt-5.6-sol:high"}

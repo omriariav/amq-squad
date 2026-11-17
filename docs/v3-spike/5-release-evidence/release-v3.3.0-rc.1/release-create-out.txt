@@ -1,0 +1,1 @@
+https://github.com/omriariav/amq-squad/releases/tag/v3.3.0-rc.1
