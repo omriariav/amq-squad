@@ -460,8 +460,9 @@ as #962 corrected it.
   - U2's finding 4 (measured 2026-11-18 at AMQ v0.153.0): AMQ's mailbox token
     (v0.145.0, #1496; `internal/launch/adapter_codex.go:270-285` at v0.153.0)
     makes the whole `<session root>/agents` tree writable, not the seat's own
-    mailbox. Launch records there were trusted: `agents/<handle>/launch.json`
-    (`internal/launch/record.go:24`) is read by `task show`'s lead role
+    mailbox. Launch records there were trusted: a seat's launch record,
+    `agents/<handle>/extensions/<layer>/launch.json` (`internal/launch/record.go:120-123`;
+    the legacy `agents/<handle>/launch.json`, `:125`), is read by `task show`'s lead role
     (`internal/cli/task.go:148`), Buzz lead routing
     (`internal/buzz/leads.go:130`) and the roster
     (`internal/scheduler/roster.go:139`). Ruled: stay on v0.140.0 with
