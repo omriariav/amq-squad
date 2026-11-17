@@ -62,8 +62,9 @@ promised by date.
    grant boundary).
    - `grants.LoadFrom` reads `~/.amq-squad/grants.yaml` and parses it
      (`internal/grants/grants.go:470-488`). Its one trust check, `Insecure`,
-     is that the file and its directory belong to the user, are not group- or
-     world-writable and are not symlinks (`internal/grants/secure_unix.go:12-37`).
+     is that the file and its directory belong to the user and neither is
+     group- or world-writable, and that the file is not a symlink
+     (`internal/grants/secure_unix.go:12-37`).
      A seat runs as the same user, so a write that gets past the guard passes
      that check.
    - The guard lists the file as protected (`internal/cli/hook_guard_env.go:151`),
