@@ -102,6 +102,34 @@ func (s Store) Squad() string {
 	return SquadID(s.Root)
 }
 
+// EnsureSquad is the identity a writer stamps on a record: the value computed
+// at Open, else the root created and then its identity taken (EnsureSquadID).
+func (s Store) EnsureSquad() (string, error) {
+	if s.squad != "" {
+		return s.squad, nil
+	}
+	return EnsureSquadID(s.Root)
+}
+
+// StampSquad fills a spec's squad identity for a writer (3.3.x item 1): the
+// spec is checked first (Render), so a refused raise creates nothing, and only
+// then is the root created and its identity taken (EnsureSquad). A spec that
+// already carries an identity is returned as it is.
+func (s Store) StampSquad(spec Spec, now time.Time, id Identity) (Spec, error) {
+	if spec.Squad != "" {
+		return spec, nil
+	}
+	if _, err := Render(spec, now, id); err != nil {
+		return spec, err
+	}
+	squad, err := s.EnsureSquad()
+	if err != nil {
+		return spec, err
+	}
+	spec.Squad = squad
+	return spec, nil
+}
+
 func (s Store) Dir(parts ...string) string {
 	return filepath.Join(append([]string{s.Root, "extensions", "amq-squad"}, parts...)...)
 }
@@ -142,12 +170,11 @@ var raiseHook = func(Record) {}
 // raise of the same id fails with os.ErrExist and sends nothing. When the
 // send fails the record stays and PostQuestion can retry the send.
 func (s Store) Raise(spec Spec, id Identity, now time.Time, send Sender) (Record, Question, error) {
-	if spec.Squad == "" {
-		// the root exists before its identity is taken (device and inode)
-		if err := os.MkdirAll(s.Root, 0o700); err != nil {
-			return Record{}, Question{}, err
-		}
-		spec.Squad = s.Squad()
+	// the root exists before its identity is taken (device and inode), and a
+	// refused spec creates no root
+	spec, err := s.StampSquad(spec, now, id)
+	if err != nil {
+		return Record{}, Question{}, err
 	}
 	rec, err := Render(spec, now, id)
 	if err != nil {
