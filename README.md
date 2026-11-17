@@ -26,7 +26,7 @@ The model in five lines:
 
 ## Contents
 
-- [What's new in 3.3.0-rc.1](#whats-new-in-330-rc1)
+- [What's new in 3.3.0](#whats-new-in-330)
 - [Install](#install)
 - [Requirements](#requirements)
 - [First run](#first-run)
@@ -38,9 +38,9 @@ The model in five lines:
 - [Upgrading from v2](#upgrading-from-v2)
 - [Where the plan and evidence live](#where-the-plan-and-evidence-live)
 
-## What's new in 3.3.0-rc.1
+## What's new in 3.3.0
 
-3.3.0-rc.1 makes answering from your phone work the same way more often:
+3.3.0 makes answering from your phone work the same way more often:
 [docs/v3.3.0-release-notes.md](docs/v3.3.0-release-notes.md). In short:
 
 - An answer in a gate's thread after its time ran out gets the question asked
@@ -51,7 +51,7 @@ The model in five lines:
 - `status --json` and `task show --json` say which task moves are open next.
 - AMQ 0.140.0 is the floor: doctor refuses an older `amq`, `amq-remote` or
   `amq-owner-sign`.
-- The notes list 3.3.0-rc.1's known limits; what waits is in
+- The notes list 3.3.0's known limits; what waits is in
   [docs/v3-followups.md](docs/v3-followups.md).
 
 Earlier releases are in their notes, listed under
@@ -60,7 +60,7 @@ Earlier releases are in their notes, listed under
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.3.0-rc.1
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.3.0
 amq-squad version
 ```
 

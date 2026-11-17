@@ -1,0 +1,68 @@
+pre 2026-11-16T16:21:02Z
+build: amq-squad v3.3.0-rc.1; installed: amq-squad v3.3.0-rc.1
+--- processes with a cwd in a seat worktree (the standing lead check)
+  PID  PPID  ELAPSED COMMAND
+23175 23059 10:46:37 <home>/.nvm/versions/node/v22.21.1/bin/node <home>/.npm/_npx/15c61037b1978c83/node_modules/chrome-devtools-mc
+23176 23032 10:46:37 <home>/.nvm/versions/node/v22.21.1/bin/node <home>/.npm/_npx/15c61037b1978c83/node_modules/chrome-devtools-mc
+23177 23120 10:46:37 <home>/.nvm/versions/node/v22.21.1/bin/node <home>/.npm/_npx/15c61037b1978c83/node_modules/chrome-devtools-mc
+21806  9221 10:46:39 /opt/homebrew/bin/codex --model gpt-5.6-terra -c model_reasoning_effort=medium --sandbox workspace-write --ask-for-appr
+21816 21806 10:46:39 <home>/go/bin/amq --no-update-check wake --me dev --root <home>/code/amq-squad/.agent-mail/v31 --baseline-exi
+22020 21806 10:46:38 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl
+22021 21806 10:46:38 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl
+22027 21806 10:46:38 npm exec chrome-devtools-mcp@latest --browserUrl=http://localhost:9222   
+23059 22027 10:46:37 chrome-devtools-mcp  
+23733 21806 10:46:29 /opt/homebrew/Caskroom/codex/0.166.0/bin/codex-code-mode-host
+21817  9221 10:46:39 /opt/homebrew/bin/codex --model gpt-5.6-sol -c model_reasoning_effort=high --sandbox workspace-write --ask-for-approval
+21822 21817 10:46:39 <home>/go/bin/amq --no-update-check wake --me reviewer --root <home>/code/amq-squad/.agent-mail/v31 --baselin
+22181 21817 10:46:37 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl
+22182 21817 10:46:37 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl
+22190 21817 10:46:37 npm exec chrome-devtools-mcp@latest --browserUrl=http://localhost:9222   
+23120 22190 10:46:37 chrome-devtools-mcp  
+23587 21817 10:46:32 /opt/homebrew/Caskroom/codex/0.166.0/bin/codex-code-mode-host
+21823  9221 10:46:39 /opt/homebrew/bin/codex --model gpt-5.6-sol -c model_reasoning_effort=high --sandbox workspace-write --ask-for-approval
+21829 21823 10:46:39 <home>/go/bin/amq --no-update-check wake --me dev2 --root <home>/code/amq-squad/.agent-mail/v31 --baseline-ex
+22031 21823 10:46:38 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl
+22034 21823 10:46:38 /Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node_repl
+22038 21823 10:46:38 npm exec chrome-devtools-mcp@latest --browserUrl=http://localhost:9222   
+23032 22038 10:46:37 chrome-devtools-mcp  
+23596 21823 10:46:32 /opt/homebrew/Caskroom/codex/0.166.0/bin/codex-code-mode-host
+--- status
+Squad v31 (root <home>/code/amq-squad/.agent-mail/v31): 1 needs you, 0 working, 2 ready, 217 inactive
+--- ledgers before (names, sizes, times; no content)
+-rw-------@ 1 omri  staff  225 16 נוב׳ 18:21 <home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/scheduler/exits.json
+
+<home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/commits:
+total 736
+drwx------@ 16 omri  staff     512 16 נוב׳ 10:09 .
+drwx------@ 16 omri  staff     512 16 נוב׳ 18:21 ..
+-rw-------@  1 omri  staff   12327 16 נוב׳ 06:12 dev.json
+-rw-r--r--@  1 omri  staff       0 30 אוק׳ 16:43 dev.lock
+-rw-------@  1 omri  staff   41718 16 נוב׳ 10:09 dev2.json
+-rw-r--r--@  1 omri  staff       0 12 נוב׳ 07:32 dev2.lock
+-rw-------@  1 omri  staff     770 30 אוק׳ 16:40 qa.json
+-rw-r--r--@  1 omri  staff       0 30 אוק׳ 16:40 qa.lock
+-rw-------@  1 omri  staff  298878 16 נוב׳ 06:48 reviewer.json
+-rw-r--r--@  1 omri  staff       0 30 אוק׳ 16:43 reviewer.lock
+-rw-------@  1 omri  staff    3959 30 אוק׳ 16:39 scribe.json
+-rw-r--r--@  1 omri  staff       0 30 אוק׳ 15:58 scribe.lock
+-rw-------@  1 omri  staff    1969 30 אוק׳ 16:15 senior-dev.json
+-rw-r--r--@  1 omri  staff       0 30 אוק׳ 16:05 senior-dev.lock
+-rw-------@  1 omri  staff     794 10 נוב׳ 00:40 sonnet-dev.json
+-rw-r--r--@  1 omri  staff       0 10 נוב׳ 00:40 sonnet-dev.lock
+
+<home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/ledger:
+total 97984
+drwx------@  7 omri  staff       224 12 נוב׳ 07:32 .
+drwx------@ 16 omri  staff       512 16 נוב׳ 18:21 ..
+-rw-------@  1 omri  staff     15906  6 נוב׳ 06:51 cto.jsonl
+-rw-------@  1 omri  staff    736166 16 נוב׳ 07:34 dev.jsonl
+-rw-------@  1 omri  staff  10216485 16 נוב׳ 10:09 dev2.jsonl
+-rw-------@  1 omri  staff     37134  1 נוב׳ 18:22 lead.jsonl
+-rw-------@  1 omri  staff  38023006 16 נוב׳ 07:34 reviewer.jsonl
+   21886 <home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/scheduler/decisions.jsonl
+     218 <home>/code/amq-squad/.agent-mail/v31/extensions/amq-squad/routing/decisions.jsonl
+   22104 total
+--- the lead and its scheduler
+  PID  PPID STARTED                      COMMAND
+ 6643  9221 נוב׳ 12 2026 13:11:00    <home>/go/bin/amq-squad lead --team
+ 6645  6643 נוב׳ 12 2026 13:11:00    <home>/go/bin/amq-squad scheduler run --project <home>/code/amq-squad --lead-pool pi:ollama/qwen3.6:27b

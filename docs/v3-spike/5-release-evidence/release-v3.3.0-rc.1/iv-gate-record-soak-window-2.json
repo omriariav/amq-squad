@@ -1,0 +1,18 @@
+{
+  "schema": "amq-squad-gate/1",
+  "gate_id": "soak-window-2",
+  "class": "spawn",
+  "gate_kind": "spawn",
+  "typed_class": "grow",
+  "target": "soak window check 2: binds nothing",
+  "digest": "sha256:90bc2e80bd0f1936791cf84a4ee0dacde5fcce786be0b4759208c86178552247",
+  "text": "Allow soak window check 2: binds nothing?\nAsked by cto.\nYes lets it run. No stops it.\n\n----------\namq-squad gate soak-window-2\nsquad: root-sha256:bb709a3a4a295f29d463134d615bcbe259074bd4376ab6b28b3dfaf15680a9c3\nclass: grow (spawn)\ntarget: soak window check 2: binds nothing\ndigest: sha256:90bc2e80bd0f1936791cf84a4ee0dacde5fcce786be0b4759208c86178552247",
+  "text_sha256": "sha256:0d33d934a0f67f70a3496052b76300d75a9d9e62bae34838ecb02105620b9e81",
+  "issued_at": "2026-11-16T17:02:04Z",
+  "not_before": "2026-11-16T17:01:04Z",
+  "not_after": "2026-11-16T17:04:04Z",
+  "raised_by": "cto",
+  "owner_pubkey": "232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71",
+  "issuer_key_id": "ed25519-sha256:0b4848d033e3d2939e790d786b5b04209cdb54912e216fc9c4726386c1c409ee",
+  "squad": "root-sha256:bb709a3a4a295f29d463134d615bcbe259074bd4376ab6b28b3dfaf15680a9c3"
+}

@@ -1,0 +1,9 @@
+date_utc	head	what	exit	flakes
+2026-11-16T08:41:15Z	9ee20d479f8ef1f9da0c3d0266e95312a2333a0a	final v3 sha (1.1)	0	none
+2026-11-16T08:43:39Z	4f0ff9f3823ac2139fd61839e68da65d58bb3725	release PR head (1.3)	0	none
+2026-11-16T08:56:09Z	d0bb984fe41b96f88ad3876bae63d4a25ae1ce5e	release PR head after Codex fixes (1.3)	0	none
+2026-11-16T09:18:54Z	4df73e618f5b8844645a03461009428fb39beb7d	release PR head after the cut-gate notes (1.4)	0	none
+2026-11-16T16:28:49Z	9ee20d47+amq-lane prototype (uncommitted)	3.3.x (a) real-AMQ lane prototype	0	none
+2026-11-16T16:43:18Z	9ee20d479f8ef1f9da0c3d0266e95312a2333a0a	3.3.x item 4 /answer prototype (proto-r3 7069d256, uncommitted, on 9ee20d47)	0	none
+2026-11-16T16:59:04Z	1e710e97	gate #1026	0	0 FAIL lines
+2026-11-16T17:10:09Z	0019e0b4	gate #1027	0	0 FAIL lines

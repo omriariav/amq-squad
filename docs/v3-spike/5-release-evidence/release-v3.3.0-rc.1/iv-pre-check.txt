@@ -1,0 +1,5 @@
+open gates v31=0 owner45=0
+v31 attach 18360: <home>/go/bin/amq-squad remote attach --fleet-file <home>/scratch-owner45/fleet.yaml --project <home>/code/amq-squad --session v31 --me cto --interval 3s --json
+attempt2 open gates v31=0 owner45=0
+attempt3 open gates v31=0 owner45=0
+attempt4 open gates v31=0 owner45=0
