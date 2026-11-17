@@ -96,7 +96,12 @@ func storeGateRaise(sel contextResolution, gate, action, target string, window t
 		return fmt.Errorf("gate raise: %w", err)
 	}
 	transportErr := err
-	spec := gatestore.Spec{GateID: id, Action: action, Target: target, RaisedBy: sel.Handle, Window: window, Squad: core.Store.Squad()}
+	// 3.3.x item 1: the spec is checked, then the session root created (a
+	// raise into a fresh session) and only then its identity taken
+	spec, err := core.Store.StampSquad(gatestore.Spec{GateID: id, Action: action, Target: target, RaisedBy: sel.Handle, Window: window}, hookNow(), core.Identity())
+	if err != nil {
+		return fmt.Errorf("gate raise: %w", err)
+	}
 	var rec gatestore.Record
 	var q gatestore.Question
 	if transportErr == nil {

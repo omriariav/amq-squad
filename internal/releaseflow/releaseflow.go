@@ -113,6 +113,11 @@ type Flow struct {
 	Exec     Executor
 	Lead     string
 	Squad    string // this squad's identity, set on the gates it raises and read back (mergetrain.Squad)
+	// SquadNow, when set, is the identity read back at each check in place
+	// of Squad (3.3.x item 1): the gate store's, read when the check runs, so
+	// a flow built before its session root existed matches the gates another
+	// writer raised after creating it.
+	SquadNow func() string
 	Now      func() time.Time
 	// Body is the GitHub release body: the release notes file's content
 	// (3.0.2). Its digest is in the spec recorded at prepare (Spec), and
@@ -218,13 +223,22 @@ func GateID(child operatorauth.ReleaseChildPlan) string {
 	return "rel-" + role + "-" + hex.EncodeToString(sum[:10])
 }
 
+// squad is the identity a child gate must carry: SquadNow's, read now, when
+// it is set, else Squad (3.3.x item 1).
+func (f *Flow) squad() string {
+	if f.SquadNow != nil {
+		return f.SquadNow()
+	}
+	return f.Squad
+}
+
 // ChildGate is the compoundrelease reconcile seam: raise the child's typed
 // gate, or find the one a crash left, and refuse a gate that binds another
 // action or target.
 func (f *Flow) ChildGate(child operatorauth.ReleaseChildPlan) (string, error) {
 	id := GateID(child)
 	check := func(rec gatestore.Record) (string, error) {
-		if rec.Class != child.Action || rec.Target != child.Target || !mergetrain.SameSquad(rec, f.Squad) {
+		if rec.Class != child.Action || rec.Target != child.Target || !mergetrain.SameSquad(rec, f.squad()) {
 			return id, fmt.Errorf("%w: gate %s binds %s %q for squad %q", compoundrelease.ErrChildConflict, id, rec.Class, rec.Target, rec.Squad)
 		}
 		return id, nil
@@ -368,7 +382,7 @@ func (f *Flow) publishLocked(ctx context.Context, root, dir string, snap compoun
 		id := snap.Active.Children[i].QuestionMessageID
 		st := Step{Role: child.Role, GateID: id, Target: child.Target}
 		rec, err := f.Gates.Load(id)
-		if err != nil || rec.Class != child.Action || rec.Target != child.Target || !mergetrain.SameSquad(rec, f.Squad) {
+		if err != nil || rec.Class != child.Action || rec.Target != child.Target || !mergetrain.SameSquad(rec, f.squad()) {
 			return append(steps, refused(st, fmt.Sprintf("gate %s does not bind this child: %v", id, err))), ErrNotApproved
 		}
 		repo, tag, commit, err := parseTarget(child)
