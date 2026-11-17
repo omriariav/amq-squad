@@ -1,0 +1,17 @@
+pre 2026-11-16T16:50:00Z
+fleet readable
+operator root readable
+installed: amq-squad v3.3.0-rc.1 inode 262532815
+old: <home>/go/bin/amq-squad remote attach --fleet-file <home>/scratch-owner45/fleet.yaml --project <home>/code/amq-squad --session v31 --me cto --interval 3s --json
+  PID STARTED
+66439 נוב׳ 07 2026 18:44:04   
+SIGTERM to 66439 at 2026-11-16T16:50:00Z
+waited 1s, now 2026-11-16T16:50:01Z
+started 18360, check at 2026-11-16T16:50:09Z
+  PID  PPID STARTED                      COMMAND
+18360 18327 נוב׳ 16 2026 18:50:01    <home>/go/bin/amq-squad remote attach --fleet-file <home>/scratch-owner45/fleet.yaml --project <home>/code/amq-squad --session v31 --me cto --interval 3s --json
+txt inode: 262532815; installed inode: 262532815
+--- first lines of the log
+{"at":"2026-11-16T16:50:01Z","data":{"leads":["app/cto","cto"],"mailbox":"user","operator":true,"root":"<home>/scratch-owner45/operator/.agent-mail/ops","share_root":"<home>/.amq-squad/buzz/root"},"kind":"attached"}
+
+--- err bytes:        0

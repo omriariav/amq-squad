@@ -1,0 +1,19 @@
+SIGTERM v31 attach 18360 at 2026-11-16T16:56:22Z
+gone after 1s
+rc330win attach 59669 started 2026-11-16T16:56:23Z
+restored v31 attach 63713 at 2026-11-16T16:56:40Z
+attempt2 SIGTERM v31 attach 63713 at 2026-11-16T16:58:06Z
+B attach 83480 started 2026-11-16T16:58:07Z
+raised 2026-11-16T16:58:18Z
+attempt2 SIGTERM B 83480, gone after 1s at 2026-11-16T16:59:22Z
+restored v31 attach 86162 at 2026-11-16T16:59:22Z
+attempt3 SIGTERM v31 attach 86162 at 2026-11-16T17:01:56Z
+B3 attach 91779 started 2026-11-16T17:01:57Z
+raised-2 noted 2026-11-16T17:02:10Z
+attempt3 SIGTERM B3 91779, gone after 1s at 2026-11-16T17:02:49Z
+restored v31 attach 93277 at 2026-11-16T17:02:49Z
+attempt4 SIGTERM v31 attach 93277 at 2026-11-16T17:04:37Z
+B4 5222 alive yes attached yes err 0
+2026-11-16T17:05:07Z soak-window-3 state: accepted
+attempt4 SIGTERM B4 5222, gone after 1s at 2026-11-16T17:05:17Z
+restored v31 attach 8076 at 2026-11-16T17:05:17Z

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "kind": "gate_status",
+  "data": [
+    {
+      "schema": "amq-squad-gate/1",
+      "gate_id": "rel-gh-e9647e4675429cd8ffc3",
+      "class": "github_release",
+      "gate_kind": "release",
+      "typed_class": "release",
+      "target": "gh release create v3.3.0-rc.1 on omriariav/amq-squad",
+      "digest": "sha256:31f219e2a44824779d5251ba4d4e3a3e9ab967a6777af3522131a51b5fe0391e",
+      "text": "Publish a GitHub release for v3.3.0-rc.1 in amq-squad?\nThe prepare found its commit on release/v3.3.\nYes creates the release. No does nothing.\n\n----------\namq-squad gate rel-gh-e9647e4675429cd8ffc3\nsquad: root-sha256:0e1ecb33bca7c925b83033b5b2a819830c8ee16650cdb09e53b8035b107804e7\nclass: release (github_release)\ntarget: gh release create v3.3.0-rc.1 on omriariav/amq-squad\ndigest: sha256:31f219e2a44824779d5251ba4d4e3a3e9ab967a6777af3522131a51b5fe0391e",
+      "text_sha256": "sha256:11d9cdcd7c5e74d18e4f705625d4da8694f5cc6f8ec3a5b27ac13f4d6c7d7ec1",
+      "issued_at": "2026-11-16T09:36:18Z",
+      "not_before": "2026-11-16T09:35:18Z",
+      "not_after": "2026-11-16T10:06:18Z",
+      "raised_by": "lead",
+      "owner_pubkey": "<owner pubkey>",
+      "issuer_key_id": "<issuer key id>",
+      "squad": "root-sha256:0e1ecb33bca7c925b83033b5b2a819830c8ee16650cdb09e53b8035b107804e7",
+      "facts": {
+        "branch": "release/v3.3"
+      },
+      "state": "open",
+      "question_sent": true,
+      "reasked": false
+    },
+    {
+      "schema": "amq-squad-gate/1",
+      "gate_id": "rel-tag-11b8b5bab5ce10a849d8",
+      "class": "tag",
+      "gate_kind": "tag",
+      "typed_class": "release",
+      "target": "git tag v3.3.0-rc.1 312a27d3eeb5652d126c59768e3d60426413132b on omriariav/amq-squad",
+      "digest": "sha256:488461c67afe4eec518db782a285816d2a97ee45f7da959dad20dd596cb8fbaa",
+      "text": "Create a tag for v3.3.0-rc.1 in amq-squad?\nThe prepare found its commit on release/v3.3.\nYes creates the tag. No does nothing.\n\n----------\namq-squad gate rel-tag-11b8b5bab5ce10a849d8\nsquad: root-sha256:0e1ecb33bca7c925b83033b5b2a819830c8ee16650cdb09e53b8035b107804e7\nclass: release (tag)\ntarget: git tag v3.3.0-rc.1 312a27d3eeb5652d126c59768e3d60426413132b on omriariav/amq-squad\ndigest: sha256:488461c67afe4eec518db782a285816d2a97ee45f7da959dad20dd596cb8fbaa",
+      "text_sha256": "sha256:9764c0365461374fdeedb5ee1852dfd67c43e667087aa48a67693f9e10eb4e7e",
+      "issued_at": "2026-11-16T09:36:18Z",
+      "not_before": "2026-11-16T09:35:18Z",
+      "not_after": "2026-11-16T10:06:18Z",
+      "raised_by": "lead",
+      "owner_pubkey": "<owner pubkey>",
+      "issuer_key_id": "<issuer key id>",
+      "squad": "root-sha256:0e1ecb33bca7c925b83033b5b2a819830c8ee16650cdb09e53b8035b107804e7",
+      "facts": {
+        "branch": "release/v3.3"
+      },
+      "state": "open",
+      "question_sent": true,
+      "reasked": false
+    }
+  ]
+}

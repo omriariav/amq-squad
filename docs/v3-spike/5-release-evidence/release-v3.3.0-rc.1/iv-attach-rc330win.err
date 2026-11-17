@@ -1,0 +1,1 @@
+error: remote attach: the fleet registry has no operator session (amq-squad fleet operator), or attach to one squad with --lead

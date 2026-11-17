@@ -1,0 +1,12 @@
+{
+  "tag_name": "v3.3.0-rc.1",
+  "target_commitish": "312a27d3eeb5652d126c59768e3d60426413132b",
+  "name": "v3.3.0-rc.1",
+  "draft": false,
+  "prerelease": true,
+  "created_at": "2026-11-16T09:35:53Z",
+  "published_at": "2026-11-16T10:16:04Z",
+  "html_url": "https://github.com/omriariav/amq-squad/releases/tag/v3.3.0-rc.1",
+  "author": "omriariav",
+  "body_bytes": 14221
+}

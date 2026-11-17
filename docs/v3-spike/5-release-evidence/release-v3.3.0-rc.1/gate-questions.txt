@@ -1,0 +1,10 @@
+Gate-Kind: tag
+Action: tag
+Target: git tag v3.3.0-rc.1 312a27d3eeb5652d126c59768e3d60426413132b on omriariav/amq-squad
+Note: release body sha256:d9b9e6ff8f86a9733ffa33a55355fb6b587592415781b95d5553c24b45490676
+---
+Gate-Kind: release
+Action: github_release
+Target: gh release create v3.3.0-rc.1 on omriariav/amq-squad
+Note: release body sha256:d9b9e6ff8f86a9733ffa33a55355fb6b587592415781b95d5553c24b45490676
+---
