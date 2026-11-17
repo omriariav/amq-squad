@@ -1,0 +1,9 @@
+Rollback line for the 3.3.0-rc.1 restart (written 2026-11-16 before the restart, from the notes' "Upgrading from 3.2.0" and "Rolling back" sections and the cut gates: skew check (no sealed layout or schema version changed v3.2.0..312a27d3) and rollback inventory T/v330/rollback-inventory.md fc424855).
+To roll back: stop the rc.1 lead (SIGTERM) and run
+  <home>/.lead-private/amq-squad-3.2.0-backup/amq-squad up --binary <home>/.lead-private/amq-squad-3.2.0-backup/amq-squad
+which prints amq-squad v3.2.0 (sha256 0e6b6b098242ef764a1974d06bc7f606fb62361e92b5e487a6c04f6d20fe13c7; backup checked == the installed v3.2.0 on 2026-11-16).
+No layout migrates, so 3.2.0 reads every store 3.3.0 writes. What reads differently after a rollback (the notes' Rolling back, inventory rows R1-R3):
+- a gate asked again after its window shows expired under 3.2.0 when unanswered; an approval given through an asked-again question, or in an answer word 3.3.0 added (y, ok, go ahead, כן), is refused by 3.2.0's merge train, release flow, verify action and growth check, while 3.2.0's hook guard admits it (known limits 5 and 6). Use or settle such approvals before rolling back.
+- a fixed-id gate (merge, release, growth) cannot be asked again under 3.2.0; a new head or a new release attempt raises a new gate, and `gate raise --gate <new id>` asks again.
+- `uninstall --write` under 3.2.0 removes windows/ as session state.
+- registry.yaml written by 3.3.0's doctor reads correctly; 3.2.0 warns it is out of date.

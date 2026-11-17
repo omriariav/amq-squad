@@ -1,0 +1,23 @@
+6c6
+< cd <home>/scratch-amqlane
+---
+> cd <home>/scratch-g1027
+lane run exit 0
+amq-remote_0.140.0_darwin_arm64.tar.gz: OK
+amq-owner-sign_0.140.0_darwin_arm64.tar.gz: OK
+--- PASS: TestOwnerScriptDryRun (30.24s)
+--- PASS: TestOwnerScriptDryRunRejectsThenSendsAgain (23.69s)
+ok  	github.com/omriariav/amq-squad/v3/internal/buzz	73.282s
+LANE OK
+revert run exit 1 (expect 1)
+--- SKIP: TestOwnerScriptDryRun (0.01s)
+--- SKIP: TestOwnerScriptDryRunRejectsThenSendsAgain (0.01s)
+--- SKIP: TestOwnerScriptDryRun (0.01s)
+--- SKIP: TestOwnerScriptDryRunRejectsThenSendsAgain (0.01s)
+make ci exit 0 in 437 s
+ℹ tests 156
+ℹ pass 155
+ℹ fail 0
+       0
+
+[exited with code 0]

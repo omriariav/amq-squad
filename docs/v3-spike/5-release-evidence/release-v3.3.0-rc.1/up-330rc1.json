@@ -1,0 +1,274 @@
+{
+  "schema_version": 1,
+  "kind": "up",
+  "data": {
+    "project": "<home>/code/amq-squad",
+    "root": "<home>/code/amq-squad/.agent-mail/v31",
+    "session": "v31",
+    "lead": "cto",
+    "binary": "<home>/go/bin/amq-squad",
+    "start": "2026-11-16T16:21:05.850051Z",
+    "tmux_session": "squad-lead-amq-squad-f42a4",
+    "attach": "tmux attach -t squad-lead-amq-squad-f42a4",
+    "steps": [
+      {
+        "name": "compile",
+        "outcome": "ok",
+        "detail": "4 seats, lead cto, session v31"
+      },
+      {
+        "name": "install",
+        "outcome": "ok",
+        "detail": "installed <home>/scratch-v330-build/build/pi/amq-squad (v3.3.0-rc.1) at <home>/go/bin/amq-squad by temp name and rename"
+      },
+      {
+        "name": "session",
+        "outcome": "skipped",
+        "detail": "skipped: the session root <home>/code/amq-squad/.agent-mail/v31 exists"
+      },
+      {
+        "name": "doctor",
+        "outcome": "ok",
+        "detail": "41 checks, none failed (5 warnings)"
+      },
+      {
+        "name": "lead",
+        "outcome": "ok",
+        "detail": "no recorded lead or scheduler is running"
+      },
+      {
+        "name": "tmux",
+        "outcome": "ok",
+        "detail": "tmux session squad-lead-amq-squad-f42a4 runs <home>/go/bin/amq-squad lead --team in <home>/code/amq-squad"
+      },
+      {
+        "name": "roster",
+        "outcome": "ok",
+        "detail": "roster_adopted: every roster seat is live from the previous incarnation; no launch"
+      }
+    ],
+    "roster": [
+      {
+        "handle": "cto",
+        "role": "",
+        "runtime": "",
+        "model": "",
+        "effort": "",
+        "state": "stale",
+        "live": false,
+        "reason_code": "no_live_signal",
+        "bucket": "inactive",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "",
+        "last_activity_at": "2026-11-15T10:34:21.198969Z",
+        "last_message_at": "2026-11-15T10:34:21.165029Z",
+        "last_message": "t194 block answer: the V3 anchor: t194 block answer: the brief is right. Brief lines 242-244 dictate the V3 anchor byte for byte. In unthreadedBinds, name the map read from readEndings `ends`, so rela",
+        "prompt_state": "running",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "",
+        "branch": "",
+        "launch": null
+      },
+      {
+        "handle": "dev",
+        "role": "senior-dev",
+        "runtime": "codex",
+        "model": "gpt-5.6-terra",
+        "effort": "medium",
+        "state": "online",
+        "live": true,
+        "reason_code": "idle",
+        "bucket": "ready",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "<home>/code/amq-squad/.worktrees/dev",
+        "last_activity_at": "2026-11-16T16:20:55.91494Z",
+        "last_message_at": "2026-11-16T04:12:24.239043Z",
+        "last_message": "t205 implementation ready: t205 is ready: docs/task-store-design.md now renders marked state, move, block-group, and who-legend tables from internal/task declarations via internal/statecontract/docs.g",
+        "prompt_state": "idle",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "<home>/code/amq-squad/.worktrees/dev",
+        "branch": "seat/dev",
+        "launch": {
+          "launch_id": "24ca35e47cc20831cc5425961f090806",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-16T05:34:19.328822Z",
+            "seat_live": "2026-11-16T05:34:26.122176Z",
+            "first_message": null,
+            "to_seat_live_ms": 6793,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "drain",
+                "ms": 2316
+              },
+              {
+                "name": "prepare",
+                "ms": 3442
+              },
+              {
+                "name": "mint",
+                "ms": 144
+              },
+              {
+                "name": "apply",
+                "ms": 667
+              },
+              {
+                "name": "seat_exec",
+                "ms": 222
+              }
+            ]
+          },
+          "added_at": null
+        }
+      },
+      {
+        "handle": "dev2",
+        "role": "senior-dev",
+        "runtime": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "online",
+        "live": true,
+        "reason_code": "idle",
+        "bucket": "ready",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "<home>/code/amq-squad/.worktrees/dev2",
+        "last_activity_at": "2026-11-16T16:20:55.969567Z",
+        "last_message_at": "2026-11-16T05:32:39.267188Z",
+        "last_message": "t210 blocked: protected base site changed: t210's mandatory precheck failed before any input or hunk was applied. Command: git diff --stat 811096cafa8cd031c270621f164edb7eb6794ee7 HEAD -- internal/gat",
+        "prompt_state": "idle",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "<home>/code/amq-squad/.worktrees/dev2",
+        "branch": "seat/dev2",
+        "launch": {
+          "launch_id": "24ca35e47cc20831cc5425961f090806",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-16T05:34:19.328822Z",
+            "seat_live": "2026-11-16T05:34:26.050271Z",
+            "first_message": null,
+            "to_seat_live_ms": 6721,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "drain",
+                "ms": 2316
+              },
+              {
+                "name": "prepare",
+                "ms": 3442
+              },
+              {
+                "name": "mint",
+                "ms": 144
+              },
+              {
+                "name": "apply",
+                "ms": 667
+              },
+              {
+                "name": "seat_exec",
+                "ms": 150
+              }
+            ]
+          },
+          "added_at": null
+        }
+      },
+      {
+        "handle": "reviewer",
+        "role": "qa",
+        "runtime": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "needs_you",
+        "live": true,
+        "reason_code": "question_to_owner",
+        "bucket": "needs_you",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "<home>/code/amq-squad/.worktrees/reviewer",
+        "last_activity_at": "2026-11-16T16:20:55.945323Z",
+        "last_message_at": "2026-11-16T04:55:01.233036Z",
+        "last_message": "Re: task t208: 3.3.0 S3-1: next, the moves a caller can make, beside the task on task show --json and on every status task row, derived from the declared moves (base: origin/v3 at 811096ca): Claimed t",
+        "prompt_state": "idle",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "<home>/code/amq-squad/.worktrees/reviewer",
+        "branch": "seat/reviewer",
+        "launch": {
+          "launch_id": "24ca35e47cc20831cc5425961f090806",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-16T05:34:19.328822Z",
+            "seat_live": "2026-11-16T05:34:25.982308Z",
+            "first_message": null,
+            "to_seat_live_ms": 6653,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "drain",
+                "ms": 2316
+              },
+              {
+                "name": "prepare",
+                "ms": 3442
+              },
+              {
+                "name": "mint",
+                "ms": 144
+              },
+              {
+                "name": "apply",
+                "ms": 667
+              },
+              {
+                "name": "seat_exec",
+                "ms": 82
+              }
+            ]
+          },
+          "added_at": null
+        }
+      }
+    ]
+  }
+}

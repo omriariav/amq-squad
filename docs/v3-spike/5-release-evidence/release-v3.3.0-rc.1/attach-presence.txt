@@ -1,0 +1,3 @@
+user: not present (stale). needs you 0, working 0, ready 0, inactive 2.
+share <home>/.amq-squad/buzz/root <share session>: 8 grants, expire 2026-11-28T20:31:45Z
+warning: amq-remote login service is absent for root <home>/.amq/remote/root: nothing restarts the endpoint after a reboot; run amq-remote service install --root <home>/.amq/remote/root
