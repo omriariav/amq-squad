@@ -4,6 +4,65 @@ Items deferred out of 3.0 by a recorded decision, each with the plan section
 that records it (docs/v3-plan.md unless named otherwise). They outlive the
 planning sessions that made them; nothing here is a release blocker.
 
+## 3.3.x
+
+The list after the 3.3.0 release (2026-11-17), in the plan reviewer's order:
+items 1 to 3 are ruled first, second and third. Nothing here is promised by date.
+
+1. **The gate identity on a fresh session root** (3.3.0's known limit 7; a
+   3.3.1 candidate).
+   - The defect: a gate raised as the first write into a new session takes the
+     store's squad identity before the root exists. `gate raise` takes
+     `core.Store.Squad()` (`internal/cli/gate_store.go:99`), and `release
+     prepare` takes `mergetrain.SquadOf(sel.Root)`
+     (`internal/cli/release_flow.go:86`, `:100`). So the record carries
+     `gatestore.SquadID`'s path-only missing-root form
+     (`internal/gatestore/squad.go:16-25`), which never verifies: the answer is
+     refused `no_squad_identity`.
+   - Seen on 3.3.0-rc.1's release gates and on the soak's first phone test (the
+     rc.1 evidence note). The 3.0.x entry below names the same defect for
+     `release prepare`.
+   - The fix: compute the identity after the root exists at the raise, with a
+     row that raises into a fresh session and then answers. Audit every
+     first-write path that stamps a squad identity: `release prepare`, the
+     train's raise, and `gate raise`.
+   - Until then: `mkdir -p <project>/.agent-mail/<session>` before `release
+     prepare` or `gate raise` (RELEASING.md). The 3.3.0 cut used it, and both
+     of its records carried the real identity.
+2. **The relay retry on `native_error` "its delivery never started".** Measure
+   first whether a retry is idempotent on amq-remote's request id. Three local
+   sightings in about 11 locked `make ci` runs since 2026-11-16, all in
+   `internal/buzz TestOwnerScriptDryRunRejectsThenSendsAgain`. The GitHub
+   real-AMQ lane, which runs it from #1027 on, has needed no re-run for it.
+   The race is upstream (the `--poll` item under Buzz and AMQ). The sightings
+   are those of the dated 2026-11-16 entry under Flakes and test robustness.
+3. **U2 adoption.** Its first step is a measurement at the then-latest AMQ, not
+   a pin move.
+4. **`remote status` checks the wrong root for the login service.** It calls
+   `ServiceWarning(…, "")` with an empty root (`internal/cli/remote.go:508`),
+   so `amq-remote service status` reports on amq-remote's default root, not on
+   the share root the relay runs. The warning can name a root nothing uses.
+5. **The live phone attach runs on a rehearsal fleet file.** Its `--fleet-file`
+   is a scratch fleet from the 2026-11 rehearsals, which drives presence (the
+   operator row reads stale) and lead routing. Gate routing is unaffected: the
+   attach's own `--project`/`--session` store is its main store. A proper live
+   fleet file is the owner's setup choice.
+6. **One `/answer` test item:** a question row that is only blank, and a
+   fixture with two same-label gates in reversed order (Codex's P2 on #1026).
+7. **Launch door folding: six limits of the launch family's static guard**
+   (S2-3, #1022). None of them is caught:
+   - a code computed by a call no check folds;
+   - an expression of constants only;
+   - a literal that reaches the door through a second local, e.g. `p :=
+     "new_"; c := p + x; firstNonEmpty(…, c)`: the collector follows a literal
+     through one local into a concatenation at its use
+     (`internal/statecontract/s2_constants_test.go:195-240`), not on into
+     another local;
+   - a literal reached through an index;
+   - the stale-caller check runs per door group, not per function;
+   - a nonconstant concatenation inline at a door, e.g.
+     `firstNonEmpty(ev.Stage, "new_"+ev.Handle)` (Codex on #1022).
+
 ## 3.2.x
 
 One list for 3.2.x, grouped by area. It folds in the items the plan reviewer
@@ -152,7 +211,9 @@ its PR. Nothing here is promised by date.
   amq-remote's admission and reconcile tick named in the `--poll` item under
   Buzz and AMQ (upstream, every AMQ version through v0.149.1). GitHub CI
   skips this test (see the real-AMQ lane item under Buzz and AMQ), so the
-  local count is the only evidence; the 3.3.0 soak tallies it.
+  local count is the only evidence; the 3.3.0 soak tallies it. Since #1027
+  (2026-11-16) the real-AMQ lane runs it in CI; a third local sighting came on
+  2026-11-17 (3.3.x item 2).
 - Dated 2026-11-16: `internal/cli
   TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns`
   (`internal/cli/scheduler_leasecap_test.go:183`) failed once in a locked
