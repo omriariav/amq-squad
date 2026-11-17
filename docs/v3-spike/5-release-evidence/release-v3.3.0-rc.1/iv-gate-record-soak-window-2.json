@@ -12,7 +12,7 @@
   "not_before": "2026-11-16T17:01:04Z",
   "not_after": "2026-11-16T17:04:04Z",
   "raised_by": "cto",
-  "owner_pubkey": "232322028fbe657227232a53564a511e59fa69bbaed2fdb34e30c431f9096e71",
-  "issuer_key_id": "ed25519-sha256:0b4848d033e3d2939e790d786b5b04209cdb54912e216fc9c4726386c1c409ee",
+  "owner_pubkey": "<owner pubkey>",
+  "issuer_key_id": "<issuer key id>",
   "squad": "root-sha256:bb709a3a4a295f29d463134d615bcbe259074bd4376ab6b28b3dfaf15680a9c3"
 }
