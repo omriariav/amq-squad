@@ -15,7 +15,7 @@
   release-api-fields.json holds GitHub's values: draft false, prerelease true,
   target_commitish 312a27d3…, author omriariav, created_at 2026-11-16T09:35:53Z (the
   target commit's date) and published_at 2026-11-16T10:16:04Z.
-  `gh api …/releases/latest` still returned v3.2.0 (publish-by-hand.out).
+  `gh api …/releases/latest` still returned v3.2.0 (publish-by-hand-out.txt).
 - The notes file is `docs/v3.3.0-release-notes.md` at 312a27d3, 14221 bytes, sha256
   d9b9e6ff8f86a9733ffa33a55355fb6b587592415781b95d5553c24b45490676.
 - Where a sentence names no file in this folder, its source is the lead session's
@@ -53,9 +53,9 @@
 
 ## The hand steps
 
-publish-by-hand.out is the output of the hand script, in 3.2.0's form:
+publish-by-hand-out.txt is the output of the hand script, in 3.2.0's form:
 - the tag, 10:15:59Z to 10:16:02Z, read back `commit 312a27d3…`;
-- the release, 10:16:03Z to 10:16:04Z (release-create.out: the URL), with
+- the release, 10:16:03Z to 10:16:04Z (release-create-out.txt: the URL), with
   `--prerelease --latest=false`;
 - read back: prerelease true, target 312a27d3, latest v3.2.0.
 
@@ -111,9 +111,10 @@ module-proxy install prints v3.3.0-rc.1 (build-smoke.log).
 
 ## The phone attach ran v3.1.2 code
 
-- The live phone attach, pid 66439, was started on 2026-11-07 at 16:44:07Z: the
-  restore of the v31 attach in rc.1-of-3.2.0's attach swap (the 3.2.0-rc.1 note's
-  attach-swap.txt). It ran from `<home>/go/bin/amq-squad` while that file was still
+- The live phone attach, pid 66439, was started on 2026-11-07: the restore of the
+  v31 attach in 3.2.0-rc.1's attach swap. Its process start and its `attached`
+  row are 16:44:04Z (attach-restart.txt); the 3.2.0-rc.1 note's attach-swap.txt
+  records the restore at 16:44:07Z. It ran from `<home>/go/bin/amq-squad` while that file was still
   v3.1.2. The 3.1.2 lead was stopped at 16:46:03Z and 3.2.0-rc.1 was installed
   after.
 - So 66439 ran v3.1.2 code in memory through 3.2.0-rc.1, rc.2, 3.2.0 and the first
@@ -146,8 +147,10 @@ read-only check of the rc.1 source and the host found both cosmetic for delivery
 - Presence only starts and stops the attach's own `amq-remote up` child
   (`internal/buzz/endpoint.go:29-41`). The attach reads the share's inbox every tick
   regardless (`internal/cli/remote.go:640-656`).
-- The 2026-11-07 log has three rows and no `presence` row: `attached`; `handled`
-  at 17:20:18Z (merge-e8c88d76dad1a873, accepted); `detached`. So that answer was
+- The 2026-11-07 log has no `presence` row. The copy in the 3.2.0-rc.1 folder
+  (`release-v3.2.0-rc.1/attach-v31-restored.jsonl`) has two rows: `attached`, and
+  `handled` at 17:20:18Z (merge-e8c88d76dad1a873, accepted). The live file gained
+  a `detached` row when the attach stopped on 2026-11-16. So that answer was
   delivered while the row read stale.
 - The relay runs the share root: `amq-remote up` and `serve` both run
   `--root <home>/.amq-squad/buzz/root`, the same root as the gate binding's
@@ -160,8 +163,10 @@ read-only check of the rc.1 source and the host found both cosmetic for delivery
 ## The phone test (bound iv): four attempts, satisfied in part
 
 Each attempt was on the owner's word. Before each attach swap, no gate was open in
-v31 or owner45 (iv-pre-check.txt). After each, the v31 attach was restored with
-text inode == rc.1, an `attached` line and an empty stderr (iv-swap.txt).
+v31 or owner45 (iv-pre-check.txt). iv-swap.txt records each swap's stop and start
+times and pids, and each restore of the v31 attach. By the lead session's approvals
+record, each restored v31 attach had text inode == rc.1, an `attached` line and an
+empty stderr.
 
 1. Attempt 1, 16:56Z: stopped before any gate.
    - The planned scratch attach `remote attach --project … --session rc330win --me
@@ -276,7 +281,7 @@ The `<home>` placeholder replaces the home path in every file.
 - From the cut:
   - cut-binary-version.txt, prepare-time.txt, release-prepare.json,
     prepared-note.txt, gate-questions.txt, gate-status.json;
-  - publish-by-hand.out, tag-create.json, release-create.out,
+  - publish-by-hand-out.txt, tag-create.json, release-create-out.txt,
     release-api-fields.json (a selection of GitHub's release fields, and the body's
     byte count);
   - rollback.txt, restart-pre.txt, restart-run.txt, up-330rc1.json;
