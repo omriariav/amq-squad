@@ -25,6 +25,17 @@ func SquadID(root string) string {
 	return "root-sha256:" + digestHex(resolved+"\x00"+id)
 }
 
+// EnsureSquadID creates the root (0700, as Store.Raise does) and then takes
+// its identity (3.3.x item 1): a writer that stamps a record takes the
+// identity once the root exists, never the path-only form of a missing root,
+// which no verifier reading the same root would match.
+func EnsureSquadID(root string) (string, error) {
+	if err := os.MkdirAll(filepath.Clean(root), 0o700); err != nil {
+		return "", err
+	}
+	return SquadID(root), nil
+}
+
 func digestHex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])

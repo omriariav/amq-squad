@@ -265,7 +265,10 @@ func attachMergeGates(ctx context.Context, t *mergetrain.Train, sel contextResol
 	if core == nil {
 		return
 	}
-	esc := mergetrain.StoreEscalator{Store: core.Store, Identity: core.Identity(), Now: hookNow, Squad: mergetrain.SquadOf(sel.Root)}
+	// 3.3.x item 1: no identity taken here: the train may run before its
+	// session root exists, so the escalator takes it at each raise, once the
+	// root exists (StoreEscalator.Raise)
+	esc := mergetrain.StoreEscalator{Store: core.Store, Identity: core.Identity(), Now: hookNow}
 	if err == nil {
 		esc.Send = core.QuestionSender(ctx)
 	}
@@ -275,8 +278,11 @@ func attachMergeGates(ctx context.Context, t *mergetrain.Train, sel contextResol
 		return
 	}
 	v := gateverify.Verifier{Trust: trust, Pin: core.Pin, Namespace: core.Namespace}
-	t.Gates = mergetrain.InSquad(mergetrain.SquadOf(sel.Root), func(action, target string) (gatestore.Record, bool) {
-		return v.AcceptedFor(core.Store, action, target)
+	// 3.3.x item 1: the squad is read at each lookup, not frozen at attach,
+	// so a gate in a session root created after the train attached matches
+	t.Gates = mergetrain.AcceptedFunc(func(action, target string) (gatestore.Record, bool) {
+		rec, ok := v.AcceptedFor(core.Store, action, target)
+		return rec, ok && mergetrain.SameSquad(rec, core.Store.Squad())
 	})
 }
 

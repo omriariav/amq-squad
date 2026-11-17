@@ -321,7 +321,13 @@ func raiseGrowthGate(sel storeSelection, raisedBy, taskID, title, target string,
 	if core == nil {
 		return id, err
 	}
-	spec := gatestore.Spec{GateID: id, Action: "spawn", Target: target, RaisedBy: raisedBy, Window: gatestore.DefaultWindow, Facts: gatestore.SafeFactsWithLinks(title, "", links)}
+	// 3.3.x item 1: the identity is stamped on both paths, taken once the
+	// spec is checked and the root exists; without it the record written with
+	// no transport carried no squad and no answer to it was ever accepted
+	spec, serr := core.Store.StampSquad(gatestore.Spec{GateID: id, Action: "spawn", Target: target, RaisedBy: raisedBy, Window: gatestore.DefaultWindow, Facts: gatestore.SafeFactsWithLinks(title, "", links)}, hookNow(), core.Identity())
+	if serr != nil {
+		return id, serr
+	}
 	if err == nil {
 		_, _, err = core.Raise(ctx, spec)
 		return id, err
