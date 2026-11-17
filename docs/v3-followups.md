@@ -7,7 +7,7 @@ planning sessions that made them; nothing here is a release blocker.
 ## 3.3.x
 
 The list after the 3.3.0 release (2026-11-17), in the plan reviewer's order:
-items 1 to 4 are ruled first to fourth (reordered 2026-11-18). Nothing here is
+items 1 to 5 are ruled first to fifth (reordered 2026-11-18). Nothing here is
 promised by date.
 
 1. **Done (#1033): the gate identity on a fresh session root** (3.3.0's known
@@ -56,22 +56,40 @@ promised by date.
    show`; gate approvals are unaffected. C5a PR 1 moves the trusted harness
    files out of the agent directory (the C5 entry under Leases, renewal and
    seats).
-4. **U2's adoption choice, the owner's, after C5a PR 1.** AMQ's token admits
+4. **The owner's grant is trusted as plain YAML, with no signature, and the
+   protected-path guard is best effort for Claude and pi seats** (3.3.0's
+   known limit 9; serious: for Claude and pi squads it can undo the owner's
+   grant boundary).
+   - `grants.LoadFrom` reads `~/.amq-squad/grants.yaml` and parses it
+     (`internal/grants/grants.go:470-488`). Its one trust check, `Insecure`,
+     is that the file and its directory belong to the user, are not group- or
+     world-writable and are not symlinks (`internal/grants/secure_unix.go:12-37`).
+     A seat runs as the same user, so a write that gets past the guard passes
+     that check.
+   - The guard lists the file as protected (`internal/cli/hook_guard_env.go:151`),
+     but against shell commands it is best effort. Codex seats run in Codex's
+     OS sandbox; Claude and pi seats have no OS boundary of their own today.
+   - The first step is a measurement (no change): whether Claude Code's own
+     Bash sandbox, set in each Claude seat's own settings, can hold a Claude
+     seat to its worktree as an interim, and what pi offers (it has no
+     built-in sandbox). Then the design: signed records for trusted state.
+
+5. **U2's adoption choice, the owner's, after C5a PR 1.** AMQ's token admits
    the whole `<session root>/agents` tree (finding 4, under the C5 entry), so
    v0.140.0 with `writable_roots=[]` stays until C5a PR 1 lands and the owner
    chooses. A per-handle form is asked of AMQ's author (the owner's message).
-5. **`remote status` checks the wrong root for the login service.** It calls
+6. **`remote status` checks the wrong root for the login service.** It calls
    `ServiceWarning(…, "")` with an empty root (`internal/cli/remote.go:508`),
    so `amq-remote service status` reports on amq-remote's default root, not on
    the share root the relay runs. The warning can name a root nothing uses.
-6. **The live phone attach runs on a rehearsal fleet file.** Its `--fleet-file`
+7. **The live phone attach runs on a rehearsal fleet file.** Its `--fleet-file`
    is a scratch fleet from the 2026-11 rehearsals, which drives presence (the
    operator row reads stale) and lead routing. Gate routing is unaffected: the
    attach's own `--project`/`--session` store is its main store. A proper live
    fleet file is the owner's setup choice.
-7. **One `/answer` test item:** a question row that is only blank, and a
+8. **One `/answer` test item:** a question row that is only blank, and a
    fixture with two same-label gates in reversed order (Codex's P2 on #1026).
-8. **Launch door folding: six limits of the launch family's static guard**
+9. **Launch door folding: six limits of the launch family's static guard**
    (S2-3, #1022). None of them is caught:
    - a code computed by a call no check folds;
    - an expression of constants only;
