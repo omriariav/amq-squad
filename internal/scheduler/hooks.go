@@ -112,7 +112,7 @@ func (r DefaultRouter) Route(t task.Task) Route {
 		}
 	}
 	if failures >= max {
-		return Route{Block: "retries_exhausted", Detail: "no retry left after the failed attempts"}
+		return Route{Block: task.ReasonRetriesExhausted, Detail: "no retry left after the failed attempts"}
 	}
 	if t.Pool == nil {
 		return Route{Wait: task.WaitNoRoute}

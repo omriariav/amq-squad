@@ -25,19 +25,23 @@ Every message gets one reply, ids and code words only, never your text:
 
 | reply | meaning |
 | --- | --- |
-| `accepted <gate> <class>` | your answer verified and committed |
+| `accepted <gate> <class> approved` or `accepted <gate> <class> denied` | your answer verified and committed, with the decision as recorded |
 | `refused <gate> <code>` | not accepted; the code is the verifier's (`already_consumed`, `wrong_pubkey`, `outside_window`, `bad_signature`, `bad_tuple`, `not_in_gate_thread`, ...) |
 | `refused <gate> not_in_gate_thread` and `re-ask: answer in the gate thread (event <id>)` | answer again as a reply in that thread |
+| `refused <gate> gate_lapsed` and `re-ask: answer in the gate thread (event <id>)` | your answer came after the question's time ran out; the question is asked again in its thread with a new window, once: answer that message |
+| `refused <gate> answered_before_reask` and `re-ask: answer in the gate thread (event <id>)` | your answer is dated before the question was asked again: answer again in the thread |
+| `refused <gate> reask_publish_failed` | the question could not be asked again (the relay did not take the post); the same question is posted when this answer is delivered again or when you send the next answer for this gate. Until then the gate shows as open, no new question is on your phone, and the new window keeps running |
 | `routed <lead or mailbox>` | delivered (and forwarded to the lead) |
 | `routed <mailbox> not_forwarded <code>` | delivered, not forwarded (`ambiguous_lead`, `not_a_lead`) |
 | `refused - not_fetched` | the relay did not return your message's event; nothing was done, send it again |
 
 While a verification runs you may see `verifying <gate>` (a status line).
 `/status`, `/inspect` and `/cancel <ref>` are amq-remote's own commands:
-serve answers them and they never reach the mailbox. amq-remote runs one
-request at a time, so a DM you send before the previous one has its result
-row is answered `busy` and is not delivered (a 3.0 limit). Wait for each
-result row (about a second); if you see `busy`, send the message again. A
+serve answers them and they never reach the mailbox. With amq-remote
+0.140.0, this build's floor, a DM you send before the previous one has its
+result row is delivered too (two sent about 100 ms apart were both routed
+in the lead's run of 2026-11-11); amq-remote v0.116.2 answered the second
+`busy` and did not deliver it. If you see `busy`, send the message again. A
 gate answer lost this way only needs answering again: the gate stays open.
 
 ## The secret rule

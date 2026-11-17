@@ -19,14 +19,14 @@ explicit commands, not squad composition and not the live lead loop.
      content is PRESENT. Update the versions here when the policy changes; do not
      delete the section. -->
 
-AMQ 0.116.2 is the minimum supported release for amq-squad 3.0: it is the AMQ
-module 3.0 links, and every 3.0 path needs its launch adapters and its mailbox.
-The real-AMQ lane runs at the pinned v0.116.2, which is required, and at latest as
+AMQ 0.140.0 is the minimum supported release for this amq-squad build: it is the
+AMQ module the build links, and every path needs its launch adapters and its mailbox.
+The real-AMQ lane runs at the pinned v0.140.0, which is required, and at latest as
 a non-blocking canary; latest is a forward-compatibility canary and is not a
 support claim.
 
 `amq-squad doctor` refuses an installed `amq`, `amq-remote` or `amq-owner-sign`
-below 0.116.2 and prints the upgrade line. Check the resolved versions there rather
+below 0.140.0 and prints the upgrade line. Check the resolved versions there rather
 than inferring them from behaviour.
 
 ## Output rule: the CLI renders, you pass it through

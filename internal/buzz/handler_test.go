@@ -57,7 +57,7 @@ func TestHandlerGatesAndRouting(t *testing.T) {
 	if len(got) != 1 || got[0].Gate == nil || got[0].Gate.Outcome != "approved" {
 		t.Fatalf("thread answer = %+v", got)
 	}
-	if res, n := hf.serve.result(threadMsg); n != 1 || res != "accepted rel-1 "+rec.Class {
+	if res, n := hf.serve.result(threadMsg); n != 1 || res != "accepted rel-1 "+rec.Class+" approved" {
 		t.Fatalf("accepted reply %q (%d)", res, n)
 	}
 	if st := hf.serve.statuses(threadMsg); len(st) != 1 || !strings.HasPrefix(st[0], "verifying event ") {
@@ -102,7 +102,12 @@ func TestHandlerReplyTable(t *testing.T) {
 			_, q, a := raiseRel(t, hf.core, "g-ok")
 			_, m := hf.dm(t, a, q.EventID)
 			return m
-		}, regexp.MustCompile(`^accepted g-ok tag$`)},
+		}, regexp.MustCompile(`^accepted g-ok tag approved$`)},
+		{"denied", func(t *testing.T, hf handlerFixture) string {
+			_, q, a := raiseRel(t, hf.core, "g-dn")
+			_, m := hf.dm(t, "deny"+strings.TrimPrefix(a, "approve"), q.EventID)
+			return m
+		}, regexp.MustCompile(`^accepted g-dn tag denied$`)},
 		{"replayed", func(t *testing.T, hf handlerFixture) string {
 			_, q, a := raiseRel(t, hf.core, "g-rp")
 			_, _ = hf.dm(t, a, q.EventID)
@@ -117,10 +122,24 @@ func TestHandlerReplyTable(t *testing.T) {
 			_ = hf.mem.Publish(context.Background(), e.Marshal())
 			return hf.serve.deliver(e.ID, hf.core.Pin.Channel, e.Content)
 		}, regexp.MustCompile(`^refused g-wp ` + gateverify.RejectWrongPubkey + `$`)},
-		{"outside window", func(t *testing.T, hf handlerFixture) string {
-			_, q, a := raiseRel(t, hf.core, "g-ow")
+		{"lapsed", func(t *testing.T, hf handlerFixture) string {
+			_, q, a := raiseRel(t, hf.core, "g-lp")
 			hf.core.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
 			_, m := hf.dm(t, a, q.EventID)
+			return m
+		}, regexp.MustCompile(`^refused g-lp ` + gateverify.RejectLapsed + `\nre-ask: answer in the gate thread \(event [0-9a-f]{12}\)$`)},
+		{"answered before the re-ask", func(t *testing.T, hf handlerFixture) string {
+			_, q, a := raiseRel(t, hf.core, "g-bf")
+			hf.core.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+			_, _ = hf.dm(t, a, q.EventID) // the window re-ask
+			hf.step(t)
+			_, m := hf.dm(t, "A"+a[1:], q.EventID) // dated before the window re-ask
+			return m
+		}, regexp.MustCompile(`^refused g-bf ` + gateverify.RejectBeforeReask + `\nre-ask: answer in the gate thread \(event [0-9a-f]{12}\)$`)},
+		{"outside window", func(t *testing.T, hf handlerFixture) string {
+			hf.core.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
+			_, q, a := raiseRel(t, hf.core, "g-ow") // raised two hours ahead
+			_, m := hf.dm(t, a, q.EventID)          // dated before its not_before
 			return m
 		}, regexp.MustCompile(`^refused g-ow ` + gateverify.RejectWindow + `$`)},
 		{"bad signature", func(t *testing.T, hf handlerFixture) string {
@@ -209,7 +228,7 @@ func TestHandlerOnlyActsOnServeDeliveriesAndFetchedEvents(t *testing.T) {
 	if len(got) != 1 || got[0].Gate == nil || got[0].Gate.Outcome != "approved" || len(hf.mail.sent) != 1 {
 		t.Fatalf("the forged body: %+v, sent %+v", got, hf.mail.sent)
 	}
-	if res, _ := hf.serve.result(forged); res != "accepted rel-2 tag" {
+	if res, _ := hf.serve.result(forged); res != "accepted rel-2 tag approved" {
 		t.Fatalf("forged-body reply %q", res)
 	}
 	genuine := hf.serve.deliver(ansID, hf.core.Pin.Channel, answer)
@@ -260,7 +279,7 @@ func TestHandlerDuplicateDeliveryHandledOnce(t *testing.T) {
 	if d, _ := hf.dial.counts(); d != 1 {
 		t.Fatalf("the duplicate opened a connection (%d dials)", d)
 	}
-	if res, _ := hf.serve.result(first); res != "accepted rel-3 tag" {
+	if res, _ := hf.serve.result(first); res != "accepted rel-3 tag approved" {
 		t.Fatalf("first %q", res)
 	}
 	if res, n := hf.serve.result(second); n != 1 || res != "refused rel-3 "+gatestore.RejectReplayed {
@@ -288,7 +307,7 @@ func TestHandlerVerifierConnectionPerAnswer(t *testing.T) {
 	if d, open := hf.dial.counts(); d != 1 || open != 0 || during != 1 {
 		t.Fatalf("dials %d, open after %d, open during %d", d, open, during)
 	}
-	if res, _ := hf.serve.result(msg); res != "accepted rel-4 tag" {
+	if res, _ := hf.serve.result(msg); res != "accepted rel-4 tag approved" {
 		t.Fatalf("reply %q", res)
 	}
 
@@ -322,7 +341,7 @@ func TestHandlerVerifierConnectionPerAnswer(t *testing.T) {
 	hang.mem.stall = false
 	_, msg3 := hang.dm(t, answer2, q2.EventID)
 	hang.step(t)
-	if res, _ := hang.serve.result(msg3); res != "accepted rel-5 tag" {
+	if res, _ := hang.serve.result(msg3); res != "accepted rel-5 tag approved" {
 		t.Fatalf("re-answer %q", res)
 	}
 	// a connection that cannot be made is a refusal, not a hang

@@ -19,12 +19,12 @@ import (
 )
 
 // doctorMinAMQVersion is the lowest AMQ release this build of amq-squad
-// runs with: the release of the module go.mod pins (5-amq-A fix round, one
-// floor for one binary). Every 3.0 path needs that release's launch
+// runs with: the release of the module go.mod pins (3.3.0 pin move, retaining
+// one floor for one binary). Every 3.0 path needs that release's launch
 // adapters (the pi mint adapter, the Codex sandbox pins) and its mailbox.
 // The amq env check, the installed-binary rows (doctor_amq_floor.go) and
 // the real-AMQ CI lane's pinned version all read this one value.
-const doctorMinAMQVersion = "0.116.2"
+const doctorMinAMQVersion = "0.140.0"
 
 type doctorStatus string
 

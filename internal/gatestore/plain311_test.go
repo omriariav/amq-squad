@@ -471,15 +471,15 @@ func TestATitleCarriesNoHashOrTokenAboveTheRule(t *testing.T) {
 	}
 }
 
-// ParseBare reads yes, no, approve and deny alone, case and trailing
-// punctuation ignored, and nothing else.
+// ParseBare reads decided words alone with one trailing mark, and refuses
+// anything else, including a second trailing mark.
 func TestParseBare(t *testing.T) {
 	for in, want := range map[string]string{"yes": "approve", "Yes.": "approve", " YES!\n": "approve", "approve": "approve", "no": "deny", "No.": "deny", "deny": "deny", "no ?": "deny"} {
 		if got, ok := ParseBare(in); !ok || got != want {
 			t.Errorf("ParseBare(%q) = %q %v, want %q", in, got, ok, want)
 		}
 	}
-	for _, in := range []string{"", "yes please", "yes\nno", "y", "nope", "¿yes", "yes " + strings.Repeat("a", 16)} {
+	for _, in := range []string{"", "yes please", "yes\nno", "yes!!", "nope", "¿yes", "yes " + strings.Repeat("a", 16)} {
 		if got, ok := ParseBare(in); ok {
 			t.Errorf("ParseBare(%q) = %q", in, got)
 		}

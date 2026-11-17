@@ -1,0 +1,11 @@
+start 2026-11-12T11:07:19Z
+binary: <home>/scratch-v320/build/pi/amq-squad (amq-squad v3.2.0)
+amq: 0.116.2 at <home>/go/bin/amq
+amq coop init exit=0
+.amqrc present: yes; .agent-mail present: yes
+at 3 s: dead=0 status= cmd=amq-squad
+capture 2026-11-12T11:07:29Z
+at 10 s: dead=0 status= cmd=amq-squad pid=99776
+99775     1 tmux -L v320lead99758 -f /private/tmp/v320lead.nlK9Ni/tmux.conf new-session -d -s l -x 100 -y 30 -c /private/tmp/v320lead.nlK9Ni/proj env -i HOME=/private/tmp/v320lead.nlK9Ni/home PATH=<home>/go/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin TERM=xterm-256color GIT_CEILING_DIRECTORIES=/private/tmp/v320lead.nlK9Ni AMQ_NO_UPDATE_CHECK=1 <home>/scratch-v320/build/pi/amq-squad lead --team -- --offline
+after kill-server, processes naming the scratch root:
+end 2026-11-12T11:07:31Z

@@ -95,6 +95,7 @@ export const WAIT_WORDS: Record<string, (t: TaskWords, c: WaitContext) => string
 	reviewer_family: () => "a review needs a seat of another model family than the implementer's",
 	outcome_log_unwritable: () => "the scheduler cannot write its outcome log, so nothing is dispatched",
 	no_roster_seat: (t) => `no seat serves ${t.wait_pool || "its pool"}`,
+	process_exited: () => "the seat's process exited while it held the task",
 };
 
 // waitWords is a pending task's line: "<id> waiting: <words>", the
@@ -226,6 +227,8 @@ export const BLOCK_WORDS: Record<string, (d: BlockDetail) => [string, string]> =
 	task_branch_unprepared: () => ["its seat could not be put on the task's branch", RESET],
 	retries_exhausted: () => ["every retry failed", "/reset it onto another pool"],
 	class_unknown: () => ["its class is not in the routing table", "add it again with a known class"],
+	process_exited: () => ["the seat's process exited while it held the task", RESET],
+	tool_unpinned: () => ["the tool has no pinned path and digest", "ask the owner to pin the tool's path and digest in registry.yaml"],
 	declared_tree_unchecked: () => ["its declared files could not be checked", RESET],
 	pin_unresolved: (d) => [pinUnresolved(d.block_detail), "/reset it onto another pool"],
 	history_tampered: () => ["the routing history does not verify", "ask the owner to inspect it"],

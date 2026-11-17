@@ -32,8 +32,8 @@ const (
 	DefaultTaskBudget = task.DefaultTaskBudget
 )
 
-// Runtimes a seat may name: the providers AMQ v0.116.2's launch adapters
-// serve (internal/launch/adapter.go:21-36 there; brief 31-1, Q4). Another
+// Runtimes a seat may name: the five providers AMQ v0.140.0 names at
+// internal/launch/adapter.go:21-36 (brief 31-1, Q4; acp is not one). Another
 // runtime is refused by name at parse.
 var Runtimes = []string{"claude", "codex", "cursor-agent", "grok", "pi"}
 

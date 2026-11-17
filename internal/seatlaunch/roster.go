@@ -17,17 +17,17 @@ import (
 )
 
 // LaunchRoster launches the whole roster in one AMQ prepare and one apply
-// (3.0.1 t16): AMQ v0.116.2 refuses a fresh seat into a present binding
-// (binding_present_without_resumable_conversation), so seats launched one
-// apply each leave a squad with one live seat. Each request names its roster
-// seat; each seat carries its request id into its launch record, and every
-// seat that proves posts its SeatUp with that id, as a single launch does.
-// Each request keeps the single launch's state machine (settle), so a seat
-// that did not prove is cancelled or closed through CancelSeatRequest like
-// any request. It returns once the launch settled.
+// (3.0.1 t16): AMQ v0.140.0 refuses a fresh seat into a present binding of
+// its backend and profile when no participant names on_live keep, so seats
+// launched one apply each leave a squad with one live seat. Each request
+// names its roster seat; each seat carries its request id into its launch
+// record, and every seat that proves posts its SeatUp with that id, as a
+// single launch does. Each request keeps the single launch's state machine
+// (settle), so a seat that did not prove is cancelled or closed through
+// CancelSeatRequest like any request. It returns once the launch settled.
 func (l *Launcher) LaunchRoster(reqs []scheduler.SeatRequest) scheduler.RosterOutcome {
 	fail := func(format string, a ...any) scheduler.RosterOutcome {
-		return scheduler.RosterOutcome{Stage: "launch_error", Detail: fmt.Sprintf(format, a...)}
+		return scheduler.RosterOutcome{Stage: scheduler.ReasonLaunchError, Detail: fmt.Sprintf(format, a...)}
 	}
 	if l.PlanRoster == nil {
 		return fail("this launcher has no roster planner")
@@ -240,21 +240,21 @@ func rosterOutcome(res Result, err error) scheduler.RosterOutcome {
 	out := scheduler.RosterOutcome{LaunchID: res.LaunchID, Stage: res.Stage, Detail: amqDetail(res.FailureDetail)}
 	switch {
 	case err != nil && res.ApplyStarted:
-		out.Stage, out.Detail = "apply_failed", amqDetail(err.Error())
+		out.Stage, out.Detail = ReasonApplyFailed, amqDetail(err.Error())
 	case err != nil:
-		out.Stage, out.Detail = "launch_error", amqDetail(err.Error())
-	case res.Stage == "prepare_refused" && res.Prepare != nil:
+		out.Stage, out.Detail = scheduler.ReasonLaunchError, amqDetail(err.Error())
+	case res.Stage == ReasonPrepareRefused && res.Prepare != nil:
 		out.ReasonCode = res.Prepare.Reason
-	case res.Stage == "decisions_pending":
+	case res.Stage == ReasonDecisionsPending:
 		var kinds []string
 		for _, a := range res.Pending {
 			kinds = append(kinds, string(a.Kind))
 		}
 		out.ReasonCode = strings.Join(kinds, ",")
 		out.Detail = strings.Join(res.NextActions, "; ")
-	case res.Stage == "apply_failed" && res.Apply != nil:
+	case res.Stage == ReasonApplyFailed && res.Apply != nil:
 		out.ReasonCode = res.Apply.ReasonCode
-	case res.Stage == "resource_present":
+	case res.Stage == ReasonResourcePresent:
 		out.ReasonCode = scheduler.ReasonResourcePresent
 	case res.Stage == "applied":
 		for _, s := range res.Seats {

@@ -63,7 +63,7 @@ func TestVerifierConnectionOnTheRelay(t *testing.T) {
 		t.Fatalf("connections open at each REQ by id: %v, want [1]", ids)
 	}
 	await(ctx, t, &relay.bell, "the verifier's connection closes", func() bool { return relay.open() == 0 })
-	if res, _ := serve.result(msg); res != "accepted rel-ws tag" {
+	if res, _ := serve.result(msg); res != "accepted rel-ws tag approved" {
 		t.Fatalf("reply %q", res)
 	}
 	t.Logf("MEASURED: connections open during the verification 1, after 0; relay connections in all %d (one raise, one verification)", relay.totalConns())

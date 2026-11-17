@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/omriariav/amq-squad/v3/internal/task"
 )
 
 // SchemaVersion is the contract major version.
@@ -375,6 +377,9 @@ type Task struct {
 	// (runtime:model:effort) its route names and no roster seat serves
 	// (brief 3.1.1-2 item 1), "" otherwise.
 	WaitPool string `json:"wait_pool"`
+	// Next is what can be done to the task next, by every role (S3-1;
+	// additive): task.Next's entries {verb, who, may_refuse}, [] when none.
+	Next []task.NextEntry `json:"next"`
 }
 
 // FileWait is one task holding a pending task's file lock and one

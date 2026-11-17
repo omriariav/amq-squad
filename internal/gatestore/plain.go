@@ -552,24 +552,19 @@ func quote(s string) string {
 	return `"` + s + `"`
 }
 
-// ParseBare reads a bare answer (brief 3.1.1-1): yes, no, approve or deny
-// alone on its line, case and trailing punctuation ignored. It returns the
-// verb (approve or deny). A bare answer names no gate: the thread it replies
-// in binds it, and the signature under the pinned owner key proves its
-// sender.
+// ParseBare reads a decided bare-answer word alone on its line, ignoring case,
+// surrounding space and at most one trailing punctuation mark. It returns the
+// verb (approve or deny). A bare answer names no gate: the thread it replies in
+// binds it, and the signature under the pinned owner key proves its sender.
 func ParseBare(content string) (string, bool) {
 	s := strings.TrimSpace(content)
 	if strings.ContainsAny(s, "\r\n") {
 		return "", false
 	}
-	s = strings.ToLower(strings.TrimSpace(strings.TrimRightFunc(s, unicode.IsPunct)))
-	switch s {
-	case "yes", "approve":
-		return "approve", true
-	case "no", "deny":
-		return "deny", true
+	if mark, size := utf8.DecodeLastRuneInString(s); unicode.IsPunct(mark) {
+		s = strings.TrimSpace(s[:len(s)-size])
 	}
-	return "", false
+	return BareVerb(strings.ToLower(s))
 }
 
 // BareAnswer is the answer a bare verb gives this record: its own gate id,

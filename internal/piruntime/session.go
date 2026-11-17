@@ -103,6 +103,19 @@ func LedgerHasToolResult(path string) (bool, error) {
 	return false, sc.Err()
 }
 
+// The launch codes the pi resume check writes (S2-3, 3.3.0). Each reaches a task through
+// scheduler.(LaunchFailure).Code: the pool's tasks wait on it and, when the
+// launch fails the same way again, block on it. Each is on the state
+// contract's block and wait lists (internal/statecontract reasons.go), and
+// its value is the string literal it replaced, byte for byte.
+const (
+	ReasonPiSessionIDMissing  = "pi_session_id_missing"
+	ReasonPiSessionIDInvalid  = "pi_session_id_invalid"
+	ReasonLedgerUnreadable    = "ledger_unreadable"
+	ReasonPiSessionUnreadable = "pi_session_unreadable"
+	ReasonPiResumeContextLost = "pi_resume_context_lost"
+)
+
 // ResumeRefusal is the amendment 23 refusal.
 type ResumeRefusal struct {
 	Code   string
@@ -122,24 +135,24 @@ func (r *ResumeRefusal) Error() string {
 func CheckResume(ledger, agentDir, cwd string, argv []string) error {
 	id := SessionIDArg(argv)
 	if id == "" {
-		return &ResumeRefusal{"pi_session_id_missing", "pi argv carries no --session-id; the AMQ pi adapter always passes one"}
+		return &ResumeRefusal{ReasonPiSessionIDMissing, "pi argv carries no --session-id; the AMQ pi adapter always passes one"}
 	}
 	if !sessionIDRE.MatchString(id) {
-		return &ResumeRefusal{"pi_session_id_invalid", fmt.Sprintf("--session-id %q is not a pi session id", id)}
+		return &ResumeRefusal{ReasonPiSessionIDInvalid, fmt.Sprintf("--session-id %q is not a pi session id", id)}
 	}
 	took, err := LedgerHasToolResult(ledger)
 	if err != nil {
-		return &ResumeRefusal{"ledger_unreadable", fmt.Sprintf("read %s: %v", ledger, err)}
+		return &ResumeRefusal{ReasonLedgerUnreadable, fmt.Sprintf("read %s: %v", ledger, err)}
 	}
 	if !took {
 		return nil
 	}
 	file, err := SessionFile(agentDir, cwd, id)
 	if err != nil {
-		return &ResumeRefusal{"pi_session_unreadable", err.Error()}
+		return &ResumeRefusal{ReasonPiSessionUnreadable, err.Error()}
 	}
 	if file == "" {
-		return &ResumeRefusal{"pi_resume_context_lost", fmt.Sprintf(
+		return &ResumeRefusal{ReasonPiResumeContextLost, fmt.Sprintf(
 			"the ledger %s shows a tool result but no pi session file for %s exists in %s; a resume would start an empty session (amendment 23)",
 			ledger, id, SessionDir(agentDir, cwd))}
 	}

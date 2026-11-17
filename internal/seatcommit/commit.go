@@ -687,6 +687,13 @@ func cleanSeat(root, handle, gitBin string, env []string, list []task.Task, now 
 		for _, c := range l.Commits {
 			recorded = recorded || c.Commit == workHead
 		}
+		// The lease's base is the remote base tip fetched for this grant and
+		// recorded before the task branch moved. Read its ancestry from the
+		// seat repository's object store; an unreadable base proves nothing.
+		if !recorded && l.Lease != nil && strings.TrimSpace(l.Lease.Base) != "" {
+			_, err := repo.run(nil, nil, "merge-base", "--is-ancestor", workHead, l.Lease.Base)
+			recorded = err == nil
+		}
 		ahead, aerr := repo.line("rev-list", "--max-count=1", rest+".."+workHead)
 		if aerr != nil {
 			return false, aerr

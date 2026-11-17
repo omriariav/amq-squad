@@ -449,7 +449,7 @@ func testOwnerScriptDryRun(t *testing.T, opts ownerDryRunOptions) {
 	openBefore := relay.open()
 	tStep := time.Now()
 	handled, err := h.Step(ctx)
-	if err != nil || len(handled) != 1 || handled[0].Gate == nil || handled[0].Gate.Outcome != "approved" || handled[0].Reply != "accepted rel-dry tag" {
+	if err != nil || len(handled) != 1 || handled[0].Gate == nil || handled[0].Gate.Outcome != "approved" || handled[0].Reply != "accepted rel-dry tag approved" {
 		t.Fatalf("answer: %+v, %v", handled, err)
 	}
 	for _, record := range handled {
@@ -463,7 +463,7 @@ func testOwnerScriptDryRun(t *testing.T, opts ownerDryRunOptions) {
 	if len(idsSeen) == 0 || idsSeen[len(idsSeen)-1] != openBefore+1 {
 		t.Fatalf("connections at the verifier's REQ by id: %v (serve's: %d)", idsSeen, openBefore)
 	}
-	await(ctx, t, &relay.bell, "serve posts the accepted result row", func() bool { return bodyPosted(relay, body, "accepted rel-dry tag") })
+	await(ctx, t, &relay.bell, "serve posts the accepted result row", func() bool { return bodyPosted(relay, body, "accepted rel-dry tag approved") })
 	tRow := time.Since(tAnswer)
 	for _, k := range []int{9, 40003} {
 		for _, e := range relay.mem.events(k, body) {

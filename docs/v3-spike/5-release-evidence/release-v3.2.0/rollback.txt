@@ -1,0 +1,7 @@
+Rollback line for the 3.2.0 restart (written 2026-11-12 before the restart).
+The installed binary before the restart is the rc.2 tag build; the same build is still at
+  <home>/scratch-v320rc2/build/pi/amq-squad   (sha256 e978bdeff8e5df78631090f39f4eb8208804b7a89f97917ba4a99bb9914491df, equal to the installed one)
+If 3.2.0's `up` fails or its lead does not come up: stop what is up (SIGTERM, never SIGKILL) and run
+  <home>/scratch-v320rc2/build/pi/amq-squad up --binary <home>/scratch-v320rc2/build/pi/amq-squad
+`up --binary` admits v3.2.0-rc.2 over a raw-layout session (internal/sealchain/raw.go:30, internal/cli/up.go:400, :403; the 3.2.0 notes, Rolling back). No row measures a roll back from 3.2.0 to rc.2.
+Not run without the plan reviewer's word and the owner's.

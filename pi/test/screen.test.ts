@@ -191,7 +191,7 @@ test("the screen renders from a status fixture: the lead and the root, each bloc
 	assert.ok(train.includes("    ! tag v1.2.0 has no accepted gate"), train.join("\n"));
 	assert.equal(train.at(-1), "  the merge train stopped at PR #812: its CI is not green; fix the failing check and the train tries again");
 	const waiting = block(lines, "waiting on you (1)");
-	assert.deepEqual(waiting.slice(1), ["  Create a tag named v1?  (answer on the phone; /answer shows it)"]);
+	assert.deepEqual(waiting, ["waiting on you (1): answer on the phone; /answer shows it", "  Create a tag named v1?"]);
 	// below the rule: the codes and ids for the record
 	const rec = below(lines);
 	assert.ok(rec.includes("  exit_refused: old-dev ledger_tampered at gone"), rec.join("\n"));
@@ -253,6 +253,23 @@ test("an old status warning still takes the read-failure screen path", () => {
 	const rule = lines.indexOf("----------");
 	assert.equal(lines.slice(0, rule).filter((line) => line === "  ! the gate store could not be read; its error is below the line").length, 1);
 	assert.ok(lines.slice(rule + 1).some((line) => line.includes("gate store: gate clear-")), lines.join("\n"));
+});
+
+test("a gate alert and legacy warnings print the alert line and the count below the rule", () => {
+	const lines = renderScreen({
+		...statusWithGateWarnings([
+			legacyGateWarning("clear-00000000000000000000000000000001"),
+			legacyGateWarning("clear-00000000000000000000000000000002"),
+		]),
+		attention: [{ kind: "merge_gate_drift", subject: "gate g9: the recorded head moved", gate_id: "g9", since: "2026-11-01T09:00:00Z" }],
+	}, now);
+	const rule = lines.indexOf("----------");
+	assert.notEqual(rule, -1, lines.join("\n"));
+	assert.equal(lines.slice(0, rule).filter((line) => line === "  ! a gate needs a look; its alert is below the line").length, 1);
+	const records = lines.slice(rule + 1).map((line) => line.trim());
+	assert.ok(records.includes("merge_gate_drift: gate g9: the recorded head moved"), lines.join("\n"));
+	assert.ok(records.includes("2 legacy gate records skipped"), lines.join("\n"));
+	assert.ok(!lines.some((line) => line.includes("clear-")), lines.join("\n"));
 });
 
 // Brief 31-4 (the lead side): per phone request, whether the lead's answer

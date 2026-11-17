@@ -1,0 +1,2861 @@
+{
+  "schema": "amq-squad-state-contract/1",
+  "task": {
+    "states": [
+      {
+        "name": "pending",
+        "terminal": false
+      },
+      {
+        "name": "in_progress",
+        "terminal": false
+      },
+      {
+        "name": "blocked",
+        "terminal": false
+      },
+      {
+        "name": "completed",
+        "terminal": true
+      },
+      {
+        "name": "cancelled",
+        "terminal": true
+      }
+    ],
+    "moves": [
+      {
+        "from": "",
+        "via": [
+          "Add",
+          "AddWithFileWaits"
+        ],
+        "writer": "AddWithFileWaits",
+        "to": "pending",
+        "who": [
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "pending",
+        "via": [
+          "Grant",
+          "GrantClean",
+          "Claim",
+          "ClaimServing"
+        ],
+        "writer": "grant",
+        "to": "in_progress",
+        "who": [
+          "scheduler",
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "pending",
+        "via": [
+          "Block",
+          "BlockWithPaths"
+        ],
+        "writer": "block",
+        "to": "blocked",
+        "who": [
+          "scheduler",
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "pending",
+        "via": [
+          "Cancel"
+        ],
+        "writer": "Cancel",
+        "to": "cancelled",
+        "who": [
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Done"
+        ],
+        "writer": "complete",
+        "to": "completed",
+        "who": [
+          "live_holder"
+        ],
+        "needs": "Done has no prior report and no declared files; when a verdict is required or a sealed verdict is present, that verdict passes",
+        "clears_block_group": true
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Complete",
+          "CompleteBound"
+        ],
+        "writer": "complete",
+        "to": "completed",
+        "who": [
+          "scheduler",
+          "harness_shell"
+        ],
+        "needs": "a report exists; CompleteBound also has a nonnegative PR number and, when positive, a valid free binding; when a verdict is required or a sealed verdict is present, that verdict passes",
+        "clears_block_group": true
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Done",
+          "Complete",
+          "CompleteBound"
+        ],
+        "writer": "block",
+        "to": "blocked",
+        "who": [
+          "live_holder",
+          "scheduler",
+          "harness_shell"
+        ],
+        "needs": "Done has no prior report and no declared files; Complete and CompleteBound have a report; CompleteBound also has a nonnegative PR number and, when positive, a valid free binding; a verdict is required but absent, or a sealed verdict is present and does not pass",
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "RefuseCommit",
+          "RefuseCommitPaths"
+        ],
+        "writer": "block",
+        "to": "blocked",
+        "who": [
+          "scheduler",
+          "harness_shell"
+        ],
+        "needs": "paths are exact, a report exists, the route is empty, lead, or owner, and the reason code is non-empty",
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Block",
+          "BlockWithPaths"
+        ],
+        "writer": "block",
+        "to": "blocked",
+        "who": [
+          "live_holder"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Fail"
+        ],
+        "writer": "Fail",
+        "to": "pending",
+        "who": [
+          "live_holder"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Release"
+        ],
+        "writer": "Release",
+        "to": "pending",
+        "who": [
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "ExpireDue"
+        ],
+        "writer": "ExpireDue",
+        "to": "pending",
+        "who": [
+          "scheduler"
+        ],
+        "needs": "no report; the lease is due",
+        "clears_block_group": false
+      },
+      {
+        "from": "in_progress",
+        "via": [
+          "Cancel"
+        ],
+        "writer": "Cancel",
+        "to": "cancelled",
+        "who": [
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "ResetBy"
+        ],
+        "writer": "ResetBy",
+        "to": "pending",
+        "who": [
+          "creator",
+          "asserted_handle"
+        ],
+        "needs": "the caller is non-empty, the route is not owner, and the caller matches the creator when recorded; when no creator is recorded, any non-empty caller is accepted",
+        "clears_block_group": true
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "Reset"
+        ],
+        "writer": "Reset",
+        "to": "pending",
+        "who": [
+          "scheduler"
+        ],
+        "clears_block_group": true
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "ResetIfBlocked"
+        ],
+        "writer": "ResetIfBlocked",
+        "to": "pending",
+        "who": [
+          "scheduler"
+        ],
+        "needs": "the block reason matches, and the optional match function is absent or accepts the task",
+        "clears_block_group": true
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "Widen",
+          "WidenGated"
+        ],
+        "writer": "WidenGated",
+        "to": "pending",
+        "who": [
+          "proven_lead"
+        ],
+        "needs": "added paths and their union are valid and non-empty, reason and actor are non-empty, actor is not holder or reporter, no active file conflicts, the task has no report and has refused paths, and the block reason is widen_requested or growth_gate_required",
+        "clears_block_group": true
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "Widen",
+          "WidenGated"
+        ],
+        "writer": "WidenGated",
+        "to": "in_progress",
+        "who": [
+          "proven_lead"
+        ],
+        "needs": "added paths and their union are valid and non-empty, reason and actor are non-empty, actor is not holder or reporter, no active file conflicts, and a report exists",
+        "clears_block_group": true
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "Escalate"
+        ],
+        "writer": "block",
+        "to": "blocked",
+        "who": [
+          "proven_lead"
+        ],
+        "needs": "the reason code is non-empty",
+        "clears_block_group": false
+      },
+      {
+        "from": "blocked",
+        "via": [
+          "Cancel"
+        ],
+        "writer": "Cancel",
+        "to": "cancelled",
+        "who": [
+          "asserted_handle"
+        ],
+        "clears_block_group": false
+      }
+    ],
+    "outcomes": [
+      "completed",
+      "unclaimed",
+      "expired",
+      "failed",
+      "released",
+      "blocked",
+      "cancelled",
+      "commit_refused"
+    ],
+    "routes": [
+      "lead",
+      "owner"
+    ],
+    "block_group": [
+      "block_reason",
+      "block_route",
+      "block_detail",
+      "block_attempt",
+      "refused_paths"
+    ],
+    "outcome_sets": [
+      {
+        "name": "retry_budget",
+        "reader_package": "internal/scheduler",
+        "reader_func": "DefaultRouter.Route",
+        "outcomes": [
+          "failed",
+          "expired"
+        ]
+      },
+      {
+        "name": "router_retry_effect",
+        "reader_package": "internal/routing",
+        "reader_func": "effect",
+        "outcomes": [
+          "failed",
+          "expired",
+          "commit_refused",
+          "blocked"
+        ],
+        "conditional": [
+          {
+            "outcome": "commit_refused",
+            "condition": "the attempt detail is classified true in RefusalWorkFailure"
+          },
+          {
+            "outcome": "blocked",
+            "condition": "the attempt detail is classified true in RefusalWorkFailure, or is unclassified (blocked defaults to a work failure)"
+          }
+        ]
+      },
+      {
+        "name": "weekly_report_failed",
+        "reader_package": "internal/routing",
+        "reader_func": "failedOutcome",
+        "outcomes": [
+          "failed",
+          "expired",
+          "commit_refused",
+          "blocked"
+        ]
+      },
+      {
+        "name": "verifier_fail_without_verdict",
+        "reader_package": "internal/routing",
+        "reader_func": "verifierResult",
+        "outcomes": [
+          "failed",
+          "commit_refused",
+          "blocked"
+        ],
+        "conditional": [
+          {
+            "outcome": "failed",
+            "condition": "the verifier is mechanical and the attempt has no verdict"
+          },
+          {
+            "outcome": "commit_refused",
+            "condition": "the verifier is mechanical and the attempt has no verdict"
+          },
+          {
+            "outcome": "blocked",
+            "condition": "the verifier is mechanical, the attempt has no verdict, and the detail is not verdict_missing"
+          }
+        ]
+      },
+      {
+        "name": "exit_scan",
+        "reader_package": "internal/scheduler",
+        "reader_func": "scanAttemptsLog",
+        "outcomes": [
+          "failed",
+          "expired",
+          "unclaimed",
+          "cancelled"
+        ],
+        "conditional": [
+          {
+            "outcome": "cancelled",
+            "condition": "the scheduler's Preparer cleans attempts (AttemptCleaner) and the attempt is not recorded cleaned (CleanedAt unset); it is queued as a close-and-clean item"
+          }
+        ]
+      },
+      {
+        "name": "seat_lapsed",
+        "reader_package": "internal/scheduler",
+        "reader_func": "idleSeatExcept",
+        "outcomes": [
+          "unclaimed",
+          "expired"
+        ]
+      }
+    ]
+  },
+  "reasons": {
+    "block": {
+      "open": true,
+      "open_doors": [
+        {
+          "name": "the launch failure code: the reason code, else the stage",
+          "functions": [
+            "scheduler.(LaunchFailure).Code"
+          ]
+        },
+        {
+          "name": "AMQ launchapi field Reason, copied by seatlaunch.rosterOutcome",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "AMQ launchapi field ReasonCode, copied by seatlaunch.rosterOutcome",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "the pending action kinds joined with a comma",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "the --reason flag of task block",
+          "functions": [
+            "cli.runTaskTransition"
+          ]
+        },
+        {
+          "name": "decoded field launch.ProofReply.Code",
+          "functions": [
+            "seatexec.DialProof"
+          ]
+        },
+        {
+          "name": "decoded field launch.Exec.ReasonCode",
+          "functions": [
+            "launch.Decode"
+          ]
+        },
+        {
+          "name": "decoded field scheduler.LaunchFailure.Stage",
+          "functions": [
+            "scheduler.ReadState"
+          ]
+        },
+        {
+          "name": "decoded field scheduler.LaunchFailure.ReasonCode",
+          "functions": [
+            "scheduler.ReadState"
+          ]
+        },
+        {
+          "name": "field task.Task.BlockReason read back from disk",
+          "functions": [
+            "task.snapshotOnce",
+            "task.readDir",
+            "task.recoverJournal"
+          ]
+        },
+        {
+          "name": "parameter reasonCode of task.(Store).RefuseCommit, which no code outside tests calls",
+          "functions": [
+            "task.(Store).RefuseCommit"
+          ]
+        }
+      ],
+      "doors": [
+        "field launch.ProofReply.Code",
+        "field piruntime.ResumeRefusal.Code",
+        "field scheduler.CommitResult.ReasonCode",
+        "field scheduler.Event.ReasonCode",
+        "field scheduler.RosterLaunchError.Stage",
+        "field scheduler.RosterOutcome.ReasonCode",
+        "field scheduler.RosterOutcome.Stage",
+        "field scheduler.Route.Block",
+        "field seatcommit.Result.ReasonCode",
+        "field seatcommit.Violation.Reason",
+        "field seatlaunch.Result.Stage",
+        "field seatlaunch.SeatState.ReasonCode",
+        "field seatlaunch.SeatState.State",
+        "field seatlaunch.proofSeat.refused",
+        "local code in scheduler.(*Scheduler).commit",
+        "param seatcommit.(Result).refuse#0",
+        "param seatexec.asRefusal#0",
+        "param seatexec.refusef#0",
+        "param seatlaunch.firstNonEmptyStr#1",
+        "param task.(Store).Block#2",
+        "param task.(Store).Escalate#1",
+        "param task.block#1",
+        "result registry.OpenPinned#1",
+        "result seatcommit.planVerifier#1",
+        "result seatlaunch.launchFailure#0",
+        "result seatlaunch.launchFailure#1"
+      ],
+      "entries": [
+        {
+          "code": "claude_token_insecure",
+          "constant": "claudeseat.TokenInsecure",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "tool_pin_mismatch",
+          "constant": "registry.PinMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.commitAndPush",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "registry.OpenPinned",
+              "door": "result registry.OpenPinned#1"
+            }
+          ]
+        },
+        {
+          "code": "tool_unpinned",
+          "constant": "registry.PinMissing",
+          "writers": [
+            {
+              "function": "registry.OpenPinned",
+              "door": "result registry.OpenPinned#1"
+            }
+          ]
+        },
+        {
+          "code": "pin_unresolved",
+          "constant": "routing.BlockPinUnresolved",
+          "writers": [
+            {
+              "function": "routing.(*Router).decide",
+              "door": "field scheduler.Route.Block"
+            }
+          ]
+        },
+        {
+          "code": "declared_tree_unchecked",
+          "constant": "routing.BlockTreeUnchecked",
+          "writers": [
+            {
+              "function": "routing.(*Router).decide",
+              "door": "field scheduler.Route.Block"
+            }
+          ]
+        },
+        {
+          "code": "history_tampered",
+          "constant": "routing.HistoryTampered",
+          "writers": [
+            {
+              "function": "routing.(*Router).holdTampered",
+              "door": "field scheduler.Route.Block"
+            }
+          ]
+        },
+        {
+          "code": "process_exited",
+          "constant": "scheduler.GoneProcessExited",
+          "mark": "traced, guarded at scheduler.(*Scheduler).applyEvents",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).checkLiveness",
+              "door": "field scheduler.Event.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "commit_failed",
+          "constant": "scheduler.ReasonCommitFailed",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).commit",
+              "door": "local code in scheduler.(*Scheduler).commit"
+            }
+          ]
+        },
+        {
+          "code": "ledger_tampered",
+          "constant": "scheduler.ReasonLedgerTampered",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).blockOnTamper",
+              "door": "param task.(Store).Block#2"
+            }
+          ]
+        },
+        {
+          "code": "seat_replacement_resource_present",
+          "constant": "scheduler.ReasonResourcePresent",
+          "writers": [
+            {
+              "function": "seatlaunch.rosterOutcome",
+              "door": "field scheduler.RosterOutcome.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "seat_replacement_needs_relaunch",
+          "constant": "scheduler.ReasonSeatRelaunch",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).rosterNoIdleSeat",
+              "door": "param task.(Store).Block#2"
+            }
+          ]
+        },
+        {
+          "code": "task_branch_unprepared",
+          "constant": "scheduler.ReasonTaskBranchUnprepared",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).dispatch",
+              "door": "param task.(Store).Block#2"
+            }
+          ]
+        },
+        {
+          "code": "verifier_interrupted",
+          "constant": "scheduler.ReasonVerifierInterrupted",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).commit",
+              "door": "local code in scheduler.(*Scheduler).commit"
+            }
+          ]
+        },
+        {
+          "code": "base_unrecorded",
+          "constant": "seatcommit.ReasonBaseUnrecorded",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "grants_invalid",
+          "constant": "seatcommit.ReasonGrants",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "seatcommit.planVerifier",
+              "door": "result seatcommit.planVerifier#1"
+            }
+          ]
+        },
+        {
+          "code": "growth_gate_required",
+          "constant": "seatcommit.ReasonGrowthGate",
+          "writers": [
+            {
+              "function": "cli.applyLeadWiden",
+              "door": "param task.(Store).Escalate#1"
+            }
+          ]
+        },
+        {
+          "code": "lease_task_mismatch",
+          "constant": "seatcommit.ReasonLeaseTaskMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "ledger_tampered",
+          "constant": "seatcommit.ReasonLedgerTampered",
+          "writers": [
+            {
+              "function": "seatcommit.(Result).tamperedRefusal",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "seatcommit.(Result).writeOutcome",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "link_target_refused",
+          "constant": "seatcommit.ReasonLinkTarget",
+          "writers": [
+            {
+              "function": "seatcommit.check",
+              "door": "field seatcommit.Violation.Reason"
+            },
+            {
+              "function": "seatcommit.verify",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "nested_repository",
+          "constant": "seatcommit.ReasonNested",
+          "writers": [
+            {
+              "function": "seatcommit.check",
+              "door": "field seatcommit.Violation.Reason"
+            }
+          ]
+        },
+        {
+          "code": "newer_writer",
+          "constant": "seatcommit.ReasonNewerWriter",
+          "writers": [
+            {
+              "function": "seatcommit.(Result).ledgerRefusal",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "outside_declared_files",
+          "constant": "seatcommit.ReasonOutside",
+          "writers": [
+            {
+              "function": "seatcommit.check",
+              "door": "field seatcommit.Violation.Reason"
+            }
+          ]
+        },
+        {
+          "code": "pr_bound_elsewhere",
+          "constant": "seatcommit.ReasonPRBoundElsewhere",
+          "writers": [
+            {
+              "function": "seatcommit.openPR",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "seatcommit.prCheck",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "pr_pending",
+          "constant": "seatcommit.ReasonPRPending",
+          "mark": "traced, guarded at scheduler.(*Scheduler).commit",
+          "writers": [
+            {
+              "function": "seatcommit.openPR",
+              "door": "field seatcommit.Result.ReasonCode"
+            },
+            {
+              "function": "seatcommit.prCheck",
+              "door": "field seatcommit.Result.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "protected_path",
+          "constant": "seatcommit.ReasonProtected",
+          "writers": [
+            {
+              "function": "seatcommit.check",
+              "door": "field seatcommit.Violation.Reason"
+            }
+          ]
+        },
+        {
+          "code": "push_rejected",
+          "constant": "seatcommit.ReasonPushRejected",
+          "writers": [
+            {
+              "function": "seatcommit.commitAndPush",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "push_target_unacknowledged",
+          "constant": "seatcommit.ReasonPushTargetUnacknowledged",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "recorded_diff_mismatch",
+          "constant": "seatcommit.ReasonRecordedDiffMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.commitAndPush",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "schema_mismatch",
+          "constant": "seatcommit.ReasonSchemaMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.(Result).ledgerRefusal",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "size_cap_exceeded",
+          "constant": "seatcommit.ReasonSizeCap",
+          "writers": [
+            {
+              "function": "seatcommit.check",
+              "door": "field seatcommit.Violation.Reason"
+            }
+          ]
+        },
+        {
+          "code": "commit_cancelled",
+          "constant": "seatcommit.ReasonStepCancelled",
+          "mark": "traced, guarded at scheduler.(*Scheduler).commit",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "field seatcommit.Result.ReasonCode"
+            },
+            {
+              "function": "seatcommit.verify",
+              "door": "field seatcommit.Result.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "verifier_interrupted",
+          "constant": "seatcommit.ReasonVerifierInterrupted",
+          "writers": [
+            {
+              "function": "seatcommit.verify",
+              "door": "field seatcommit.Result.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "widen_snapshot_attempt_mismatch",
+          "constant": "seatcommit.ReasonWidenSnapshotMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "widen_snapshot_missing",
+          "constant": "seatcommit.ReasonWidenSnapshotMissing",
+          "writers": [
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "worktree_mismatch",
+          "constant": "seatcommit.ReasonWorktree",
+          "writers": [
+            {
+              "function": "seatcommit.Run",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "seatcommit.commitAndPush",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "seatcommit.run",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "claude_hooks_missing",
+          "constant": "seatexec.ClaudeHooksMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckClaudeHooks",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "claude_permission_mismatch",
+          "constant": "seatexec.ClaudePermissionMismatch",
+          "writers": [
+            {
+              "function": "seatexec.CheckClaudePermission",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "identity_incomplete",
+          "constant": "seatexec.IdentityIncomplete",
+          "writers": [
+            {
+              "function": "seatexec.checkIdentity",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "pi_not_embedded",
+          "constant": "seatexec.PiNotEmbedded",
+          "writers": [
+            {
+              "function": "seatexec.piShimProvider",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "sandbox_pins_missing",
+          "constant": "seatexec.SandboxPinsMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckCodexSandboxPins",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "verdict_failed",
+          "constant": "task.BlockVerdictFailed",
+          "writers": [
+            {
+              "function": "seatcommit.verify",
+              "door": "param seatcommit.(Result).refuse#0"
+            },
+            {
+              "function": "task.(Store).complete",
+              "door": "param task.block#1"
+            }
+          ]
+        },
+        {
+          "code": "verdict_missing",
+          "constant": "task.BlockVerdictMissing",
+          "writers": [
+            {
+              "function": "task.(Store).complete",
+              "door": "param task.block#1"
+            },
+            {
+              "function": "seatcommit.planVerifier",
+              "door": "result seatcommit.planVerifier#1"
+            }
+          ]
+        },
+        {
+          "code": "verdict_tree_mismatch",
+          "constant": "task.BlockVerdictTreeMismatch",
+          "writers": [
+            {
+              "function": "seatcommit.verify",
+              "door": "param seatcommit.(Result).refuse#0"
+            }
+          ]
+        },
+        {
+          "code": "grants_invalid",
+          "constant": "task.ReasonGrantsInvalid",
+          "writers": [
+            {
+              "function": "routing.(*Router).decide",
+              "door": "field scheduler.Route.Block"
+            },
+            {
+              "function": "scheduler.(*Scheduler).dispatch",
+              "door": "param task.(Store).Block#2"
+            }
+          ]
+        },
+        {
+          "code": "pr_bound_elsewhere",
+          "constant": "task.RefusalPRBoundElsewhere",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).applyCommit",
+              "door": "field scheduler.CommitResult.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "class_unknown",
+          "constant": "task.ReasonClassUnknown",
+          "writers": [
+            {
+              "function": "routing.(*Router).decide",
+              "door": "field scheduler.Route.Block"
+            }
+          ]
+        },
+        {
+          "code": "retries_exhausted",
+          "constant": "task.ReasonRetriesExhausted",
+          "writers": [
+            {
+              "function": "routing.(*Router).decide",
+              "door": "field scheduler.Route.Block"
+            },
+            {
+              "function": "scheduler.(DefaultRouter).Route",
+              "door": "field scheduler.Route.Block"
+            }
+          ]
+        },
+        {
+          "code": "repin_after_attempt",
+          "constant": "task.ReasonRePinAfterAttempt",
+          "mark": "no writer"
+        },
+        {
+          "code": "widen_requested",
+          "constant": "task.ReasonWidenRequested",
+          "mark": "no writer"
+        },
+        {
+          "code": "growth_gate_required",
+          "constant": "task.ReasonGrowthGateRequired",
+          "mark": "no writer"
+        },
+        {
+          "code": "seat_head_detached_unmerged",
+          "constant": "seatcommit.RefusalSeatHeadDetachedUnmerged",
+          "mark": "no writer"
+        },
+        {
+          "code": "evidence_ref_symbolic",
+          "constant": "seatcommit.ReasonEvidenceRefSymbolic",
+          "mark": "no writer"
+        },
+        {
+          "code": "verifier_timeout",
+          "constant": "seatcommit.ReasonVerifierTimeout",
+          "mark": "no writer"
+        },
+        {
+          "code": "verifier_output_exceeded",
+          "constant": "seatcommit.ReasonVerifierOutput",
+          "mark": "no writer"
+        },
+        {
+          "code": "verifier_start_failed",
+          "constant": "seatcommit.ReasonVerifierStart",
+          "mark": "no writer"
+        },
+        {
+          "code": "verifier_cancelled",
+          "constant": "seatcommit.ReasonVerifierCancelled",
+          "mark": "no writer"
+        },
+        {
+          "code": "commit_failed",
+          "constant": "seatcommit.ReasonCommitFailed",
+          "mark": "no writer"
+        },
+        {
+          "code": "seat_identity_unproven",
+          "constant": "scheduler.ReasonSeatIdentityUnproven",
+          "mark": "no writer"
+        },
+        {
+          "code": "routing_invalid",
+          "constant": "routing.ReasonInvalid",
+          "mark": "no writer"
+        },
+        {
+          "code": "binding_present_without_resumable_conversation",
+          "constant": "scheduler.AMQBindingPresent",
+          "mark": "no writer"
+        },
+        {
+          "code": "seat_head_detached_unmerged",
+          "constant": "schedproc.ReasonSeatHeadDetachedUnmerged",
+          "mark": "no writer"
+        },
+        {
+          "code": "ledger_unreadable",
+          "constant": "piruntime.ReasonLedgerUnreadable",
+          "writers": [
+            {
+              "function": "piruntime.CheckResume",
+              "door": "field piruntime.ResumeRefusal.Code"
+            }
+          ]
+        },
+        {
+          "code": "pi_resume_context_lost",
+          "constant": "piruntime.ReasonPiResumeContextLost",
+          "writers": [
+            {
+              "function": "piruntime.CheckResume",
+              "door": "field piruntime.ResumeRefusal.Code"
+            }
+          ]
+        },
+        {
+          "code": "pi_session_id_invalid",
+          "constant": "piruntime.ReasonPiSessionIDInvalid",
+          "writers": [
+            {
+              "function": "piruntime.CheckResume",
+              "door": "field piruntime.ResumeRefusal.Code"
+            }
+          ]
+        },
+        {
+          "code": "pi_session_id_missing",
+          "constant": "piruntime.ReasonPiSessionIDMissing",
+          "writers": [
+            {
+              "function": "piruntime.CheckResume",
+              "door": "field piruntime.ResumeRefusal.Code"
+            }
+          ]
+        },
+        {
+          "code": "pi_session_unreadable",
+          "constant": "piruntime.ReasonPiSessionUnreadable",
+          "writers": [
+            {
+              "function": "piruntime.CheckResume",
+              "door": "field piruntime.ResumeRefusal.Code"
+            }
+          ]
+        },
+        {
+          "code": "launch_error",
+          "constant": "scheduler.ReasonLaunchError",
+          "writers": [
+            {
+              "function": "schedproc.(*Launcher).LaunchRoster",
+              "door": "field scheduler.RosterOutcome.Stage"
+            },
+            {
+              "function": "scheduler.(*Scheduler).launchRoster",
+              "door": "field scheduler.RosterLaunchError.Stage"
+            },
+            {
+              "function": "seatlaunch.(*Launcher).LaunchRoster",
+              "door": "field scheduler.RosterOutcome.Stage"
+            },
+            {
+              "function": "seatlaunch.launchFailure",
+              "door": "param seatlaunch.firstNonEmptyStr#1"
+            },
+            {
+              "function": "seatlaunch.rosterOutcome",
+              "door": "field scheduler.RosterOutcome.Stage"
+            }
+          ]
+        },
+        {
+          "code": "not_started",
+          "constant": "scheduler.ReasonNotStarted",
+          "writers": [
+            {
+              "function": "seatlaunch.WaitSeats",
+              "door": "field seatlaunch.SeatState.State"
+            }
+          ]
+        },
+        {
+          "code": "argv_missing",
+          "constant": "seatexec.ReasonArgvMissing",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "codex_approval_missing",
+          "constant": "seatexec.ReasonCodexApprovalMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckCodexSandbox",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "codex_sandbox_missing",
+          "constant": "seatexec.ReasonCodexSandboxMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckCodexSandbox",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "dir_writable_by_others",
+          "constant": "seatexec.ReasonDirWritableByOthers",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).check",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "env_needs_invalid",
+          "constant": "seatexec.ReasonEnvNeedsInvalid",
+          "writers": [
+            {
+              "function": "seatexec.ValidateNeeds",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "identity_mismatch",
+          "constant": "seatexec.ReasonIdentityMismatch",
+          "writers": [
+            {
+              "function": "seatexec.checkIdentity",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "identity_proof_failed",
+          "constant": "seatexec.ReasonIdentityProofFailed",
+          "writers": [
+            {
+              "function": "seatexec.identityProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "identity_proof_timeout",
+          "constant": "seatexec.ReasonIdentityProofTimeout",
+          "writers": [
+            {
+              "function": "seatexec.identityProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "mailbox_missing",
+          "constant": "seatexec.ReasonMailboxMissing",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.asRefusal#0"
+            }
+          ]
+        },
+        {
+          "code": "mkdir_failed",
+          "constant": "seatexec.ReasonMkdirFailed",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).walk",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "path_invalid",
+          "constant": "seatexec.ReasonPathInvalid",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).open",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "proof_expired",
+          "constant": "seatexec.ReasonProofExpired",
+          "writers": [
+            {
+              "function": "seatexec.sendProof",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field seatlaunch.proofSeat.refused"
+            }
+          ]
+        },
+        {
+          "code": "proof_refused",
+          "constant": "seatexec.ReasonProofRefused",
+          "writers": [
+            {
+              "function": "seatexec.sendProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "proof_ticket_consumed",
+          "constant": "seatexec.ReasonProofTicketConsumed",
+          "writers": [
+            {
+              "function": "seatexec.sendProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "proof_ticket_missing",
+          "constant": "seatexec.ReasonProofTicketMissing",
+          "writers": [
+            {
+              "function": "seatexec.sendProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "proof_unacknowledged",
+          "constant": "seatexec.ReasonProofUnacknowledged",
+          "writers": [
+            {
+              "function": "seatexec.sendProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "provider_missing",
+          "constant": "seatexec.ReasonProviderMissing",
+          "writers": [
+            {
+              "function": "seatexec.providerPath",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "record_invalid",
+          "constant": "seatexec.ReasonRecordInvalid",
+          "writers": [
+            {
+              "function": "seatexec.piShimProvider",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "record_missing",
+          "constant": "seatexec.ReasonRecordMissing",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.asRefusal#0"
+            }
+          ]
+        },
+        {
+          "code": "role_mismatch",
+          "constant": "seatexec.ReasonRoleMismatch",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.recheck",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "role_missing",
+          "constant": "seatexec.ReasonRoleMissing",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.asRefusal#0"
+            }
+          ]
+        },
+        {
+          "code": "root_invalid",
+          "constant": "seatexec.ReasonRootInvalid",
+          "writers": [
+            {
+              "function": "seatexec.openRoot",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "root_unreadable",
+          "constant": "seatexec.ReasonRootUnreadable",
+          "writers": [
+            {
+              "function": "seatexec.openRoot",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "rules_mismatch",
+          "constant": "seatexec.ReasonRulesMismatch",
+          "writers": [
+            {
+              "function": "seatexec.readRules",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.recheck",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "rules_missing",
+          "constant": "seatexec.ReasonRulesMissing",
+          "writers": [
+            {
+              "function": "seatexec.readRules",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "runtime_mismatch",
+          "constant": "seatexec.ReasonRuntimeMismatch",
+          "writers": [
+            {
+              "function": "seatexec.piShimProvider",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.providerPath",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "seat_invalid",
+          "constant": "seatexec.ReasonSeatInvalid",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "stat_failed",
+          "constant": "seatexec.ReasonStatFailed",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).check",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "symlink_in_path",
+          "constant": "seatexec.ReasonSymlinkInPath",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).open",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.(*anchor).readFile",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "write_failed",
+          "constant": "seatexec.ReasonWriteFailed",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).writeFileMode",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "wrong_owner",
+          "constant": "seatexec.ReasonWrongOwner",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).check",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "apply_ambiguous",
+          "constant": "seatlaunch.ReasonApplyAmbiguous",
+          "writers": [
+            {
+              "function": "seatlaunch.launchFailure",
+              "door": "result seatlaunch.launchFailure#1"
+            }
+          ]
+        },
+        {
+          "code": "apply_failed",
+          "constant": "seatlaunch.ReasonApplyFailed",
+          "writers": [
+            {
+              "function": "seatlaunch.Launch",
+              "door": "field seatlaunch.Result.Stage"
+            },
+            {
+              "function": "seatlaunch.rosterOutcome",
+              "door": "field scheduler.RosterOutcome.Stage"
+            }
+          ]
+        },
+        {
+          "code": "decisions_pending",
+          "constant": "seatlaunch.ReasonDecisionsPending",
+          "writers": [
+            {
+              "function": "seatlaunch.Launch",
+              "door": "field seatlaunch.Result.Stage"
+            }
+          ]
+        },
+        {
+          "code": "identity_forged",
+          "constant": "seatlaunch.ReasonIdentityForged",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).forged",
+              "door": "field launch.ProofReply.Code"
+            },
+            {
+              "function": "seatlaunch.(*proofServer).forged",
+              "door": "field seatlaunch.proofSeat.refused"
+            }
+          ]
+        },
+        {
+          "code": "no_proof",
+          "constant": "seatlaunch.ReasonNoProof",
+          "writers": [
+            {
+              "function": "seatlaunch.WaitSeats",
+              "door": "field seatlaunch.SeatState.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "not_observed",
+          "constant": "seatlaunch.ReasonNotObserved",
+          "writers": [
+            {
+              "function": "seatlaunch.launchFailure",
+              "door": "result seatlaunch.launchFailure#1"
+            }
+          ]
+        },
+        {
+          "code": "prepare_refused",
+          "constant": "seatlaunch.ReasonPrepareRefused",
+          "writers": [
+            {
+              "function": "seatlaunch.Launch",
+              "door": "field seatlaunch.Result.Stage"
+            }
+          ]
+        },
+        {
+          "code": "proof_ledger_failed",
+          "constant": "seatlaunch.ReasonProofLedgerFailed",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field seatlaunch.proofSeat.refused"
+            }
+          ]
+        },
+        {
+          "code": "proof_malformed",
+          "constant": "seatlaunch.ReasonProofMalformed",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).serve",
+              "door": "field launch.ProofReply.Code"
+            }
+          ]
+        },
+        {
+          "code": "proof_marker_failed",
+          "constant": "seatlaunch.ReasonProofMarkerFailed",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field seatlaunch.proofSeat.refused"
+            }
+          ]
+        },
+        {
+          "code": "proof_origin_unknown",
+          "constant": "seatlaunch.ReasonProofOriginUnknown",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field launch.ProofReply.Code"
+            }
+          ]
+        },
+        {
+          "code": "proof_token_invalid",
+          "constant": "seatlaunch.ReasonProofTokenInvalid",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field launch.ProofReply.Code"
+            }
+          ]
+        },
+        {
+          "code": "proof_unknown",
+          "constant": "seatlaunch.ReasonProofUnknown",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field launch.ProofReply.Code"
+            }
+          ]
+        },
+        {
+          "code": "refused",
+          "constant": "seatlaunch.ReasonRefused",
+          "writers": [
+            {
+              "function": "seatlaunch.seatState",
+              "door": "field seatlaunch.SeatState.State"
+            }
+          ]
+        },
+        {
+          "code": "resource_present",
+          "constant": "seatlaunch.ReasonResourcePresent",
+          "writers": [
+            {
+              "function": "seatlaunch.Launch",
+              "door": "field seatlaunch.Result.Stage"
+            }
+          ]
+        },
+        {
+          "code": "seat_not_up",
+          "constant": "seatlaunch.ReasonSeatNotUp",
+          "writers": [
+            {
+              "function": "seatlaunch.launchFailure",
+              "door": "result seatlaunch.launchFailure#0"
+            }
+          ]
+        }
+      ]
+    },
+    "wait": {
+      "open": true,
+      "open_doors": [
+        {
+          "name": "the launch failure code: the reason code, else the stage",
+          "functions": [
+            "scheduler.(LaunchFailure).Code"
+          ]
+        },
+        {
+          "name": "AMQ launchapi field Reason, copied by seatlaunch.rosterOutcome",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "AMQ launchapi field ReasonCode, copied by seatlaunch.rosterOutcome",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "the pending action kinds joined with a comma",
+          "functions": [
+            "seatlaunch.rosterOutcome"
+          ]
+        },
+        {
+          "name": "decoded field launch.ProofReply.Code",
+          "functions": [
+            "seatexec.DialProof"
+          ]
+        },
+        {
+          "name": "decoded field launch.Exec.ReasonCode",
+          "functions": [
+            "launch.Decode"
+          ]
+        },
+        {
+          "name": "decoded field scheduler.LaunchFailure.Stage",
+          "functions": [
+            "scheduler.ReadState"
+          ]
+        },
+        {
+          "name": "decoded field scheduler.LaunchFailure.ReasonCode",
+          "functions": [
+            "scheduler.ReadState"
+          ]
+        },
+        {
+          "name": "field task.Task.WaitReason read back from disk",
+          "functions": [
+            "task.snapshotOnce",
+            "task.readDir",
+            "task.recoverJournal"
+          ]
+        },
+        {
+          "name": "the sentence task.DependencyMergeWait formats",
+          "functions": [
+            "task.DependencyMergeWait"
+          ]
+        }
+      ],
+      "doors": [
+        "element in routing.waitReason",
+        "field launch.ProofReply.Code",
+        "field piruntime.ResumeRefusal.Code",
+        "field scheduler.Event.ReasonCode",
+        "field scheduler.RosterLaunchError.Stage",
+        "field scheduler.RosterOutcome.ReasonCode",
+        "field scheduler.RosterOutcome.Stage",
+        "field scheduler.Route.Wait",
+        "field seatlaunch.Result.Stage",
+        "field seatlaunch.SeatState.ReasonCode",
+        "field seatlaunch.SeatState.State",
+        "field seatlaunch.proofSeat.refused",
+        "param scheduler.(*Scheduler).wait#1",
+        "param scheduler.firstNonEmpty#1",
+        "param seatexec.asRefusal#0",
+        "param seatexec.refusef#0",
+        "param seatlaunch.firstNonEmptyStr#1",
+        "result routing.waitReason#0",
+        "result seatlaunch.launchFailure#0",
+        "result seatlaunch.launchFailure#1",
+        "result task.Blocker#0"
+      ],
+      "entries": [
+        {
+          "code": "claude_token_insecure",
+          "constant": "claudeseat.TokenInsecure",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "concurrency_cap",
+          "constant": "routing.SkipConcurrencyCap",
+          "writers": [
+            {
+              "function": "routing.waitReason",
+              "door": "element in routing.waitReason"
+            }
+          ]
+        },
+        {
+          "code": "cost_cap",
+          "constant": "routing.SkipCostCap",
+          "writers": [
+            {
+              "function": "routing.waitReason",
+              "door": "element in routing.waitReason"
+            }
+          ]
+        },
+        {
+          "code": "privacy_class",
+          "constant": "routing.SkipPrivacyClass",
+          "writers": [
+            {
+              "function": "routing.waitReason",
+              "door": "element in routing.waitReason"
+            }
+          ]
+        },
+        {
+          "code": "reviewer_family",
+          "constant": "routing.SkipReviewerFamily",
+          "writers": [
+            {
+              "function": "routing.waitReason",
+              "door": "element in routing.waitReason"
+            }
+          ]
+        },
+        {
+          "code": "process_exited",
+          "constant": "scheduler.GoneProcessExited",
+          "mark": "traced, guarded at scheduler.(*Scheduler).applyEvents",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).checkLiveness",
+              "door": "field scheduler.Event.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "seat_replacement_resource_present",
+          "constant": "scheduler.ReasonResourcePresent",
+          "writers": [
+            {
+              "function": "seatlaunch.rosterOutcome",
+              "door": "field scheduler.RosterOutcome.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "no_roster_seat",
+          "constant": "scheduler.WaitNoRosterSeat",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).rosterNoIdleSeat",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            }
+          ]
+        },
+        {
+          "code": "claude_hooks_missing",
+          "constant": "seatexec.ClaudeHooksMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckClaudeHooks",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "claude_permission_mismatch",
+          "constant": "seatexec.ClaudePermissionMismatch",
+          "writers": [
+            {
+              "function": "seatexec.CheckClaudePermission",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "identity_incomplete",
+          "constant": "seatexec.IdentityIncomplete",
+          "writers": [
+            {
+              "function": "seatexec.checkIdentity",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "pi_not_embedded",
+          "constant": "seatexec.PiNotEmbedded",
+          "writers": [
+            {
+              "function": "seatexec.piShimProvider",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "sandbox_pins_missing",
+          "constant": "seatexec.SandboxPinsMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckCodexSandboxPins",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "dependencies",
+          "constant": "task.WaitDependencies",
+          "writers": [
+            {
+              "function": "task.Blocker",
+              "door": "result task.Blocker#0"
+            }
+          ]
+        },
+        {
+          "code": "file_lock",
+          "constant": "task.WaitFileLock",
+          "writers": [
+            {
+              "function": "task.Blocker",
+              "door": "result task.Blocker#0"
+            }
+          ]
+        },
+        {
+          "code": "no_route",
+          "constant": "task.WaitNoRoute",
+          "writers": [
+            {
+              "function": "routing.(*Router).Route",
+              "door": "field scheduler.Route.Wait"
+            },
+            {
+              "function": "scheduler.(DefaultRouter).Route",
+              "door": "field scheduler.Route.Wait"
+            },
+            {
+              "function": "scheduler.(*Scheduler).dispatch",
+              "door": "param scheduler.firstNonEmpty#1"
+            },
+            {
+              "function": "routing.waitReason",
+              "door": "result routing.waitReason#0"
+            }
+          ]
+        },
+        {
+          "code": "outcome_log_unwritable",
+          "constant": "task.WaitOutcomeLogUnwritable",
+          "writers": [
+            {
+              "function": "routing.(*Router).Route",
+              "door": "field scheduler.Route.Wait"
+            },
+            {
+              "function": "routing.(*Router).holdTampered",
+              "door": "field scheduler.Route.Wait"
+            }
+          ]
+        },
+        {
+          "code": "seat_cap",
+          "constant": "task.WaitSeatCap",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).dispatch",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            },
+            {
+              "function": "scheduler.(*Scheduler).rosterNoIdleSeat",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            }
+          ]
+        },
+        {
+          "code": "seat_starting",
+          "constant": "task.WaitSeatStarting",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).waitForSeat",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            }
+          ]
+        },
+        {
+          "code": "usage_limit",
+          "constant": "task.WaitUsageLimit",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).dispatch",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            },
+            {
+              "function": "scheduler.(*Scheduler).rosterNoIdleSeat",
+              "door": "param scheduler.(*Scheduler).wait#1"
+            }
+          ]
+        },
+        {
+          "code": "privacy_class",
+          "constant": "task.WaitPrivacyClass",
+          "mark": "no writer"
+        },
+        {
+          "code": "concurrency_cap",
+          "constant": "task.WaitConcurrencyCap",
+          "mark": "no writer"
+        },
+        {
+          "code": "cost_cap",
+          "constant": "task.WaitCostCap",
+          "mark": "no writer"
+        },
+        {
+          "code": "reviewer_family",
+          "constant": "task.WaitReviewerFamily",
+          "mark": "no writer"
+        },
+        {
+          "code": "ledger_unreadable",
+          "constant": "piruntime.ReasonLedgerUnreadable",
+          "writers": [
+            {
+              "function": "piruntime.CheckResume",
+              "door": "field piruntime.ResumeRefusal.Code"
+            }
+          ]
+        },
+        {
+          "code": "pi_resume_context_lost",
+          "constant": "piruntime.ReasonPiResumeContextLost",
+          "writers": [
+            {
+              "function": "piruntime.CheckResume",
+              "door": "field piruntime.ResumeRefusal.Code"
+            }
+          ]
+        },
+        {
+          "code": "pi_session_id_invalid",
+          "constant": "piruntime.ReasonPiSessionIDInvalid",
+          "writers": [
+            {
+              "function": "piruntime.CheckResume",
+              "door": "field piruntime.ResumeRefusal.Code"
+            }
+          ]
+        },
+        {
+          "code": "pi_session_id_missing",
+          "constant": "piruntime.ReasonPiSessionIDMissing",
+          "writers": [
+            {
+              "function": "piruntime.CheckResume",
+              "door": "field piruntime.ResumeRefusal.Code"
+            }
+          ]
+        },
+        {
+          "code": "pi_session_unreadable",
+          "constant": "piruntime.ReasonPiSessionUnreadable",
+          "writers": [
+            {
+              "function": "piruntime.CheckResume",
+              "door": "field piruntime.ResumeRefusal.Code"
+            }
+          ]
+        },
+        {
+          "code": "launch_error",
+          "constant": "scheduler.ReasonLaunchError",
+          "writers": [
+            {
+              "function": "schedproc.(*Launcher).LaunchRoster",
+              "door": "field scheduler.RosterOutcome.Stage"
+            },
+            {
+              "function": "scheduler.(*Scheduler).launchRoster",
+              "door": "field scheduler.RosterLaunchError.Stage"
+            },
+            {
+              "function": "scheduler.(*Scheduler).launchRoster",
+              "door": "param scheduler.firstNonEmpty#1"
+            },
+            {
+              "function": "scheduler.(*Scheduler).noteLaunchFailure",
+              "door": "param scheduler.firstNonEmpty#1"
+            },
+            {
+              "function": "seatlaunch.(*Launcher).LaunchRoster",
+              "door": "field scheduler.RosterOutcome.Stage"
+            },
+            {
+              "function": "seatlaunch.launchFailure",
+              "door": "param seatlaunch.firstNonEmptyStr#1"
+            },
+            {
+              "function": "seatlaunch.rosterOutcome",
+              "door": "field scheduler.RosterOutcome.Stage"
+            }
+          ]
+        },
+        {
+          "code": "not_started",
+          "constant": "scheduler.ReasonNotStarted",
+          "writers": [
+            {
+              "function": "scheduler.(*Scheduler).launchRoster",
+              "door": "param scheduler.firstNonEmpty#1"
+            },
+            {
+              "function": "seatlaunch.WaitSeats",
+              "door": "field seatlaunch.SeatState.State"
+            }
+          ]
+        },
+        {
+          "code": "argv_missing",
+          "constant": "seatexec.ReasonArgvMissing",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "codex_approval_missing",
+          "constant": "seatexec.ReasonCodexApprovalMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckCodexSandbox",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "codex_sandbox_missing",
+          "constant": "seatexec.ReasonCodexSandboxMissing",
+          "writers": [
+            {
+              "function": "seatexec.CheckCodexSandbox",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "dir_writable_by_others",
+          "constant": "seatexec.ReasonDirWritableByOthers",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).check",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "env_needs_invalid",
+          "constant": "seatexec.ReasonEnvNeedsInvalid",
+          "writers": [
+            {
+              "function": "seatexec.ValidateNeeds",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "identity_mismatch",
+          "constant": "seatexec.ReasonIdentityMismatch",
+          "writers": [
+            {
+              "function": "seatexec.checkIdentity",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "identity_proof_failed",
+          "constant": "seatexec.ReasonIdentityProofFailed",
+          "writers": [
+            {
+              "function": "seatexec.identityProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "identity_proof_timeout",
+          "constant": "seatexec.ReasonIdentityProofTimeout",
+          "writers": [
+            {
+              "function": "seatexec.identityProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "mailbox_missing",
+          "constant": "seatexec.ReasonMailboxMissing",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.asRefusal#0"
+            }
+          ]
+        },
+        {
+          "code": "mkdir_failed",
+          "constant": "seatexec.ReasonMkdirFailed",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).walk",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "path_invalid",
+          "constant": "seatexec.ReasonPathInvalid",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).open",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "proof_expired",
+          "constant": "seatexec.ReasonProofExpired",
+          "writers": [
+            {
+              "function": "seatexec.sendProof",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field seatlaunch.proofSeat.refused"
+            }
+          ]
+        },
+        {
+          "code": "proof_refused",
+          "constant": "seatexec.ReasonProofRefused",
+          "writers": [
+            {
+              "function": "seatexec.sendProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "proof_ticket_consumed",
+          "constant": "seatexec.ReasonProofTicketConsumed",
+          "writers": [
+            {
+              "function": "seatexec.sendProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "proof_ticket_missing",
+          "constant": "seatexec.ReasonProofTicketMissing",
+          "writers": [
+            {
+              "function": "seatexec.sendProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "proof_unacknowledged",
+          "constant": "seatexec.ReasonProofUnacknowledged",
+          "writers": [
+            {
+              "function": "seatexec.sendProof",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "provider_missing",
+          "constant": "seatexec.ReasonProviderMissing",
+          "writers": [
+            {
+              "function": "seatexec.providerPath",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "record_invalid",
+          "constant": "seatexec.ReasonRecordInvalid",
+          "writers": [
+            {
+              "function": "seatexec.piShimProvider",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "record_missing",
+          "constant": "seatexec.ReasonRecordMissing",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.asRefusal#0"
+            }
+          ]
+        },
+        {
+          "code": "role_mismatch",
+          "constant": "seatexec.ReasonRoleMismatch",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.recheck",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "role_missing",
+          "constant": "seatexec.ReasonRoleMissing",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.asRefusal#0"
+            }
+          ]
+        },
+        {
+          "code": "root_invalid",
+          "constant": "seatexec.ReasonRootInvalid",
+          "writers": [
+            {
+              "function": "seatexec.openRoot",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "root_unreadable",
+          "constant": "seatexec.ReasonRootUnreadable",
+          "writers": [
+            {
+              "function": "seatexec.openRoot",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "rules_mismatch",
+          "constant": "seatexec.ReasonRulesMismatch",
+          "writers": [
+            {
+              "function": "seatexec.readRules",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.recheck",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "rules_missing",
+          "constant": "seatexec.ReasonRulesMissing",
+          "writers": [
+            {
+              "function": "seatexec.readRules",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "runtime_mismatch",
+          "constant": "seatexec.ReasonRuntimeMismatch",
+          "writers": [
+            {
+              "function": "seatexec.piShimProvider",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.providerPath",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "seat_invalid",
+          "constant": "seatexec.ReasonSeatInvalid",
+          "writers": [
+            {
+              "function": "seatexec.prepare",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "stat_failed",
+          "constant": "seatexec.ReasonStatFailed",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).check",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "symlink_in_path",
+          "constant": "seatexec.ReasonSymlinkInPath",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).open",
+              "door": "param seatexec.refusef#0"
+            },
+            {
+              "function": "seatexec.(*anchor).readFile",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "write_failed",
+          "constant": "seatexec.ReasonWriteFailed",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).writeFileMode",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "wrong_owner",
+          "constant": "seatexec.ReasonWrongOwner",
+          "writers": [
+            {
+              "function": "seatexec.(*anchor).check",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
+          "code": "apply_ambiguous",
+          "constant": "seatlaunch.ReasonApplyAmbiguous",
+          "writers": [
+            {
+              "function": "seatlaunch.launchFailure",
+              "door": "result seatlaunch.launchFailure#1"
+            }
+          ]
+        },
+        {
+          "code": "apply_failed",
+          "constant": "seatlaunch.ReasonApplyFailed",
+          "writers": [
+            {
+              "function": "seatlaunch.Launch",
+              "door": "field seatlaunch.Result.Stage"
+            },
+            {
+              "function": "seatlaunch.rosterOutcome",
+              "door": "field scheduler.RosterOutcome.Stage"
+            }
+          ]
+        },
+        {
+          "code": "decisions_pending",
+          "constant": "seatlaunch.ReasonDecisionsPending",
+          "writers": [
+            {
+              "function": "seatlaunch.Launch",
+              "door": "field seatlaunch.Result.Stage"
+            }
+          ]
+        },
+        {
+          "code": "identity_forged",
+          "constant": "seatlaunch.ReasonIdentityForged",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).forged",
+              "door": "field launch.ProofReply.Code"
+            },
+            {
+              "function": "seatlaunch.(*proofServer).forged",
+              "door": "field seatlaunch.proofSeat.refused"
+            }
+          ]
+        },
+        {
+          "code": "no_proof",
+          "constant": "seatlaunch.ReasonNoProof",
+          "writers": [
+            {
+              "function": "seatlaunch.WaitSeats",
+              "door": "field seatlaunch.SeatState.ReasonCode"
+            }
+          ]
+        },
+        {
+          "code": "not_observed",
+          "constant": "seatlaunch.ReasonNotObserved",
+          "writers": [
+            {
+              "function": "seatlaunch.launchFailure",
+              "door": "result seatlaunch.launchFailure#1"
+            }
+          ]
+        },
+        {
+          "code": "prepare_refused",
+          "constant": "seatlaunch.ReasonPrepareRefused",
+          "writers": [
+            {
+              "function": "seatlaunch.Launch",
+              "door": "field seatlaunch.Result.Stage"
+            }
+          ]
+        },
+        {
+          "code": "proof_ledger_failed",
+          "constant": "seatlaunch.ReasonProofLedgerFailed",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field seatlaunch.proofSeat.refused"
+            }
+          ]
+        },
+        {
+          "code": "proof_malformed",
+          "constant": "seatlaunch.ReasonProofMalformed",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).serve",
+              "door": "field launch.ProofReply.Code"
+            }
+          ]
+        },
+        {
+          "code": "proof_marker_failed",
+          "constant": "seatlaunch.ReasonProofMarkerFailed",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field seatlaunch.proofSeat.refused"
+            }
+          ]
+        },
+        {
+          "code": "proof_origin_unknown",
+          "constant": "seatlaunch.ReasonProofOriginUnknown",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field launch.ProofReply.Code"
+            }
+          ]
+        },
+        {
+          "code": "proof_token_invalid",
+          "constant": "seatlaunch.ReasonProofTokenInvalid",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field launch.ProofReply.Code"
+            }
+          ]
+        },
+        {
+          "code": "proof_unknown",
+          "constant": "seatlaunch.ReasonProofUnknown",
+          "writers": [
+            {
+              "function": "seatlaunch.(*proofServer).judgeLocked",
+              "door": "field launch.ProofReply.Code"
+            }
+          ]
+        },
+        {
+          "code": "refused",
+          "constant": "seatlaunch.ReasonRefused",
+          "writers": [
+            {
+              "function": "seatlaunch.seatState",
+              "door": "field seatlaunch.SeatState.State"
+            }
+          ]
+        },
+        {
+          "code": "resource_present",
+          "constant": "seatlaunch.ReasonResourcePresent",
+          "writers": [
+            {
+              "function": "seatlaunch.Launch",
+              "door": "field seatlaunch.Result.Stage"
+            }
+          ]
+        },
+        {
+          "code": "seat_not_up",
+          "constant": "seatlaunch.ReasonSeatNotUp",
+          "writers": [
+            {
+              "function": "seatlaunch.launchFailure",
+              "door": "result seatlaunch.launchFailure#0"
+            }
+          ]
+        }
+      ]
+    },
+    "not_reasons": [
+      {
+        "code": "file_lock_conflict",
+        "constant": "task.RefusalFileLock"
+      },
+      {
+        "code": "self_widen",
+        "constant": "task.RefusalSelfWiden"
+      },
+      {
+        "code": "claim_offer_required",
+        "constant": "task.RefusalClaimOfferRequired"
+      },
+      {
+        "code": "claim_offer_expired",
+        "constant": "task.RefusalClaimOfferExpired"
+      },
+      {
+        "code": "claim_pool_mismatch",
+        "constant": "task.RefusalClaimPoolMismatch"
+      },
+      {
+        "code": "claim_pool_unknown",
+        "constant": "task.RefusalClaimPoolUnknown"
+      }
+    ],
+    "launch": {
+      "door": "scheduler.(LaunchFailure).Code",
+      "doors": [
+        "field launch.ProofReply.Code",
+        "field piruntime.ResumeRefusal.Code",
+        "field scheduler.RosterLaunchError.Stage",
+        "field scheduler.RosterOutcome.Stage",
+        "field seatlaunch.Result.Stage",
+        "field seatlaunch.SeatState.ReasonCode",
+        "field seatlaunch.SeatState.State",
+        "field seatlaunch.proofSeat.refused",
+        "param seatexec.asRefusal#0",
+        "param seatexec.refusef#0",
+        "param seatlaunch.firstNonEmptyStr#1",
+        "result seatlaunch.launchFailure#0",
+        "result seatlaunch.launchFailure#1"
+      ],
+      "caller_doors": [
+        {
+          "doors": [
+            "param scheduler.firstNonEmpty#0",
+            "param scheduler.firstNonEmpty#1"
+          ],
+          "functions": [
+            "scheduler.(*Scheduler).launchRoster",
+            "scheduler.(*Scheduler).noteLaunchFailure",
+            "scheduler.(LaunchFailure).Code"
+          ],
+          "not_codes": [
+            {
+              "word": "-",
+              "function": "scheduler.(*Scheduler).launchRoster",
+              "why": "the roster_launched decision's placeholder for a launch with no id"
+            }
+          ]
+        }
+      ],
+      "constants": [
+        "claudeseat.TokenInsecure",
+        "scheduler.AMQBindingPresent",
+        "scheduler.ReasonResourcePresent",
+        "seatexec.ClaudeHooksMissing",
+        "seatexec.ClaudePermissionMismatch",
+        "seatexec.IdentityIncomplete",
+        "seatexec.PiNotEmbedded",
+        "seatexec.SandboxPinsMissing",
+        "piruntime.ReasonLedgerUnreadable",
+        "piruntime.ReasonPiResumeContextLost",
+        "piruntime.ReasonPiSessionIDInvalid",
+        "piruntime.ReasonPiSessionIDMissing",
+        "piruntime.ReasonPiSessionUnreadable",
+        "scheduler.ReasonLaunchError",
+        "scheduler.ReasonNotStarted",
+        "seatexec.ReasonArgvMissing",
+        "seatexec.ReasonCodexApprovalMissing",
+        "seatexec.ReasonCodexSandboxMissing",
+        "seatexec.ReasonDirWritableByOthers",
+        "seatexec.ReasonEnvNeedsInvalid",
+        "seatexec.ReasonIdentityMismatch",
+        "seatexec.ReasonIdentityProofFailed",
+        "seatexec.ReasonIdentityProofTimeout",
+        "seatexec.ReasonMailboxMissing",
+        "seatexec.ReasonMkdirFailed",
+        "seatexec.ReasonPathInvalid",
+        "seatexec.ReasonProofExpired",
+        "seatexec.ReasonProofRefused",
+        "seatexec.ReasonProofTicketConsumed",
+        "seatexec.ReasonProofTicketMissing",
+        "seatexec.ReasonProofUnacknowledged",
+        "seatexec.ReasonProviderMissing",
+        "seatexec.ReasonRecordInvalid",
+        "seatexec.ReasonRecordMissing",
+        "seatexec.ReasonRoleMismatch",
+        "seatexec.ReasonRoleMissing",
+        "seatexec.ReasonRootInvalid",
+        "seatexec.ReasonRootUnreadable",
+        "seatexec.ReasonRulesMismatch",
+        "seatexec.ReasonRulesMissing",
+        "seatexec.ReasonRuntimeMismatch",
+        "seatexec.ReasonSeatInvalid",
+        "seatexec.ReasonStatFailed",
+        "seatexec.ReasonSymlinkInPath",
+        "seatexec.ReasonWriteFailed",
+        "seatexec.ReasonWrongOwner",
+        "seatlaunch.ReasonApplyAmbiguous",
+        "seatlaunch.ReasonApplyFailed",
+        "seatlaunch.ReasonDecisionsPending",
+        "seatlaunch.ReasonIdentityForged",
+        "seatlaunch.ReasonNoProof",
+        "seatlaunch.ReasonNotObserved",
+        "seatlaunch.ReasonPrepareRefused",
+        "seatlaunch.ReasonProofLedgerFailed",
+        "seatlaunch.ReasonProofMalformed",
+        "seatlaunch.ReasonProofMarkerFailed",
+        "seatlaunch.ReasonProofOriginUnknown",
+        "seatlaunch.ReasonProofTokenInvalid",
+        "seatlaunch.ReasonProofUnknown",
+        "seatlaunch.ReasonRefused",
+        "seatlaunch.ReasonResourcePresent",
+        "seatlaunch.ReasonSeatNotUp"
+      ],
+      "kept": [
+        {
+          "word": "pending",
+          "guard": "seatlaunch.WaitSeats",
+          "why": "seatState starts every seat at pending; before WaitSeats returns, a seat still pending is rewritten to not_started with the reason code no_proof"
+        },
+        {
+          "word": "up",
+          "guard": "seatlaunch.(*Launcher).settleOne",
+          "why": "set only with Up true, and a seat that is up settles as up or closing, never as a failure"
+        },
+        {
+          "word": "prepared",
+          "guard": "seatlaunch.Launch",
+          "why": "set only in Launch's dry-run arm, and no code outside tests sets Options.DryRun"
+        },
+        {
+          "word": "applied",
+          "guard": "seatlaunch.launchFailure",
+          "why": "launchFailure returns the roster's stage only when it is not applied"
+        }
+      ],
+      "outside_doors": [
+        "param seatlaunch.(*proofServer).forged#2",
+        "param seatlaunch.(*proofServer).reject#2"
+      ],
+      "outside": [
+        {
+          "code": "pi_runtime_rejected",
+          "constant": "piruntime.ReasonRejected"
+        },
+        {
+          "code": "runtime_mismatch_in_process",
+          "constant": "piruntime.RuntimeMismatchReason"
+        },
+        {
+          "code": "base_fetch_unauthenticated",
+          "constant": "schedproc.ReasonBaseFetchUnauthenticated"
+        },
+        {
+          "code": "base_tip_moved",
+          "constant": "schedproc.ReasonBaseTipMoved"
+        },
+        {
+          "code": "seat_branch_unmerged",
+          "constant": "schedproc.ReasonSeatBranchUnmerged"
+        },
+        {
+          "code": "seat_branch_unpushed",
+          "constant": "schedproc.ReasonSeatBranchUnpushed"
+        },
+        {
+          "code": "seat_gitdir_foreign",
+          "constant": "schedproc.ReasonSeatGitdirForeign"
+        },
+        {
+          "code": "seat_head_unreadable",
+          "constant": "schedproc.ReasonSeatHeadUnreadable"
+        },
+        {
+          "code": "seat_worktree_check_failed",
+          "constant": "schedproc.ReasonSeatWorktreeCheckFailed"
+        },
+        {
+          "code": "seat_worktree_dirty",
+          "constant": "schedproc.ReasonSeatWorktreeDirty"
+        },
+        {
+          "code": "proof_connections_full",
+          "constant": "seatlaunch.ReasonProofConnectionsFull"
+        },
+        {
+          "code": "proof_origin",
+          "constant": "seatlaunch.ReasonProofOrigin"
+        },
+        {
+          "code": "proof_replayed",
+          "constant": "seatlaunch.ReasonProofReplayed"
+        }
+      ]
+    }
+  }
+}

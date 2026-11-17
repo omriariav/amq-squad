@@ -1,0 +1,7 @@
+tag start 2026-11-12T11:04:04Z
+tag done 2026-11-12T11:04:05Z
+commit e93ab08c378265e8b0a7d7a6123bc834feec5c67
+release start 2026-11-12T11:04:05Z
+release done 2026-11-12T11:04:07Z
+https://github.com/omriariav/amq-squad/releases/tag/v3.2.0
+latest: v3.2.0

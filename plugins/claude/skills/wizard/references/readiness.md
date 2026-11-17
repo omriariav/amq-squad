@@ -11,7 +11,7 @@ amq-squad team check --project P
 
 ## What doctor checks
 
-- the AMQ version and launch API (0.116.2 or later for `amq`, `amq-remote` and
+- the AMQ version and launch API (0.140.0 or later for `amq`, `amq-remote` and
   `amq-owner-sign`), the amq-squad on PATH against this build, the AMQ identity pin;
 - the tools on PATH (claude, codex, the built-in pi, grok, cursor-agent, ollama, amq,
   amq-remote, tmux, gh) with their versions against the versions the launch API

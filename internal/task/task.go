@@ -30,6 +30,14 @@ const ReasonWidenRequested = "widen_requested"
 // owner's growth decision. It retains the request's exact refused paths.
 const ReasonGrowthGateRequired = "growth_gate_required"
 
+// ReasonClassUnknown blocks a task whose class is not in the routing table
+// (routing.(*Router).decide).
+const ReasonClassUnknown = "class_unknown"
+
+// ReasonRetriesExhausted blocks a task whose failed attempts reached the
+// router's bound (routing.(*Router).decide, scheduler.DefaultRouter.Route).
+const ReasonRetriesExhausted = "retries_exhausted"
+
 // DefaultLeaseDuration is the proposed lease length (brief 2b-1 ruling 3;
 // measured in docs/v3-spike/2b1-execution.md).
 const DefaultLeaseDuration = 10 * time.Minute

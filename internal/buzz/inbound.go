@@ -18,12 +18,12 @@ import (
 
 // The share's declared target is amq-remote's mailbox adapter (AMQ v0.111.0
 // and later, PR #1226; strict replies from the carrier from v0.112.0, PR
-// #1230; the floor is v0.116.2). amq-remote serve subscribes to the owner's
-// DM channel, checks the DM surface (owner, channel membership, the
-// admission window, redelivery) and submits each owner DM to the target:
+// #1230; doctor's floor is doctorMinAMQVersion). amq-remote serve subscribes
+// to the owner's DM channel, checks the DM surface (owner, channel membership,
+// the admission window, redelivery) and submits each owner DM to the target:
 // one AMQ message to MailboxHandle in the share root, from the carrier
 // `buzz`, on thread cockpit/<channel>, with the labels acp, buzz and
-// nostr:<event id> (v0.116.2 internal/remote/mailbox/mailbox.go, prompt).
+// nostr:<event id> (v0.140.0 internal/remote/mailbox/mailbox.go, prompt).
 // The handle's newest reply that is not --kind status and has a body is the
 // request's result, which serve posts as the body's result row in the DM;
 // with no such reply within reply_timeout the request fails (mailbox.go,
@@ -46,7 +46,7 @@ const (
 )
 
 // ServePromptSuffix starts the instructions serve appends to a Buzz DM's
-// text (v0.116.2 internal/remote/mailbox/mailbox.go, prompt).
+// text (v0.140.0 internal/remote/mailbox/mailbox.go, prompt).
 const ServePromptSuffix = "\n\nThis came from the owner's Buzz DM."
 
 // Prompt is one message serve delivered to the handle.
@@ -128,7 +128,7 @@ type Handled struct {
 
 // RouteWindow is how old a phone message may be when it is routed, and
 // FutureSkew how far ahead of this clock it may be dated (serve admits a DM
-// within 2 minutes, v0.116.2 buzzio/normalize.go MutationWindow; the reply
+// within 2 minutes, v0.140.0 buzzio/normalize.go MutationWindow; the reply
 // may come later).
 const (
 	RouteWindow = 10 * time.Minute
@@ -340,9 +340,13 @@ func (h *Handler) gate(ctx, vctx context.Context, hd *Handled, e nostr.Event, ra
 		return
 	}
 	clearVerifyTimeout(core, gateID) // a verification of the gate finished
-	// the owner's verified event is handled: a redelivery is a duplicate
-	if err := h.seen.put(e.ID, gateID, h.now()); err != nil {
-		hd.Error = joinErr(hd.Error, "once-only record: "+err.Error())
+	// the owner's verified event is handled: a redelivery is a duplicate;
+	// except a window re-ask the relay did not take, which a redelivery of
+	// the same event retries (A1-3)
+	if r.Code != gateverify.RejectPublish {
+		if err := h.seen.put(e.ID, gateID, h.now()); err != nil {
+			hd.Error = joinErr(hd.Error, "once-only record: "+err.Error())
+		}
 	}
 	switch r.Outcome {
 	case "approved", "denied":
@@ -350,12 +354,17 @@ func (h *Handler) gate(ctx, vctx context.Context, hd *Handled, e nostr.Event, ra
 		if rec, err := core.Store.Load(r.GateID); err == nil {
 			class = rec.Class
 		}
-		h.final(ctx, hd, "accepted "+gateID+" "+class)
+		h.final(ctx, hd, "accepted "+gateID+" "+class+" "+r.Outcome)
 	case "reasked":
 		h.final(ctx, hd, "refused "+gateID+" "+r.Code+"\n"+reaskLine(r.ReaskEventID))
 	default:
 		text := "refused " + gateID + " " + r.Code
-		if r.Code == gateverify.RejectThread || r.Code == gateverify.RejectWrongThread {
+		if r.Code == gateverify.RejectBeforeReask {
+			// dated before the gate was asked again: answer that message
+			if w, err := core.Store.ReadWindow(gateID); err == nil && w != nil {
+				text += "\n" + reaskLine(w.EventID)
+			}
+		} else if r.Code == gateverify.RejectThread || r.Code == gateverify.RejectWrongThread {
 			if ra, err := core.Store.ReadReask(gateID); err == nil && ra != nil {
 				text += "\n" + reaskLine(ra.EventID)
 			} else if q, err := core.Store.Question(gateID); err == nil && q != nil {
@@ -577,8 +586,7 @@ func (h *Handler) coreFor(e nostr.Event) (*gateverify.Core, []string) {
 	for _, c := range holders {
 		names = append(names, squadName(c))
 		q, _ := c.Store.Question(a.GateID)
-		r, _ := c.Store.ReadReask(a.GateID)
-		if (q != nil && slices.Contains(refs, q.EventID)) || (r != nil && slices.Contains(refs, r.EventID)) {
+		if (q != nil && slices.Contains(refs, q.EventID)) || slices.ContainsFunc(c.Store.ReaskEventIDs(a.GateID), func(id string) bool { return slices.Contains(refs, id) }) {
 			match = append(match, c)
 		}
 	}
@@ -608,8 +616,7 @@ func (h *Handler) bareCore(e nostr.Event) (*gateverify.Core, []string) {
 				hit = hit || (err == nil && q != nil && c.Store.State(rec, now) == gatestore.StateOpen)
 				continue
 			}
-			r, _ := c.Store.ReadReask(id)
-			hit = hit || (q != nil && slices.Contains(refs, q.EventID)) || (r != nil && slices.Contains(refs, r.EventID))
+			hit = hit || (q != nil && slices.Contains(refs, q.EventID)) || slices.ContainsFunc(c.Store.ReaskEventIDs(id), func(rid string) bool { return slices.Contains(refs, rid) })
 		}
 		if hit {
 			match = append(match, c)

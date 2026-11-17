@@ -1,0 +1,11 @@
+The soak conditions, counted again at the 3.2.0 cut (the lead's run, 2026-11-12T10:12:49Z)
+decision log copy: decisions-at-cut.jsonl, 21654 lines, 4568538 bytes, sha256 02db73a7fea02e84698fe4855b312cc68e1ead21b21723c7648cfb13235afad6
+its first 21640 lines hash to 782b49a7833fb9367e5c1893d9865dcaad66968f670eca686f0e366692c00788, the soak record's copy
+since that copy: 14 lines, 2026-11-12T08:31:34.341521Z to 2026-11-12T09:51:22.35277Z
+by kind: dispatched 3, lease_renewed 2, seat_prepare_suppressed 1, seat_prepare_failed 1, seat_closing 1, seat_closed 1, seat_cleaned 1, pr_bound 1, lease_expired 1, completed 1, commit_running 1
+since the restart (line 21544 on): 111 lines
+lease_expired since the restart: 1 (2026-11-12T09:45:40.893326Z, t178, dev2)
+ledger_tampered since the restart: 0; "tamper" in kind or reason: 0
+ledger_layout_migrated in the whole log: 2 (2026-11-11T13:53:57.611166Z, 2026-11-11T14:05:35.731785Z)
+ESC bytes in the 111 lines: 0; u001b: 0
+the train's real runs since the copy: 1 (#983, mt-20261112T090533Z-cc593ff8, status merged); its four files hold 0 ESC bytes and 0 u001b

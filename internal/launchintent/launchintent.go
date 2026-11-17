@@ -339,7 +339,7 @@ func compileSeat(seat SeatFacts) (launchapi.ParticipantV1, error) {
 	}
 	if seat.Injector != nil {
 		// AMQ refuses injector settings on a disabled wake
-		// (internal/launch/execution_options_grammar.go:32-34 at v0.116.2);
+		// (internal/launch/execution_options_grammar.go:32-34 at v0.140.0);
 		// refuse here, before any AMQ call, with the seat named.
 		if !seat.RequireWake {
 			return launchapi.ParticipantV1{}, fmt.Errorf("wake injector %q requires RequireWake (a disabled wake forbids injector settings)", seat.Injector.Mode)

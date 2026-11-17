@@ -4,9 +4,11 @@ Release changes must go through a PR and `make ci` before merge. `make ci`
 includes a README.html freshness check, so a release that touches `README.md`
 cannot merge without the matching regenerated `README.html` (see step 1).
 
-The fail-closed AMQ minimum is 0.116.2 (`internal/cli/doctor.go`, `doctorMinAMQVersion`).
-Release validation must keep the doctor floor, active README/CLI-skill policy,
-and both real-AMQ CI matrices aligned on pinned `v0.116.2` plus `latest`.
+The AMQ floor is 0.140.0, the release `go.mod` pins: `amq-squad doctor` fails
+on an installed `amq`, `amq-remote` or `amq-owner-sign` below it. Release
+validation must keep the doctor floor, the active README/CLI-skill policy and
+the pinned real-AMQ CI lane aligned on `v0.140.0`, and must keep the `latest`
+lane running as a non-blocking canary.
 
 ## Patch Release Checklist
 
@@ -24,8 +26,8 @@ and both real-AMQ CI matrices aligned on pinned `v0.116.2` plus `latest`.
    `make skills-generate` is sufficient. `make ci` (`skills-check`) fails if a mirror
    drifts from its manifest.
    Confirm the doctor minimum, README and CLI-skill support text, release-policy
-   checker, and both real-AMQ matrices still agree on AMQ 0.116.2 / `v0.116.2`
-   plus the `latest` canary.
+   checker, and the pinned real-AMQ lane still agree on AMQ 0.140.0 / `v0.140.0`,
+   and that the `latest` canary lane still runs.
 Who does each step: the lead runs the cut. A release agent the lead starts may
 prepare and check (the notes, the skew check, the tag build, the evidence) but never
 publishes. The publish (steps 3 and 4, through `amq-squad release publish` once the
@@ -38,6 +40,19 @@ retry.
    verified `tag` answer). The lead first runs `release prepare`, which raises
    the `tag` and `github_release` gates; once the owner has answered both, the
    lead runs `release publish` with the same arguments. Never tag by hand.
+
+   Before `release prepare`, create the release session's root, so the gates
+   are raised into a root that already exists:
+
+   ```sh
+   mkdir -p <project>/.agent-mail/<session>
+   ```
+
+   The gate store's squad identity hashes the root's resolved path, device
+   and inode (`internal/gatestore/squad.go`), so a gate raised as the first
+   write into a root that does not exist yet carries a path-only identity
+   that never verifies (`no_squad_identity`). An empty directory is enough;
+   the same holds for `gate raise` into a new session.
 
    ```sh
    amq-squad release prepare --repository omriariav/amq-squad --tag v0.5.1 \
@@ -64,8 +79,8 @@ version.
    done. Install the binary built from the tag (`scripts/build-pi-runtime.sh
    all`, the one attached to the release). Then either restart the squad's own
    lead on it, or run `amq-squad lead --team -- --offline` in a scratch
-   repository (`git init` in an empty directory, then `amq coop init`; no
-   `squad.yaml`; a scratch `HOME`). Record the lead's first screen, a tmux `capture-pane` at about
+   repository (`git init` in an empty directory; no `squad.yaml`, so the lead
+   comes up solo; a scratch `HOME`). Record the lead's first screen, a tmux `capture-pane` at about
    10 s, in the release evidence (`docs/v3-spike/5-release-evidence/release-<tag>/`).
    A dead pane or any `Failed to load extension` line means the release is
    not done. `make release-smoke` checks only the version, and CI stages no pi

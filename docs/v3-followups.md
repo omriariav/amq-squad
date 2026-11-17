@@ -49,11 +49,22 @@ its PR. Nothing here is promised by date.
      An R53 row also failed once at 7.0 s while the host gate lock was held,
      with load 12.5 from work outside the lock (`async-update.md:1865-1869`).
      The R53 tests are in `pi/test/phase.test.ts`.
+     Done in 3.3.0 A3: the R53 rows' world gives the guard a 600 s budget
+     (`AMQ_SQUAD_HOOK_TIMEOUT_MS`); the product's 5 s fail-closed timeout is
+     unchanged. A guard forced to 6 s failed the row as recorded before the
+     change and passed after it.
   6. In the same run the pi screen row `row 2: the screen's last line ...`
      took 11.4 s and failed with `TypeError: Cannot read properties of
      undefined (reading 'lines')`; it is a separate screen-row timing
      failure, not an R53 guard row. Source:
      `docs/v3-spike/320-3a-train/async-update.md:1808-1812`.
+     Done in 3.3.0 A3: the row waited 1000 rounds of 10 ms for the screen's
+     first draw, then read the widget anyway. The three screen waits of
+     `pi/test/commands.test.ts` now wait for the draw itself and stop on
+     the test's own signal: a draw that never comes fails the test at its
+     600 s timeout (node reports the timeout), and the wait stops with it,
+     so the file run ends. A status forced to 15 s failed the row with the
+     recorded TypeError at 11.5 s before the change and passed after it.
   7. `internal/cli/repass5_fix_test.go:74`
      `TestDecisionAdapterKillsAHungGuardGroup` reported a hung guard and
      unparsable guard output after 30.0 s at load 16.7. Source: the test's
@@ -122,6 +133,32 @@ its PR. Nothing here is promised by date.
   zero is green, and the injected clock ignored is green;
   `internal/buzz/owner_sender_test.go:28` reads the store sorted by
   CreatedAt (`relay_test.go:103`).
+- Dated 2026-11-12: `git push <path>`, to a path that is a configured
+  remote's URL, moved that remote's tracking ref in CI (macos-latest, git
+  2.56.0) and not on the lead's host (git 2.55.0). #994's seven tests failed
+  on it at their ground's own assertion; #995's ground records the ref and
+  puts it back after its push. The version as the cause is not established.
+  The rule for a test: its ground is asserted, never assumed from a command's
+  side effect.
+- Dated 2026-11-12: a fixture test of `internal/mergetrain` failed once in
+  25 driver rows with no assertion of its own, on "TempDir RemoveAll
+  cleanup: unlinkat <tmp>/…/bare.git/info: directory not empty". 40 runs of
+  that test alone and 45 of three sibling tests passed. Cause not
+  established.
+- Dated 2026-11-16: `internal/buzz TestOwnerScriptDryRunRejectsThenSendsAgain`
+  (`internal/buzz/enroll_test.go:118`) failed twice in locked `make ci` runs
+  on the lead's host, with the host's amq-remote at v0.140.0: the request was
+  refused `native_error` "its delivery never started". It is the race in
+  amq-remote's admission and reconcile tick named in the `--poll` item under
+  Buzz and AMQ (upstream, every AMQ version through v0.149.1). GitHub CI
+  skips this test (see the real-AMQ lane item under Buzz and AMQ), so the
+  local count is the only evidence; the 3.3.0 soak tallies it.
+- Dated 2026-11-16: `internal/cli
+  TestAReloadOverTheLeaseCapLaunchesEverySeatAndWarns`
+  (`internal/cli/scheduler_leasecap_test.go:183`) failed once in a locked
+  `make ci` under load and passed 5 of 5 on rerun. Cause not established
+  (timing under load suspected); the 3.3.0 soak counts it per locked
+  `make ci`.
 
 ### Ledgers, seals and recovery
 
@@ -174,6 +211,12 @@ its PR. Nothing here is promised by date.
   3.2.x by name if a later review wants it.
 - **A typed code for a clean on a ledger refused as `newer_writer` or
   `schema_mismatch`** (the #909 port answers with text only, pinned by P6).
+- doctor's "sealed ledger compatibility" check reads the AMQ root
+  ResolveAMQEnv resolves from the project directory, the base root when no
+  session is named (`internal/cli/doctor.go:380-396` at v3.2.0), so its ok
+  says nothing about a session's ledgers; seen at the 3.2.0 cut (the 3.2.0
+  evidence note's doctor-warnings.txt was that run). Not walked: what the
+  check reads when a session is set in the environment.
 
 ### Source guards and test tooling
 
@@ -201,6 +244,13 @@ its PR. Nothing here is promised by date.
   #962: no guard checks what a listed row function asserts.)
 - **Guard round 4 (test tooling), moved from rc.2, 2026-11-10.** Brief:
   brief-320-guard-round4.md.
+- **Two small things in the A1-1 tests** (2026-11-12, the #997 gate), for
+  whoever next edits those files: two helper types carry no comment
+  (`decidedWordCase`, `internal/gatestore/words_test.go:149`;
+  `bareWordCase330`, `internal/buzz/words330_test.go:130`); and the guard
+  `TestNoOtherFileSpellsAYesNoList` keeps its one allowed place as a map
+  entry with its reason in the test's comment, not in the list
+  (`internal/gatestore/words_test.go:143`).
 
 ### Rollback and `up`
 
@@ -355,19 +405,25 @@ as #962 corrected it.
 - A seat launch can hang indefinitely while fetching from origin because the
   fetch has no time limit. Reuse the bounded runner already provided by
   `seatcommit`.
-- `lead --team` in a repository where `amq coop init` has not run is refused
-  at the roster launch with `base_root_unauthorized`; today the first host
+- `lead --team` in a repository that has a `squad.yaml` and where `amq coop
+  init` has not run is refused at the roster launch with `base_root_unauthorized`; today the first host
   step (`amq coop init`, README.md:229-230) has to be run first, and `up`
   runs it itself. Source: the 3.2.0 notes, Known limit 33.
 - Not on this list (3.3.0): a Claude seat's launch that fails with the bare
   code `launch_action_required` and no other reason text in the decision
   log, cause not established (the 3.2.0 notes, Known limit 34). It is a
   Claude-lane item of the 3.3.0 plan.
-- A seat whose task branch was cut from a tip later than the seat's launch
-  base, and whose attempt ends with no commit, is refused at its next prepare
-  with `seat_head_detached_unmerged`; the fix: a head reachable from the
-  remote branch is not a local commit. Source: the 3.2.0 notes, Known limit
-  35.
+- **done (the note docs/v3-spike/32x-seat-head-remote/README.md):** a seat
+  whose task branch was cut from a tip later than the seat's launch base,
+  and whose attempt ended with no commit, was refused at its next prepare
+  with `seat_head_detached_unmerged`. The clean now treats a head the
+  remote base branch held at the task's grant as recorded; a commit the
+  remote does not hold is refused with the same words. Source: the 3.2.0
+  notes, Known limit 35. The fix is on v3 (#995) and ships in 3.3.0, on the
+  owner's word of 2026-11-12; there is no 3.2.1, so a squad on 3.2.0 keeps
+  the limit and clears a refused seat with a roster relaunch, after the
+  seat's worktree is emptied when it holds a leftover (measured once at the
+  3.2.0 cut, the evidence note).
 
 ### The merge train
 
@@ -446,6 +502,60 @@ as #962 corrected it.
 - Cap-off (item 7c): `size_cap_lines` and `size_cap_files` accept no off
   value (`internal/grants/parse.go:258-261`); add an explicit off with the
   growth gate following it.
+- **done (the note docs/v3-spike/330-train-compare-proof/README.md):** the
+  train could not land a PR that was behind its base when GitHub's compare
+  returned no patch for one of its files (#991, 2026-11-12: a 110 KB note
+  with 962 changed lines); it refused with `rebase_patch_changed` before
+  the update. The train now checks the API diff against the compare's file
+  set and line counts itself, in place of the JSON `patch` test. A binary
+  file, an empty file and a rename with no change, for which the compare
+  gives no patch either, are accepted on their section's header. Measured:
+  the compare gave a text file no patch at a patch size between about
+  96.7 KB and 130.2 KB (present at 96,665 and 85,949 patch bytes, absent at
+  130,229, 134,913 and 136,851).
+- **The compare proof does not prove every header line is present.** A diff
+  with one header line removed from its middle is accepted by the train's
+  check in 120 of 3,739 measured removals, and in 83 of them the patch id
+  differs; in 72 of the 83 the line is a `---` or `+++` line. No cut
+  produces such a diff. The next sentence to measure for the rule: "a
+  section with a hunk holds its `---` and `+++` lines". Source: the note
+  docs/v3-spike/330-train-compare-proof/README.md.
+- **GitHub served a rename as a deletion and an addition** in a 2,903-file,
+  54,652,486-byte compare (seen once, 2026-11-12, not explored). The two
+  small renames measured (9 and 12 files) were served as renames. If GitHub
+  did so for a compare under 300 files whose JSON says `renamed`, the
+  file-set check would refuse it. Source: the note
+  docs/v3-spike/330-train-compare-proof/README.md.
+- **done (the note docs/v3-spike/330-train-compare-proof/README.md, its
+  "## Follow-up"):** the train fix's one follow-up task (2026-11-13;
+  #1000), eight items. A `\ No newline at end of file` line before any
+  section is the first text and no longer a panic, with three table
+  cases; the table case "three markers inside" reaches its markers; the
+  history test's list reader returns its scanner's error; the note says
+  "the worktree's HEAD at the precheck"; its Known limits gained a type
+  change and three laxities, and its measurements the 24 real forms of
+  the gate; a table case holds two hunks with markers in one section; a
+  kept sentence and two marker cases were put as dictated.
+- **Three small things left by the train fix's follow-up** (2026-11-13;
+  #1002's gate): (a) three wrong edits of the history test's list reader
+  `compareHistoryPairs` pass every test: the pairs read so far returned
+  together with the error of a line that is no pair; an id of 39 characters
+  taken; a line that is no pair passed over. One list closes all three: a
+  good line, then a line of two ids of 39 characters. For whoever next
+  edits `internal/mergetrain/compare_history_test.go`; the real run is
+  guarded by its printed count (`commits 1930`). (b) The note's sentence on
+  the place of a `Binary files … differ` line said "wherever it stands in
+  its section"; corrected in the note on 2026-11-13 (not inside a `GIT
+  binary patch` part). (c) A diff that is one empty line, with an empty
+  file list, is accepted: the empty line before the first section is passed
+  over and nothing follows; a compare with no file is a train that has
+  nothing to prove.
+- **The train's fix is on v3 and not on the squad until a 3.3.0 build is
+  installed** (2026-11-13): the running squad's binary is 3.2.0, whose train
+  still refuses a behind PR when the compare gives a file no patch, and
+  whose seat clean still has limit 35. Until a build with both is installed
+  the lead merges nothing into the base under an open seat PR unless that
+  compare shows a patch for every file.
 
 ### Control bytes and status text
 
@@ -554,6 +664,9 @@ as #960 corrected it.
   refused in 4 of 9 runs on v0.138.0), and the same code is read in v0.134.0
   and on main at 71ef0f47; the fix belongs upstream and rides the AMQ lane of
   3.3.0. (Ruled onto this list on #945's packet, point 5.)
+- Dated 2026-11-12, resolved by 3.3.0's bump: `docs/skills.md:77-78` and
+  `README.md:83` name the `@v3.2.0` install tag beside v3's AMQ 0.140.0
+  floor; the build that tag installs needs 0.116.2 (the merge-back, #989).
 - **The AMQ pin** (2026-11-11): AMQ v0.139.0 removed `launchapi.Inspect`; the
   pin cannot pass v0.138.0 until 3.3.0's R0. The rc.2 notes carry one
   sentence on the supported pin.
@@ -565,6 +678,22 @@ as #960 corrected it.
   soak's record has the run). They were removed on v3 by #969; the 3.2 line
   keeps them, and at its pin v0.116.2 they build. The corrected sentence
   goes into the 3.2.0 notes with the release PR.
+- **The relay's refusal for the seven words D3 added was ruled on its
+  shape** (2026-11-12; the note docs/v3-spike/330-a1-1-words/README.md,
+  Known differences): no relay record existed to count from. Count the
+  `relay_refused_gate_shape` refusals by word from the first real traffic (a
+  relay record under a root that has had a phone request relayed), and
+  narrow the seven added words to the parser's form if decorated lines
+  dominate.
+- **The real-AMQ lane does not install amq-remote or amq-owner-sign**
+  (2026-11-16): it installs `amq` alone (`.github/workflows/ci.yml:132`), and
+  `internal/buzz`'s owner dry-run tests skip when either binary is missing
+  (`internal/buzz/enroll_test.go:773-776`), so they skip in CI. Fix (the plan
+  reviewer, for 3.3.x): the lane installs amq-remote and amq-owner-sign at the
+  pin from the notarized release assets, checksums verified, so those tests
+  run in CI; the lane's test commands select only `internal/cli`,
+  `internal/launchintent` and `internal/adoptionseam` (`ci.yml:147-148`), so it
+  also needs an `internal/buzz` run of them.
 
 ### Evidence tooling
 
@@ -610,6 +739,13 @@ as #960 corrected it.
 - Whole-module tests, `make ci` and `npm test` from different seats compete
   for one host and create load-sensitive failures. Have the harness serialise
   these seat gates, as the lead's agents already do with a host gate lock.
+- **A check over an external format is proved on the format's real
+  instances** (2026-11-12): a corpus of saved real sections as testdata and
+  a run over the repository's history, both handed to the seat (the train's
+  compare proof took three rounds, two of them on forms no table held).
+- **A seat's brief names the one folder the seat may read on the lead's
+  host**; the lead's reference implementation lives outside it (2026-11-12:
+  a seat committed the lead's prototype found beside its inputs).
 
 ### The 3.1.2 plan's eight items, audited against origin/v3 (2026-11-07, at a4dff16c)
 

@@ -153,10 +153,20 @@ func TestNeverWritesTheOwnersGlobalAgentConfig(t *testing.T) {
 // U4: sealed ledgers, evidence and the gate store are kept by default.
 func TestSealedLedgersAndEvidenceAreKeptByDefault(t *testing.T) {
 	f := newFixture(t)
-	if _, err := Run(f.writeOnly()); err != nil {
+	// A1-3: the window re-asks are part of the gate store, kept with it
+	write(t, filepath.Join(f.x, "windows", "g1.json"), "{}\n", 0o600)
+	res, err := Run(f.writeOnly())
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, rel := range []string{"commits/seat-a.json", "ledger/seat-a.jsonl", "routing/outcomes.jsonl", "routing/seed", "scheduler/exits.json", "gates/g1.question.json", "clears/seat-a.json"} {
+	for _, g := range res.Groups {
+		for _, e := range g.Entries {
+			if strings.Contains(e.Path, "windows") && g.ID != GroupGate {
+				t.Errorf("windows/ is planned in group %s (%s), not with the gate store", g.ID, e.Path)
+			}
+		}
+	}
+	for _, rel := range []string{"commits/seat-a.json", "ledger/seat-a.jsonl", "routing/outcomes.jsonl", "routing/seed", "scheduler/exits.json", "gates/g1.question.json", "windows/g1.json", "clears/seat-a.json"} {
 		if !exists(filepath.Join(f.x, rel)) {
 			t.Errorf("%s was removed without --purge", rel)
 		}

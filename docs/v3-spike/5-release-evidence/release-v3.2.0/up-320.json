@@ -1,0 +1,277 @@
+{
+  "schema_version": 1,
+  "kind": "up",
+  "data": {
+    "project": "<home>/code/amq-squad",
+    "root": "<home>/code/amq-squad/.agent-mail/v31",
+    "session": "v31",
+    "lead": "cto",
+    "binary": "<home>/go/bin/amq-squad",
+    "start": "2026-11-12T11:10:57.915571Z",
+    "tmux_session": "squad-lead-amq-squad-f42a4",
+    "attach": "tmux attach -t squad-lead-amq-squad-f42a4",
+    "steps": [
+      {
+        "name": "compile",
+        "outcome": "ok",
+        "detail": "4 seats, lead cto, session v31"
+      },
+      {
+        "name": "install",
+        "outcome": "ok",
+        "detail": "installed <home>/scratch-v320/build/pi/amq-squad (v3.2.0) at <home>/go/bin/amq-squad by temp name and rename"
+      },
+      {
+        "name": "session",
+        "outcome": "skipped",
+        "detail": "skipped: the session root <home>/code/amq-squad/.agent-mail/v31 exists"
+      },
+      {
+        "name": "doctor",
+        "outcome": "ok",
+        "detail": "41 checks, none failed (5 warnings)"
+      },
+      {
+        "name": "lead",
+        "outcome": "ok",
+        "detail": "no recorded lead or scheduler is running"
+      },
+      {
+        "name": "tmux",
+        "outcome": "ok",
+        "detail": "tmux session squad-lead-amq-squad-f42a4 runs <home>/go/bin/amq-squad lead --team in <home>/code/amq-squad"
+      },
+      {
+        "name": "roster",
+        "outcome": "ok",
+        "detail": "roster_incomplete: adopted dev,reviewer; no launch: AMQ refuses a fresh seat into the present binding (binding_present_without_resumable_conversation), so a task for a missing seat's pool blocks for the lead's relaunch (amq-squad scheduler relaunch)"
+      }
+    ],
+    "roster": [
+      {
+        "handle": "cto",
+        "role": "",
+        "runtime": "",
+        "model": "",
+        "effort": "",
+        "state": "stale",
+        "live": false,
+        "reason_code": "no_live_signal",
+        "bucket": "inactive",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "",
+        "last_activity_at": "2026-11-08T18:32:20.057526Z",
+        "last_message_at": "2026-11-08T18:32:20.038637Z",
+        "last_message": "t116: no host lock for seats; attempt 1's finished work is stash d2a85cef, apply it when you claim t116: From Claude's planning session (Omri's orchestrator), with the owner's approval. Answer to your",
+        "prompt_state": "running",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "",
+        "branch": "",
+        "launch": null
+      },
+      {
+        "handle": "dev",
+        "role": "senior-dev",
+        "runtime": "codex",
+        "model": "gpt-5.6-terra",
+        "effort": "medium",
+        "state": "online",
+        "live": true,
+        "reason_code": "idle",
+        "bucket": "ready",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "<home>/code/amq-squad/.worktrees/dev",
+        "last_activity_at": "2026-11-12T11:10:35.022508Z",
+        "last_message_at": "2026-11-11T00:56:16.490587Z",
+        "last_message": "t151 complete: resend IDs are monotonic: Task t151 is done and awaiting harness commit. Changed only internal/buzz/helpers_test.go, internal/buzz/owner_sender_test.go, and docs/v3-spike/320-buzz-attac",
+        "prompt_state": "idle",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "<home>/code/amq-squad/.worktrees/dev",
+        "branch": "seat/dev",
+        "launch": {
+          "launch_id": "36f9c35929a8ea0700347c769800365c",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-12T05:31:59.263421Z",
+            "seat_live": "2026-11-12T05:32:05.241368Z",
+            "first_message": null,
+            "to_seat_live_ms": 5977,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "drain",
+                "ms": 748
+              },
+              {
+                "name": "prepare",
+                "ms": 4250
+              },
+              {
+                "name": "mint",
+                "ms": 139
+              },
+              {
+                "name": "apply",
+                "ms": 688
+              },
+              {
+                "name": "seat_exec",
+                "ms": 150
+              }
+            ]
+          },
+          "added_at": null
+        }
+      },
+      {
+        "handle": "dev2",
+        "role": "senior-dev",
+        "runtime": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "stale",
+        "live": false,
+        "reason_code": "no_live_signal",
+        "bucket": "inactive",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "<home>/code/amq-squad/.worktrees/dev2",
+        "last_activity_at": "2026-11-12T09:45:40.824057Z",
+        "last_message_at": null,
+        "last_message": "",
+        "prompt_state": "running",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "<home>/code/amq-squad/.worktrees/dev2",
+        "branch": "seat/dev2",
+        "launch": {
+          "launch_id": "36f9c35929a8ea0700347c769800365c",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-12T05:31:59.263421Z",
+            "seat_live": "2026-11-12T05:32:05.310458Z",
+            "first_message": null,
+            "to_seat_live_ms": 6047,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "drain",
+                "ms": 748
+              },
+              {
+                "name": "prepare",
+                "ms": 4250
+              },
+              {
+                "name": "mint",
+                "ms": 139
+              },
+              {
+                "name": "apply",
+                "ms": 688
+              },
+              {
+                "name": "seat_exec",
+                "ms": 219
+              }
+            ]
+          },
+          "added_at": null
+        },
+        "warnings": [
+          "seat_stalled_at_dialog: a harness dialog has been open since 2026-11-12T09:45:28Z (1h25m34s); the seat waits at it and AMQ holds its doorbell"
+        ]
+      },
+      {
+        "handle": "reviewer",
+        "role": "qa",
+        "runtime": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "needs_you",
+        "live": true,
+        "reason_code": "question_to_owner",
+        "bucket": "needs_you",
+        "bucket_marker": "",
+        "task_id": "",
+        "project_path": "<home>/code/amq-squad/.worktrees/reviewer",
+        "last_activity_at": "2026-11-12T11:10:35.058314Z",
+        "last_message_at": "2026-11-10T02:53:56.381823Z",
+        "last_message": "t133-postcommit-audit: PR #937 was created and all code/tests are green, but my post-commit audit found three note-only brief omissions (K4b, K5, K5b). I sent exact corrections to lead, cto, and activ",
+        "prompt_state": "idle",
+        "tokens_in": null,
+        "tokens_out": null,
+        "worktree": "<home>/code/amq-squad/.worktrees/reviewer",
+        "branch": "seat/reviewer",
+        "launch": {
+          "launch_id": "36f9c35929a8ea0700347c769800365c",
+          "outcome": "live",
+          "reason_code": "",
+          "wake": {
+            "mode": "enabled",
+            "require_wake": true,
+            "injector": "raw",
+            "audit_reason": ""
+          },
+          "timing": {
+            "start": "2026-11-12T05:31:59.263421Z",
+            "seat_live": "2026-11-12T05:32:05.168357Z",
+            "first_message": null,
+            "to_seat_live_ms": 5904,
+            "to_first_message_ms": null,
+            "ceiling_ms": 10000,
+            "over_ceiling": false,
+            "slowest_segment": "prepare",
+            "segments": [
+              {
+                "name": "drain",
+                "ms": 748
+              },
+              {
+                "name": "prepare",
+                "ms": 4250
+              },
+              {
+                "name": "mint",
+                "ms": 139
+              },
+              {
+                "name": "apply",
+                "ms": 688
+              },
+              {
+                "name": "seat_exec",
+                "ms": 77
+              }
+            ]
+          },
+          "added_at": null
+        }
+      }
+    ]
+  }
+}

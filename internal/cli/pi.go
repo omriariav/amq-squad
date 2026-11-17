@@ -20,6 +20,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/role"
+	"github.com/omriariav/amq-squad/v3/internal/team"
 )
 
 // The built-in pi (plan 4.1, R1, R2, brief 4-1). `amq-squad pi run` is the
@@ -151,6 +152,16 @@ type piLaunchSpec struct {
 }
 
 func piLaunch(s piLaunchSpec) error {
+	// The seat names paths before anything reads or writes them: its agent
+	// dir (AgentDirFor), its ledger under the AMQ root (CheckResume on
+	// --resume) and its TMPDIR. Every caller passes it here first (pi run's
+	// --seat or AM_ME, the lead's AM_ME or squad identity), so it is checked
+	// here, before any of them, by the squad's own admission rule: every
+	// handle a squad can have passes team.ValidateHandle, and no handle that
+	// passes it names a path outside its directory (no "/" and no ".").
+	if err := team.ValidateHandle(s.Seat); err != nil {
+		return usageErrorf("pi: seat %q: %v", s.Seat, err)
+	}
 	start := time.Now()
 	home, err := os.UserHomeDir()
 	if err != nil {

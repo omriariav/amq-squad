@@ -19,7 +19,7 @@ amq-squad trust P
 amq-squad roles
 ```
 
-`doctor` probes the AMQ version and launch API (0.116.2 or later), the tools on PATH
+`doctor` probes the AMQ version and launch API (0.140.0 or later), the tools on PATH
 with their logins, the registry, codex-cli trust and the owner files; it writes
 nothing by default. `trust` prints the lines the owner adds to `~/.codex/config.toml`
 for a Codex seat's repository; amq-squad never writes that file. The owner setup

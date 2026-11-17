@@ -1,0 +1,24 @@
+────────────────────────────────────────────────────────────────────────────────
+────────────────────────────────────────────────────────────────────────────────
+
+────────────────────────────────────────────────────────────────────────────────
+amq-squad: lead cto (pid 6643, pane %153) · root <home>/code/amq-squad/...
+seats (4)
+  cto  -  stopped
+  dev  codex gpt-5.6-terra medium  idle  · up in 5.1s
+    ! seat dev asked for a permission 2s ago this turn; if it is not moving, ...
+  dev2  codex gpt-5.6-sol high  starting on t179: 3.3.0 S1-2b, round 2, secon...
+  reviewer  codex gpt-5.6-sol high  waiting: on your answer to its question  ...
+tasks (179)
+  t179 in progress on dev2: 3.3.0 S1-2b, round 2, second dispatch: carries b1...
+  178 closed
+train
+  running: none
+  last run: merged a PR, 2h ago; PRs #983; 1 merged
+    ! release v3.2.0-rc.2 on omriariav/amq-squad has no accepted owner gate
+    ! tag v3.2.0-rc.2 on omriariav/amq-squad has no accepted owner gate
+waiting on you (0)
+  Nothing is waiting on you.
+----------
+  dev: seat_stalled_at_dialog: a harness dialog has been open since 2026-11-1...
+~/code/amq-squad (v3)

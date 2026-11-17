@@ -314,7 +314,18 @@ func (s Store) State(rec Record, now time.Time) string {
 	if d := s.Decision(rec.GateID); d != "" {
 		return d
 	}
-	if _, _, na, err := rec.Window(); err == nil && now.After(na) {
+	_, _, na, err := rec.Window()
+	if err != nil {
+		return StateOpen
+	}
+	// a window re-ask opens a new window (A1-3): the gate is open again
+	// until its derived end
+	if w, _ := s.ReadWindow(rec.GateID); w != nil {
+		if _, end, err := w.WindowEnd(rec); err == nil {
+			na = end
+		}
+	}
+	if now.After(na) {
 		return StateExpired
 	}
 	return StateOpen
@@ -356,6 +367,11 @@ const (
 // ErrConsumed is a replay: the gate or the event was already used.
 var ErrConsumed = errors.New(RejectReplayed)
 
+// ErrWindowChanged is CommitVerified's refusal: the gate's window re-ask is
+// not the one the answer was verified against (one was reserved, or
+// replaced, between the verifier's read and the commit).
+var ErrWindowChanged = errors.New("window_changed")
+
 // commitHook runs inside Commit after the replay check and before any write;
 // tests widen the race window with it.
 var commitHook = func() {}
@@ -366,7 +382,16 @@ var commitHook = func() {}
 // consumed marks (gate, then event; O_EXCL, fsynced). The first committed
 // answer, approve or deny, closes the gate. A crash between the answer file
 // and the marks leaves an unconsumed answer that re-verifies on restart.
-func (s Store) Commit(f AnswerFile) error {
+func (s Store) Commit(f AnswerFile) error { return s.commit(f, false, "") }
+
+// CommitVerified is Commit with the window re-ask the answer was verified
+// against as a precondition (A1-3): its event id, "" for none. Under the gate
+// lock, after the replay check, a different stored window re-ask (one
+// reserved since the verifier read the store) is ErrWindowChanged and
+// nothing is written; the caller verifies again.
+func (s Store) CommitVerified(f AnswerFile, window string) error { return s.commit(f, true, window) }
+
+func (s Store) commit(f AnswerFile, checkWindow bool, window string) error {
 	id := f.Gate.GateID
 	if err := ValidGateID(id); err != nil {
 		return err
@@ -400,6 +425,19 @@ func (s Store) Commit(f AnswerFile) error {
 		return err
 	}
 	commitHook()
+	if checkWindow {
+		w, err := s.read(windowsDir, id)
+		if err != nil {
+			return err
+		}
+		cur := ""
+		if w != nil {
+			cur = w.EventID
+		}
+		if cur != window {
+			return fmt.Errorf("%w: gate %s's window re-ask is %q, the answer was verified against %q", ErrWindowChanged, id, cur, window)
+		}
+	}
 	if err := writeAtomic(s.Dir(sub, id+".json"), mustJSON(f)); err != nil {
 		return fmt.Errorf("write %s (nothing consumed): %w", sub, err)
 	}
@@ -571,6 +609,91 @@ type Reask struct {
 // caller publishes the reserved bytes and marks them published; a later call
 // returns the same event for a retry.
 func (s Store) ReserveReask(gateID string, build func() (Reask, error)) (Reask, bool, error) {
+	return s.reserve(reasksDir, gateID, build)
+}
+
+// ReaskPublished reports whether the gate's re-ask was published.
+func (s Store) ReaskPublished(gateID string) bool { return s.published(reasksDir, gateID) }
+
+// MarkReaskPublished records that the gate's re-ask reached the relay.
+func (s Store) MarkReaskPublished(gateID string) error { return s.markPublished(reasksDir, gateID) }
+
+// PutReask records the gate's re-ask once; a second one fails os.ErrExist.
+func (s Store) PutReask(r Reask) error { return s.put(reasksDir, r) }
+
+// ReadReask reads the gate's re-ask, nil when none was posted.
+func (s Store) ReadReask(gateID string) (*Reask, error) { return s.read(reasksDir, gateID) }
+
+// The window re-ask (A1-3, D4 "the window"): when an owner answer in the gate
+// thread comes after the gate's window, the gate is asked again in the same
+// thread with a new window, once. It is stored like the re-ask, in its own
+// directory (a gate can have both): reserved under the gate lock, fsynced,
+// then published and marked. The new window is never stored: it is
+// WindowEnd, derived from the re-ask's signed created_at and the record.
+
+// ReserveWindow returns the gate's one window re-ask, creating it once.
+// It refuses (ErrConsumed) a gate that is already decided, under the same
+// gate lock as Commit: an approval committed by another handler since this
+// one's replay check must never be followed by a window that its own
+// verification would then fail.
+func (s Store) ReserveWindow(gateID string, build func() (Reask, error)) (Reask, bool, error) {
+	return s.reserve(windowsDir, gateID, build)
+}
+
+// WindowPublished reports whether the gate's window re-ask was published.
+func (s Store) WindowPublished(gateID string) bool { return s.published(windowsDir, gateID) }
+
+// MarkWindowPublished records that the gate's window re-ask reached the relay.
+func (s Store) MarkWindowPublished(gateID string) error { return s.markPublished(windowsDir, gateID) }
+
+// PutWindow records the gate's window re-ask once.
+func (s Store) PutWindow(r Reask) error { return s.put(windowsDir, r) }
+
+// ReadWindow reads the gate's window re-ask, nil when none was posted.
+func (s Store) ReadWindow(gateID string) (*Reask, error) { return s.read(windowsDir, gateID) }
+
+// ReaskEventIDs are the event ids of the gate's re-ask and window re-ask
+// that exist: with the question's, the ids an answer's thread may name.
+func (s Store) ReaskEventIDs(gateID string) []string {
+	var ids []string
+	for _, sub := range []string{reasksDir, windowsDir} {
+		if r, _ := s.read(sub, gateID); r != nil {
+			ids = append(ids, r.EventID)
+		}
+	}
+	return ids
+}
+
+// WindowEnd is the end of the new window a window re-ask opens: its signed
+// created_at plus the record's own window length (not_after - issued_at).
+// The answer must be created strictly after the re-ask and no later than
+// this. It reads the event's created_at only; gateverify checks the event.
+func (r Reask) WindowEnd(rec Record) (at, end time.Time, err error) {
+	var e struct {
+		CreatedAt int64 `json:"created_at"`
+	}
+	if err := json.Unmarshal([]byte(r.RawEvent), &e); err != nil || e.CreatedAt <= 0 {
+		return at, end, errors.New("window re-ask has no created_at")
+	}
+	issued, _, na, err := rec.Window()
+	if err != nil {
+		return at, end, err
+	}
+	at = time.Unix(e.CreatedAt, 0)
+	return at, at.Add(na.Sub(issued)), nil
+}
+
+const (
+	reasksDir  = "reasks"
+	windowsDir = "windows"
+)
+
+// TopDirs are the directories this store writes under its root, every one
+// (a test runs each writer and compares). The temp sweep walks them, and
+// uninstall keeps them with the gate store unless --purge.
+var TopDirs = []string{"gates", "answers", "denials", reasksDir, windowsDir, "consumed"}
+
+func (s Store) reserve(sub, gateID string, build func() (Reask, error)) (Reask, bool, error) {
 	if err := ValidGateID(gateID); err != nil {
 		return Reask{}, false, err
 	}
@@ -582,13 +705,22 @@ func (s Store) ReserveReask(gateID string, build func() (Reask, error)) (Reask, 
 		return Reask{}, false, err
 	}
 	defer lock.Close()
-	if r, err := s.ReadReask(gateID); err != nil || r != nil {
+	if r, err := s.read(sub, gateID); err != nil || r != nil {
 		if r == nil {
 			return Reask{}, false, err
 		}
 		return *r, false, err
 	}
-	if err := clearUnusable(s.Dir("reasks", gateID+".json")); err != nil {
+	if sub == windowsDir {
+		decided, _, err := s.recoverLocked(gateID)
+		if err != nil {
+			return Reask{}, false, err
+		}
+		if decided != nil {
+			return Reask{}, false, fmt.Errorf("%w: gate %s has a %s answer; no window re-ask", ErrConsumed, gateID, decided.Decision)
+		}
+	}
+	if err := clearUnusable(s.Dir(sub, gateID+".json")); err != nil {
 		return Reask{}, false, err
 	}
 	r, err := build()
@@ -598,30 +730,27 @@ func (s Store) ReserveReask(gateID string, build func() (Reask, error)) (Reask, 
 	if r.GateID != gateID {
 		return Reask{}, false, errors.New("re-ask names another gate")
 	}
-	return r, true, s.PutReask(r)
+	return r, true, s.put(sub, r)
 }
 
-// ReaskPublished reports whether the gate's re-ask was published.
-func (s Store) ReaskPublished(gateID string) bool {
-	_, err := os.Lstat(s.Dir("reasks", gateID+".published"))
+func (s Store) published(sub, gateID string) bool {
+	_, err := os.Lstat(s.Dir(sub, gateID+".published"))
 	return err == nil
 }
 
-// MarkReaskPublished records that the gate's re-ask reached the relay.
-func (s Store) MarkReaskPublished(gateID string) error {
+func (s Store) markPublished(sub, gateID string) error {
 	if err := ValidGateID(gateID); err != nil {
 		return err
 	}
-	err := writeOnce(s.Dir("reasks", gateID+".published"), []byte("published\n"))
+	err := writeOnce(s.Dir(sub, gateID+".published"), []byte("published\n"))
 	if errors.Is(err, os.ErrExist) {
 		return nil
 	}
 	return err
 }
 
-// PutReask records the gate's re-ask once; a second one fails os.ErrExist.
-func (s Store) PutReask(r Reask) error {
-	dir, err := s.path(r.GateID, "reasks")
+func (s Store) put(sub string, r Reask) error {
+	dir, err := s.path(r.GateID, sub)
 	if err != nil {
 		return err
 	}
@@ -631,9 +760,8 @@ func (s Store) PutReask(r Reask) error {
 	return writeOnce(filepath.Join(dir, r.GateID+".json"), mustJSON(r))
 }
 
-// ReadReask reads the gate's re-ask, nil when none was posted.
-func (s Store) ReadReask(gateID string) (*Reask, error) {
-	dir, err := s.path(gateID, "reasks")
+func (s Store) read(sub, gateID string) (*Reask, error) {
+	dir, err := s.path(gateID, sub)
 	if err != nil {
 		return nil, err
 	}
@@ -642,7 +770,7 @@ func (s Store) ReadReask(gateID string) (*Reask, error) {
 		return nil, err
 	}
 	if r.GateID != gateID || !hex64.MatchString(r.EventID) {
-		return nil, nil // not a re-ask of this gate: absent; ReserveReask replaces it under the lock
+		return nil, nil // not a re-ask of this gate: absent; reserve replaces it under the lock
 	}
 	return &r, nil
 }
@@ -739,7 +867,15 @@ const tempGrace = time.Minute
 func (s Store) sweepTemps(lockedAt time.Time) error {
 	cutoff := lockedAt.Add(-tempGrace)
 	var errs []error
-	for _, d := range [][]string{{"gates"}, {"answers"}, {"denials"}, {"reasks"}, {"consumed", "gates"}, {"consumed", "events"}} {
+	var dirs [][]string
+	for _, d := range TopDirs {
+		if d == "consumed" {
+			dirs = append(dirs, []string{"consumed", "gates"}, []string{"consumed", "events"})
+			continue
+		}
+		dirs = append(dirs, []string{d})
+	}
+	for _, d := range dirs {
 		dir := s.Dir(d...)
 		entries, err := os.ReadDir(dir)
 		if err != nil {

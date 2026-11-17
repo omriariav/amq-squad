@@ -1,0 +1,6 @@
+30d7c1842679f0241c2c0315b1eda1e0dbf7713ce6a9c946fde68d8d03df6b73  tracked.patch
+4006123ed3e3600f42aaa5fb11e1a057b8c03ac0a2582fe10f93e1b77ec90669  untracked/docs/v3-spike/330-s1-2b-reasons/README.md
+fa10cd332b78d1f2a0f6a6ed7c902b11df81d4ea84f39f11c86fb08ad69f93a6  untracked/docs/v3-spike/330-s1-2b-reasons/corrections-to-s1-2a.md
+dfd53752d45d56c85d762c69b6a64bbc7047b78113b1045453a0f5cdd2d935bc  untracked/docs/v3-spike/330-s1-2b-reasons/sites.md
+8836f1d118c34c2e4d8ccf2929063f93cfceaebde49def176f0be63fc6be1c54  untracked/internal/statecontract/reasons.go
+83d41ed264e4f8aa1ce7c99602f23026e655e1f0078bbdc5f0b74a857987f28d  untracked/internal/statecontract/reasons_test.go

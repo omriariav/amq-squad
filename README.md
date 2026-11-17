@@ -26,7 +26,7 @@ The model in five lines:
 
 ## Contents
 
-- [What's new in 3.2.0](#whats-new-in-320)
+- [What's new in 3.3.0](#whats-new-in-330)
 - [Install](#install)
 - [Requirements](#requirements)
 - [First run](#first-run)
@@ -38,40 +38,20 @@ The model in five lines:
 - [Upgrading from v2](#upgrading-from-v2)
 - [Where the plan and evidence live](#where-the-plan-and-evidence-live)
 
-## What's new in 3.2.0
+## What's new in 3.3.0
 
-3.2.0 fixes how the squad keeps working on its own:
-[docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md).
-In short:
+3.3.0 makes answering from your phone work the same way more often:
+[docs/v3.3.0-release-notes.md](docs/v3.3.0-release-notes.md). In short:
 
-- A seat's lease is renewed from its own work, never past its task's budget,
-  with no `task renew` call needed. The budget is squad.yaml's `task_budget`
-  (90 minutes by default) or `task add --budget`; the lead lengthens it with
-  `task extend ID --by DURATION`. A lease from 3.1.2 gets a budget end at
-  least one lease after the restart; its own expiry is unchanged.
-- Codex seats need one owner step: after installing, launch one Codex seat,
-  run Codex's `/hooks` and trust the amq-squad activity entries at the
-  installed path. Nothing writes that trust for you. Until then doctor warns
-  and a Codex seat renews by hand.
-- A commit ledger refused as tampered is copied to a quarantine directory
-  before anything else writes. A tamper alarm holds that seat once per alarm,
-  and the lead recovers the exact slot with `amq-squad scheduler recover`.
-- Commit and exits ledgers seal their exact bytes and their heads, and
-  migrate on their next write. After that, v3.1.2 and v3.2.0-rc.1 report the
-  ledgers as tampered, and `up --binary` refuses to install either.
-- A cancelled seat is closed, its work archived and its worktree cleaned
-  before the slot is released; `amq-squad seat clean` cleans a stopped seat.
-- With a live scheduler, `task claim` takes the scheduler's offer, and a
-  claim checks the seat's serving pool.
-- The lead's screen cuts every line to the pane's width. A seat handle with a
-  control character is refused, and status and the task listings replace
-  control characters.
-- The merge train waits for GitHub's branch update, asks the owner only
-  actionable questions, reads a diff with escape bytes, and skips legacy gate
-  records. Until a 3.2.x fix, the lead lands a PR through the train only when
-  its task has no live lease and no queued commit result.
-- The notes list 3.2.0's known limits, among them a Buzz answer that may need
-  sending again; what waits is in the 3.2.x list of
+- An answer in a gate's thread after its time ran out gets the question asked
+  again in that thread, once, with a new window; answer again in the thread.
+- Every reply to a verified answer names the decision: `accepted <gate>
+  <class> approved` or `accepted <gate> <class> denied`.
+- The lead's screen says once, in its waiting header, to answer on the phone.
+- `status --json` and `task show --json` say which task moves are open next.
+- AMQ 0.140.0 is the floor: doctor refuses an older `amq`, `amq-remote` or
+  `amq-owner-sign`.
+- The notes list 3.3.0's known limits; what waits is in
   [docs/v3-followups.md](docs/v3-followups.md).
 
 Earlier releases are in their notes, listed under
@@ -80,7 +60,7 @@ Earlier releases are in their notes, listed under
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.2.0
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.3.0
 amq-squad version
 ```
 
@@ -107,8 +87,8 @@ omriariav/amq-squad`. The skills (`amq-squad:wizard`, `amq-squad:cli`,
 
 `amq-squad doctor` probes all of these and names what is missing:
 
-- `amq` 0.116.2 or later on `PATH` (and `amq-remote`, `amq-owner-sign` at the
-  same release when installed); `amq-squad doctor` refuses an older one
+- `amq` 0.140.0 or later on `PATH` (and `amq-remote`, `amq-owner-sign`, each
+  0.140.0 or later when installed); `amq-squad doctor` refuses an older one
 - Claude Code (`claude`) for Claude seats, with the owner's pin and token file
   (below)
 - Codex (`codex`) for Codex seats, with each seat repository trusted in
@@ -117,15 +97,15 @@ omriariav/amq-squad`. The skills (`amq-squad:wizard`, `amq-squad:cli`,
   `ollama` for local pi models
 - `tmux`: AMQ creates each seat as a tmux pane
 - `gh`, pinned in the registry, for the harness's PRs and HTTPS pushes
-- macOS on Apple silicon (see "Platforms" below); Go 1.25+ to build
+- macOS on Apple silicon (see "Platforms" below); Go 1.26.11+ to build
 - `pandoc` 3.11 only to regenerate or check `README.html` and `docs/skills.html`
 
-AMQ 0.116.2 is the minimum supported release: it is the AMQ module 3.0 links,
-and every 3.0 path needs its launch adapters (pi seats through the pi adapter,
+AMQ 0.140.0 is the minimum supported release: it is the AMQ module this build
+links, and every path needs its launch adapters (pi seats through the pi adapter,
 the Codex sandbox pins in the launch request) and its mailbox. `amq-squad
 doctor` refuses an installed `amq`, `amq-remote` or `amq-owner-sign` below it
 and prints the upgrade line (`amq upgrade --all -y`, or `brew upgrade
-avivsinai/tap/amq`). CI runs the real-AMQ lane at the pinned v0.116.2, which
+avivsinai/tap/amq`). CI runs the real-AMQ lane at the pinned v0.140.0, which
 is required, and at `latest` as a non-blocking canary; a canary failure reads
 as upstream drift, not as a support claim.
 
@@ -439,7 +419,12 @@ Two entry points, each one AMQ launch request with every seat behind
   ```
 
   (drop `--dry-run` to start it; a pi-runtime build only). `scheduler run`
-  creates an absent AMQ root and session the way `up` does. The lead takes
+  creates an absent AMQ root and session the way `up` does, when the session
+  directory does not exist. Started by `lead --team` it finds the directory
+  the lead has already made and creates nothing: in a repository where `amq
+  coop init` has not run, `lead --team` creates no session and the launch
+  is refused (`base_root_unauthorized`); do host step 1 first, or start
+  with `up`. The lead takes
   squad.yaml's AMQ identity (its session root, its `lead:` handle); an
   `AM_ME`/`AM_ROOT` already in the environment must match it or it refuses.
   One lead per root: a second `lead --team` on the same root is refused
@@ -573,10 +558,11 @@ session's mailbox (or with `--lead` to one squad lead). The owner's guide is
 - **What the relay never carries.** Only the lead's own text reaches your DM,
   after `redact.Block`; the attachment never writes a line of its own from
   status. It refuses a reply with a line that is, as a whole, a gate answer
-  (`yes`, `no`, `approve`, `deny`, alone or with a gate id or the typed
-  tuple), a line naming an open gate's id, or a line of an open gate's
-  question. It never posts into a gate question's thread. A sentence like
-  "No, the build is green" posts. A refusal is recorded by name
+  (one of the eleven words a bare answer can be: `yes`, `approve`, `y`,
+  `ok`, `go ahead`, `כן`, `no`, `deny`, `n`, `stop`, `לא`; alone or with a
+  gate id or the typed tuple), a line naming an open gate's id, or a line of
+  an open gate's question. It never posts into a gate question's thread. A
+  sentence like "No, the build is green" posts. A refusal is recorded by name
   (`relay_refused_gate_shape`) and a sha256 of the line, and shows in the
   lead's team screen and in `status` under `requests`. The lead never
   holds a key: the body key stays in the attachment.
@@ -594,10 +580,12 @@ session's mailbox (or with `--lead` to one squad lead). The owner's guide is
   amq-squad gate rel-gh-...
   ```
 
-  Answer with a bare `yes` or `no` replied in the question's thread (case
-  and a trailing `.` or `!` do not matter). The thread and your signature
-  bind the answer to its gate; there is nothing else to type. The core of
-  the squad that raised it fetches and verifies the signed event itself. A
+  Answer with one of the words `yes`, `approve`, `y`, `ok`, `go ahead`, `כן`
+  (yes) or `no`, `deny`, `n`, `stop`, `לא` (no), alone, replied in the
+  question's thread; case and one trailing punctuation mark do not matter.
+  The thread and your signature bind the answer to its gate; there is
+  nothing else to type. The core of the squad that raised it fetches and
+  verifies the signed event itself. A
   `yes` or `no` outside the thread gets one re-ask in the thread, "Reply yes
   or no to this message."; a `yes` in another gate's thread answers that
   gate only. The 3.0 typed line (`approve <gate> <class> <prefix>`) still
@@ -681,7 +669,7 @@ amq-squad migrate .amq-squad/team.json
 | The 3.0 plan, its rulings, phases and recorded limits | [docs/v3-plan.md](docs/v3-plan.md) |
 | The phase briefs and their rulings | [docs/v3-phase2-briefs.md](docs/v3-phase2-briefs.md) |
 | Execution logs and evidence per brief | [docs/v3-spike/](docs/v3-spike/) |
-| Release notes | [docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md), [docs/v3.1.2-release-notes.md](docs/v3.1.2-release-notes.md), [docs/v3.1.1-release-notes.md](docs/v3.1.1-release-notes.md), [docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md), [docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md), [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
+| Release notes | [docs/v3.3.0-release-notes.md](docs/v3.3.0-release-notes.md), [docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md), [docs/v3.1.2-release-notes.md](docs/v3.1.2-release-notes.md), [docs/v3.1.1-release-notes.md](docs/v3.1.1-release-notes.md), [docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md), [docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md), [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
 | squad.yaml schema 1 | [docs/squad-yaml.md](docs/squad-yaml.md) |
 | Status contract, schema 1 | [docs/status-contract.md](docs/status-contract.md) |
 | Claude Code seat hooks | [docs/claude-hooks.md](docs/claude-hooks.md) |

@@ -196,6 +196,8 @@ func seatcommitCodes(t *testing.T) []string {
 		"task.BlockVerdictMissing":      {task.BlockVerdictMissing},
 		"task.ReasonGrowthGateRequired": {task.ReasonGrowthGateRequired},
 		"task.BlockVerdictTreeMismatch": {task.BlockVerdictTreeMismatch},
+		"task.WidenReasonOutside":       {task.WidenReasonOutside},
+		"task.WidenReasonProtected":     {task.WidenReasonProtected},
 		"registry.PinMismatch":          {registry.PinMismatch},
 		// planVerifier's code: its own returns are scanned below; through it
 		// registry.OpenPinned's codes reach a refusal too

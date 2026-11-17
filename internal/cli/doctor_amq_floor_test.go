@@ -33,16 +33,16 @@ func floorRows(t *testing.T) map[string]doctorCheck {
 }
 
 // Brief 5-amq-A acceptance 5: doctor refuses an installed AMQ below
-// v0.116.2 (a stub amq on PATH answering an older version), with the install
-// line, and passes at v0.116.2; amq-remote and amq-owner-sign are held to
+// v0.140.0 (a stub amq on PATH answering an older version), with the install
+// line, and passes at v0.140.0; amq-remote and amq-owner-sign are held to
 // the same floor (their --version output shapes, "amq-remote 0.107.0" and a
 // bare "0.107.0", as the real binaries print them).
 func TestDoctorInstalledAMQFloor(t *testing.T) {
-	stubAMQBinaries(t, map[string]string{"amq": "0.116.1", "amq-remote": "amq-remote 0.107.0", "amq-owner-sign": "0.116.2"})
+	stubAMQBinaries(t, map[string]string{"amq": "0.139.9", "amq-remote": "amq-remote 0.107.0", "amq-owner-sign": "0.140.0"})
 	rows := floorRows(t)
 	for _, name := range []string{"amq", "amq-remote"} {
 		c := rows[name]
-		if c.Status != doctorFail || c.Kind != "amq_below_floor" || !strings.Contains(c.Detail, "below the installed floor 0.116.2") || !strings.Contains(c.Detail, "amq upgrade --all -y") {
+		if c.Status != doctorFail || c.Kind != "amq_below_floor" || !strings.Contains(c.Detail, "below the installed floor 0.140.0") || !strings.Contains(c.Detail, "amq upgrade --all -y") {
 			t.Errorf("%s below the floor: %+v", name, c)
 		}
 	}
@@ -50,7 +50,7 @@ func TestDoctorInstalledAMQFloor(t *testing.T) {
 		t.Errorf("amq-owner-sign at the floor: %+v", c)
 	}
 
-	stubAMQBinaries(t, map[string]string{"amq": "0.116.2", "amq-remote": "amq-remote 0.116.2", "amq-owner-sign": "v0.117.0"})
+	stubAMQBinaries(t, map[string]string{"amq": "0.140.0", "amq-remote": "amq-remote 0.140.0", "amq-owner-sign": "v0.141.0"})
 	for name, c := range floorRows(t) {
 		if c.Status != doctorOK {
 			t.Errorf("%s at or above the floor: %+v", name, c)
@@ -59,7 +59,7 @@ func TestDoctorInstalledAMQFloor(t *testing.T) {
 
 	// A prerelease of the floor is below it; garbage is a refusal; a missing
 	// amq is a refusal, a missing amq-remote a warning.
-	stubAMQBinaries(t, map[string]string{"amq": "0.116.2-rc1", "amq-owner-sign": "no version here"})
+	stubAMQBinaries(t, map[string]string{"amq": "0.140.0-rc1", "amq-owner-sign": "no version here"})
 	rows = floorRows(t)
 	if rows["amq"].Status != doctorFail || rows["amq-owner-sign"].Status != doctorFail || rows["amq-remote"].Status != doctorWarn {
 		t.Errorf("prerelease, garbage, missing: %+v", rows)

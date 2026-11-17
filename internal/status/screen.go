@@ -210,7 +210,7 @@ const (
 	WarnWakeOff          = "wake_off"
 	WarnStalledAtDialog  = "seat_stalled_at_dialog"
 	WarnPiProviderNoKey  = "pi_provider_key_missing"
-	wakeDialogMarkerName = ".wake.dialog" // AMQ's dialog marker (internal/cli/wake_dialog.go at v0.116.2)
+	wakeDialogMarkerName = ".wake.dialog" // AMQ's dialog marker (internal/dialogguard/dialogguard.go:11 at v0.140.0)
 )
 
 // launchWarnings are the seat warnings from its launch, its mailbox and its

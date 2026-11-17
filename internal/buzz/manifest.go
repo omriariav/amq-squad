@@ -9,7 +9,7 @@ import (
 )
 
 // The share root's amq-remote manifest, the fields the binding reads
-// (v0.116.2 internal/remote/manifest/manifest.go; cmd/amq-remote/README.md
+// (v0.140.0 internal/remote/manifest/manifest.go; cmd/amq-remote/README.md
 // "Manifest" and "Strict share in one owner step"). amq-remote writes it
 // (`share --target --relay`); amq-squad only reads it.
 type manifestFile struct {

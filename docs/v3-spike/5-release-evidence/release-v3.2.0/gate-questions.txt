@@ -1,0 +1,9 @@
+rel-tag-febadaefa50d6c911a51 class tag target: git tag v3.2.0 e93ab08c378265e8b0a7d7a6123bc834feec5c67 on omriariav/amq-squad
+  issued_at 2026-11-12T10:13:21Z not_after 2026-11-12T10:43:21Z raised_by lead
+  question event 9797cb4273f655b170ad614d59721c9eb0954382e69efa90de7697f34f5e54f2 posted_at 2026-11-12T10:13:21Z
+  answer files: 0
+rel-gh-c03a383c637a3b75983e class github_release target: gh release create v3.2.0 on omriariav/amq-squad
+  issued_at 2026-11-12T10:13:22Z not_after 2026-11-12T10:43:22Z raised_by lead
+  question event e3b46803f231bb6ffb6eb03414c252f79cce56147c4294e3b928a84a944ed85f posted_at 2026-11-12T10:13:22Z
+  answer files: 0
+# read 2026-11-12T10:19:58Z: jq over <gate>.json (gate_id, class, target, issued_at, not_after, raised_by) and <gate>.question.json (event_id, posted_at); ls for answer files; 6 files in the gates directory

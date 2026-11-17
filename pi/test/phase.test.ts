@@ -155,7 +155,11 @@ function soloWorld() {
 			path.join(soloRoot, "extensions", "amq-squad", "phase.json"),
 			JSON.stringify({ schema: 1, phase: "team", project: "/repo", root: squadRoot, base_root: path.dirname(squadRoot), session: "s1", handle: "cto", digest: DIGEST, at: "2026-11-01T09:00:00.123Z", pid: process.ppid, start: "darwin-tv:1.1" }),
 		);
-	const env: Record<string, string> = { AM_ME: "lead", AM_ROOT: soloRoot, AM_SESSION: "solo", AMQ_SQUAD_BIN: fakeBin(dir), AMQ_SQUAD_SOLO_LEAD: "1", AMQ_SQUAD_PROJECT: "/repo", FAKE_NONCE: NONCE, ...files };
+	// flake 5 (docs/v3-followups.md): the guard's fail-closed timeout is the
+	// product's (5 s, hooks.ts); here each guard call starts a fresh shell,
+	// which host load can hold past 5 s, so the rows give guard a budget load
+	// cannot exhaust (they test the switch, not the timeout)
+	const env: Record<string, string> = { AM_ME: "lead", AM_ROOT: soloRoot, AM_SESSION: "solo", AMQ_SQUAD_BIN: fakeBin(dir), AMQ_SQUAD_SOLO_LEAD: "1", AMQ_SQUAD_PROJECT: "/repo", AMQ_SQUAD_HOOK_TIMEOUT_MS: "600000", FAKE_NONCE: NONCE, ...files };
 	return { dir, soloRoot, squadRoot, team, applyReply, marker, env };
 }
 
@@ -597,7 +601,7 @@ test("context --host's timeout is above Go's host budget", async () => {
 // keyed. Each refresh is
 // the verbs running again; nothing changed runs nothing.
 test("the host line refreshes on a linked worktree's HEAD, a gate decision, an expired gate, the launch record and the AMQ executable", async () => {
-	const { HostFacts } = await import("../extensions/lib/firstturn.ts");
+	const { HostFacts, GATE_DIRS } = await import("../extensions/lib/firstturn.ts");
 	const { run } = await import("../extensions/lib/verbs.ts");
 	const w = soloWorld();
 	const home = gitHome(w.dir);
@@ -610,7 +614,7 @@ test("the host line refreshes on a linked worktree's HEAD, a gate decision, an e
 	git(repo, "worktree", "add", "-q", wt, "-b", "wtb");
 	assert.ok(fs.statSync(path.join(wt, ".git")).isFile(), "the worktree's .git is not a pointer file");
 	const ext = path.join(w.squadRoot, "extensions", "amq-squad");
-	for (const d of ["gates", "answers", "denials", path.join("consumed", "gates"), path.join("launch", "cto")]) fs.mkdirSync(path.join(ext, d), { recursive: true });
+	for (const d of [...GATE_DIRS, path.join("launch", "cto")]) fs.mkdirSync(path.join(ext, d), { recursive: true });
 	let now = new Date("2026-11-01T09:00:00Z");
 	fs.writeFileSync(path.join(ext, "gates", "g1.json"), JSON.stringify({ gate_id: "g1", class: "tag", digest: "d", not_after: "2026-11-01T09:01:00Z" }));
 	fs.writeFileSync(path.join(ext, "launch", "cto", "launch.json"), "{}");
@@ -672,4 +676,82 @@ test("gitExec is the only process exec in the phase tests", () => {
 	assert.equal(env.GIT_CONFIG_NOSYSTEM, "1");
 	assert.equal(env.GIT_CONFIG_GLOBAL, "/h/gitconfig");
 	assert.equal(env.HOME, "/h");
+});
+
+// window-pi (A1-3): the host facts read a gate's window re-ask
+// (windows/<id>.json) as Go's gatestore.Store.State does: a gate asked again
+// after a lapse is not expired until the derived end (the window re-ask's
+// created_at plus the record's own window), and is after it; and the key
+// lists windows/, so a window file changes it even when no count does.
+test("the host facts count a window re-asked gate as open until its derived end, and a window file changes the key", async () => {
+	const { HostFacts } = await import("../extensions/lib/firstturn.ts");
+	const root = tmpdir();
+	const ext = path.join(root, "extensions", "amq-squad");
+	for (const d of ["gates", "windows"]) fs.mkdirSync(path.join(ext, d), { recursive: true });
+	const rec = (id: string) => JSON.stringify({ gate_id: id, class: "tag", digest: "d", issued_at: "2026-11-01T09:00:00Z", not_before: "2026-11-01T08:59:00Z", not_after: "2026-11-01T09:30:00Z" });
+	const win = (id: string, created: string) =>
+		JSON.stringify({ gate_id: id, trigger_event_id: "d4".repeat(32), event_id: "e5".repeat(32), raw_event: JSON.stringify({ created_at: Date.parse(created) / 1000 }), at: created });
+	fs.writeFileSync(path.join(ext, "gates", "g1.json"), rec("g1"));
+	fs.writeFileSync(path.join(ext, "gates", "g2.json"), rec("g2"));
+	let now = new Date("2026-11-01T10:00:00Z");
+	const h = new HostFacts({ bin: "amq-squad", root, me: "", hookTimeoutMs: 1000, project: "" } as any, async () => ({ code: 0, stdout: "", stderr: "" }) as any, undefined, () => now);
+	const expired = async () => /\|expired:(\d+)/.exec(await h.key(""))?.[1];
+	assert.equal(await expired(), "2", "both gates lapsed at 09:30");
+	// g1 asked again at 10:00 for its own 30 minutes: open until 10:30
+	fs.writeFileSync(path.join(ext, "windows", "g1.json"), win("g1", "2026-11-01T10:00:00Z"));
+	now = new Date("2026-11-01T10:29:59Z");
+	assert.equal(await expired(), "1", "the window re-asked gate counted expired before its derived end");
+	// a window file naming another gate is no window re-ask of this one (as Go's reader)
+	fs.writeFileSync(path.join(ext, "windows", "g2.json"), win("g9", "2026-11-01T10:00:00Z"));
+	assert.equal(await expired(), "1", "a window file naming another gate opened g2");
+	// window files Go's reader does not read open nothing either
+	const good = JSON.parse(win("g2", "2026-11-01T10:00:00Z"));
+	for (const [why, bad] of [
+		["an event id that is not 64 hex", { ...good, event_id: "zz" }],
+		["an unknown field", { ...good, extra: "x" }],
+		["a field that is not a string", { ...good, trigger_event_id: 7 }],
+		["a fractional created_at", { ...good, raw_event: JSON.stringify({ created_at: Date.parse("2026-11-01T10:00:00Z") / 1000 + 0.5 }) }],
+	] as const) {
+		fs.writeFileSync(path.join(ext, "windows", "g2.json"), JSON.stringify(bad));
+		assert.equal(await expired(), "1", `a window file with ${why} opened g2`);
+	}
+	fs.rmSync(path.join(ext, "windows", "g2.json"));
+	// at the derived end exactly the gate is still open (Go: expired after it)
+	now = new Date("2026-11-01T10:30:00Z");
+	assert.equal(await expired(), "1", "the window re-asked gate counted expired at its derived end");
+	now = new Date("2026-11-01T10:30:01Z");
+	assert.equal(await expired(), "2", "the window re-asked gate not counted expired after its derived end");
+	// a window file whose window has run out too changes no count, and
+	// still changes the key: windows/ is listed
+	now = new Date("2026-11-01T11:00:00Z");
+	const before = await h.key("");
+	fs.writeFileSync(path.join(ext, "windows", "g2.json"), win("g2", "2026-11-01T10:00:00Z"));
+	const after = await h.key("");
+	assert.equal(/\|expired:(\d+)/.exec(after)?.[1], "2");
+	assert.notEqual(after, before, "a window file did not change the host facts key");
+	// every directory the store writes is keyed: a thread re-ask, a consumed mark
+	for (const [dir, file] of [["reasks", "g2.json"], [path.join("consumed", "gates"), "g2"]]) {
+		fs.mkdirSync(path.join(ext, dir), { recursive: true });
+		const k0 = await h.key("");
+		fs.writeFileSync(path.join(ext, dir, file), "{}");
+		assert.notEqual(await h.key(""), k0, `a file in ${dir} did not change the host facts key`);
+	}
+});
+
+// window-pi: the derived end is the record's own window length, not a fixed
+// 30 minutes: a 61-minute gate asked again at 11:00 is open until 12:01.
+test("the host facts take a window re-ask's length from the gate record", async () => {
+	const { HostFacts } = await import("../extensions/lib/firstturn.ts");
+	const root = tmpdir();
+	const ext = path.join(root, "extensions", "amq-squad");
+	for (const d of ["gates", "windows"]) fs.mkdirSync(path.join(ext, d), { recursive: true });
+	fs.writeFileSync(path.join(ext, "gates", "g1.json"), JSON.stringify({ gate_id: "g1", class: "tag", digest: "d", issued_at: "2026-11-01T09:00:00Z", not_before: "2026-11-01T08:59:00Z", not_after: "2026-11-01T10:01:00Z" }));
+	fs.writeFileSync(path.join(ext, "windows", "g1.json"),
+		JSON.stringify({ gate_id: "g1", trigger_event_id: "d4".repeat(32), event_id: "e5".repeat(32), raw_event: JSON.stringify({ created_at: Date.parse("2026-11-01T11:00:00Z") / 1000 }), at: "2026-11-01T11:00:00Z" }));
+	let now = new Date("2026-11-01T12:00:59Z");
+	const h = new HostFacts({ bin: "amq-squad", root, me: "", hookTimeoutMs: 1000, project: "" } as any, async () => ({ code: 0, stdout: "", stderr: "" }) as any, undefined, () => now);
+	const expired = async () => /\|expired:(\d+)/.exec(await h.key(""))?.[1];
+	assert.equal(await expired(), "0", "a 61-minute window re-ask counted expired before 12:01");
+	now = new Date("2026-11-01T12:01:01Z");
+	assert.equal(await expired(), "1", "a 61-minute window re-ask not counted expired after 12:01");
 });

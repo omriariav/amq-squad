@@ -50,6 +50,17 @@ const (
 	// RejectNoSquad: the record carries no squad identity (a record from
 	// before amendment 28), or another squad's (4-5 re-pass).
 	RejectNoSquad = "no_squad_identity"
+	// RejectLapsed is an answer in the gate thread that passed every check
+	// but the window: created, or presented, after not_after. The core asks
+	// the gate again in its thread with a new window, once (A1-3).
+	RejectLapsed = "gate_lapsed"
+	// RejectBeforeReask is an answer dated before the gate's window re-ask:
+	// it does not approve the re-asked question (A0 row 7).
+	RejectBeforeReask = "answered_before_reask"
+	// RejectPublish is a window re-ask the relay did not take: reserved, not
+	// published; the same answer delivered again retries it (the handler
+	// does not record it as handled).
+	RejectPublish = "reask_publish_failed"
 )
 
 // Rejection is a typed refusal.
@@ -100,19 +111,31 @@ type Outcome struct {
 	Answer   gatestore.Answer
 }
 
-// Verify checks raw (one NIP-01 event as received) against the pin and the
-// stored gate record, question and re-ask, at now. The answer must reply in
-// the gate thread: its e tags name the stored question (or the gate's
-// re-ask, which is posted in that thread). Clock rules (plan 7.3):
+// Verify is VerifyReasked for a gate with no window re-ask.
+func Verify(raw []byte, rec gatestore.Record, q *gatestore.Question, reask *gatestore.Reask, pin Pin, now time.Time) (Outcome, error) {
+	return VerifyReasked(raw, rec, q, reask, nil, pin, now)
+}
+
+// VerifyReasked checks raw (one NIP-01 event as received) against the pin
+// and the stored gate record, question, re-ask and window re-ask (nil when
+// none), at now. The answer must reply in the gate thread: its e tags name
+// the stored question, the gate's re-ask or its window re-ask (both posted
+// in that thread). Clock rules (plan 7.3):
 //
 //	not_before (= issued_at - 60 s) <= created_at <= not_after
 //	created_at - 60 s <= now <= not_after     (now: the verifier's clock)
 //
+// After a window re-ask (A1-3) the window is the re-ask's: created_at
+// strictly after the re-ask's signed created_at, and created_at and now no
+// later than its WindowEnd; the event that triggered it never approves.
+//
 // A valid deny is an Outcome with Decision "deny", not an error; it must be
 // owner-signed like an approve, so a model cannot cancel a gate either. The
-// thread check runs last, so a not_in_gate_thread refusal means every other
-// check passed (the re-ask rule relies on it).
-func Verify(raw []byte, rec gatestore.Record, q *gatestore.Question, reask *gatestore.Reask, pin Pin, now time.Time) (Outcome, error) {
+// thread check runs before the not_after checks, so a not_in_gate_thread
+// refusal means every check but not_after passed (the re-ask rule relies
+// on it), and a gate_lapsed refusal means every check passed, the thread
+// included (the window re-ask relies on it).
+func VerifyReasked(raw []byte, rec gatestore.Record, q *gatestore.Question, reask, window *gatestore.Reask, pin Pin, now time.Time) (Outcome, error) {
 	if err := rec.Validate(); err != nil {
 		return Outcome{}, reject(RejectGateRecord, "%v", err)
 	}
@@ -168,14 +191,11 @@ func Verify(raw []byte, rec gatestore.Record, q *gatestore.Question, reask *gate
 	}
 	_, nb, na, _ := rec.Window()
 	created := time.Unix(e.CreatedAt, 0)
-	if created.Before(nb) || created.After(na) {
+	if created.Before(nb) {
 		return Outcome{}, reject(RejectWindow, "created_at %s outside [%s, %s]", created.UTC().Format(time.RFC3339), rec.NotBefore, rec.NotAfter)
 	}
 	if now.Before(created.Add(-gatestore.ClockSkew)) {
 		return Outcome{}, reject(RejectFuture, "created_at %s is more than 60 s after the verifier clock %s", created.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339))
-	}
-	if now.After(na) {
-		return Outcome{}, reject(RejectWindow, "presented at %s, after the gate closed at %s", now.UTC().Format(time.RFC3339), rec.NotAfter)
 	}
 	if err := checkQuestion(q, rec, pin); err != nil {
 		return Outcome{}, err
@@ -197,6 +217,16 @@ func Verify(raw []byte, rec gatestore.Record, q *gatestore.Question, reask *gate
 	if reask != nil && reask.GateID == rec.GateID && checkReask(reask, q, pin) == nil {
 		ours = append(ours, reask.EventID)
 	}
+	var winAt, winEnd time.Time
+	win := windowValid(window, rec, q, pin)
+	if win {
+		var err error
+		if winAt, winEnd, err = window.WindowEnd(rec); err != nil {
+			win = false
+		} else {
+			ours = append(ours, window.EventID)
+		}
+	}
 	refs := nostr.ThreadRefs(e)
 	inThread := len(refs) > 0
 	for _, ref := range refs {
@@ -209,7 +239,25 @@ func Verify(raw []byte, rec gatestore.Record, q *gatestore.Question, reask *gate
 	default:
 		return Outcome{}, reject(RejectWrongThread, "answer replies to %v, not to gate question %s", refs, q.EventID)
 	}
-	return Outcome{Decision: a.Verb, Event: e, Answer: a}, nil
+	o := Outcome{Decision: a.Verb, Event: e, Answer: a}
+	if win {
+		if e.ID == window.TriggerEventID || !created.After(winAt) {
+			return Outcome{}, reject(RejectBeforeReask, "the answer is dated %s, not after the question was asked again at %s (event %s); answer again in the thread",
+				created.UTC().Format(time.RFC3339), winAt.UTC().Format(time.RFC3339), window.EventID)
+		}
+		if created.After(winEnd) || now.After(winEnd) {
+			return Outcome{}, reject(RejectWindow, "created_at %s, presented at %s: after the asked-again window closed at %s",
+				created.UTC().Format(time.RFC3339), now.UTC().Format(time.RFC3339), winEnd.UTC().Format(time.RFC3339))
+		}
+		return o, nil
+	}
+	if created.After(na) {
+		return o, reject(RejectLapsed, "created_at %s, after the gate closed at %s", created.UTC().Format(time.RFC3339), rec.NotAfter)
+	}
+	if now.After(na) {
+		return o, reject(RejectLapsed, "presented at %s, after the gate closed at %s", now.UTC().Format(time.RFC3339), rec.NotAfter)
+	}
+	return o, nil
 }
 
 // checkQuestion proves the stored question is the body-signed kind 9 in the
@@ -255,6 +303,14 @@ func checkReask(r *gatestore.Reask, q *gatestore.Question, pin Pin) error {
 		return reject(RejectQuestion, "re-ask does not carry the question's squad identity")
 	}
 	return nil
+}
+
+// windowValid reports whether a stored window re-ask is this gate's: the
+// body's kind 9 in the gate thread (checkReask) whose signed content is
+// exactly WindowReaskText of the record. Anything else opens no window, is
+// never published, and its history is not read.
+func windowValid(w *gatestore.Reask, rec gatestore.Record, q *gatestore.Question, pin Pin) bool {
+	return w != nil && q != nil && w.GateID == rec.GateID && checkReask(w, q, pin) == nil && mustEvent(w.RawEvent).Content == WindowReaskText(rec)
 }
 
 func mustEvent(raw string) nostr.Event {

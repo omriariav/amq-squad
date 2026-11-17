@@ -24,7 +24,7 @@ The read-failure form is `gate store: <error>`. The legacy-record form is `gate 
 
 The screen prints the could-not-be-read line and its detail only for the read-failure form. It prints one count below the rule for all legacy-record warnings: singular for one, plural for more than one. It never prints the gate id of a legacy warning carrying the new prefix (S-legacy-3); an old-prefix line still prints it (S-old). The count is printed with a read failure (S-both) and, by the code at `pi/extensions/lib/screen.ts:347-349`, with a gate alert; no row asserted the alert case in v3.2.0 (the row S-alert, #982 on v3, added afterwards).
 
-An old status document from rc.2 or earlier still carries a legacy record under the `gate store: ` form. The screen and binary normally ship together, so this is the mixed-version case only, and the screen continues to take its read-failure path.
+An old status document from rc.2 or earlier still carries a legacy record under the `gate store: ` form. The screen and binary normally ship together, so this is the mixed-version case only, and, when no gate alert is present, the screen continues to take its read-failure path.
 
 The warning table in `docs/v3-spike/320-0d-screen/README.md` records the earlier form and is unchanged.
 
@@ -154,3 +154,221 @@ All Go commands used a temporary HOME, `GOPROXY=off`, the existing module cache,
 The required host-path count command printed `0` and exited 1 because grep found no matching line.
 
 `git status --porcelain` exited 0 and listed exactly the seven declared paths: the status contract, rollback row, status implementation, new status-warning rows, screen implementation, screen rows, and this note.
+
+## Row S-alert
+
+The row is `a gate alert and legacy warnings print the alert line and the count below the rule`, placed at `pi/test/screen.test.ts:258-273`.
+
+A0 asserts that the rule line `----------` is found.
+
+A1 asserts that exactly one line above the rule equals `  ! a gate needs a look; its alert is below the line`.
+
+A2 asserts that a record below the rule, trimmed, equals `merge_gate_drift: gate g9: the recorded head moved`.
+
+A3 asserts that a record below the rule, trimmed, equals `2 legacy gate records skipped`.
+
+A4 asserts that no screen line contains `clear-`.
+
+The screen code is unchanged; the row pins what `pi/extensions/lib/screen.ts` already does when a gate alert and legacy gate warnings are both present.
+
+### The reverts
+
+The console blocks under The reverts and What ran print the lines the brief asked for, not every line the command printed; each failing test's ✖ line is printed once, the reporter's footer and its repeats left out; the exit codes and the counts are complete.
+
+RA1 edited `pi/extensions/lib/screen.ts:347`.
+
+Before: `if (legacyGateWarnings.length) {`
+
+After: `if (!gateAlert && legacyGateWarnings.length) {`
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+✖ a gate alert and legacy warnings print the alert line and the count below the rule
+ℹ tests 33
+ℹ pass 32
+ℹ fail 1
+```
+
+Exit code: 1.
+
+```console
+$ git show HEAD:pi/extensions/lib/screen.ts > pi/extensions/lib/screen.ts
+$ git diff --quiet -- pi/extensions/lib/screen.ts; echo $?
+0
+```
+
+RA2 edited `pi/extensions/lib/screen.ts:340`.
+
+Before: `if (gateAlert) {`
+
+After: `if (gateAlert && !legacyGateWarnings.length) {`
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+✖ a gate alert and legacy warnings print the alert line and the count below the rule
+ℹ tests 33
+ℹ pass 32
+ℹ fail 1
+```
+
+Exit code: 1.
+
+```console
+$ git show HEAD:pi/extensions/lib/screen.ts > pi/extensions/lib/screen.ts
+$ git diff --quiet -- pi/extensions/lib/screen.ts; echo $?
+0
+```
+
+RA3 added one line after `pi/extensions/lib/screen.ts:348`.
+
+Before: no line after the count record.
+
+After: `for (const w of legacyGateWarnings) rec(short(w, 200));`
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+✖ three legacy gate warnings print one count below the rule and no read failure or gate id
+✖ a gate alert and legacy warnings print the alert line and the count below the rule
+ℹ tests 33
+ℹ pass 31
+ℹ fail 2
+```
+
+Exit code: 1.
+
+```console
+$ git show HEAD:pi/extensions/lib/screen.ts > pi/extensions/lib/screen.ts
+$ git diff --quiet -- pi/extensions/lib/screen.ts; echo $?
+0
+```
+
+RA4 edited `pi/extensions/lib/screen.ts:342`.
+
+Before: ``rec(`${gateAlert.kind}: ${short(gateAlert.subject)}`);``
+
+After: line removed.
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+✖ a gate alert and legacy warnings print the alert line and the count below the rule
+ℹ tests 33
+ℹ pass 32
+ℹ fail 1
+```
+
+Exit code: 1.
+
+```console
+$ git show HEAD:pi/extensions/lib/screen.ts > pi/extensions/lib/screen.ts
+$ git diff --quiet -- pi/extensions/lib/screen.ts; echo $?
+0
+```
+
+RA5 added one line directly after `pi/extensions/lib/screen.ts:339`.
+
+Before: no line after the `legacyGateWarnings` declaration.
+
+After: `const RULE = "";`
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+✖ the screen renders from a status fixture: the lead and the root, each block in plain words, the codes below the rule
+✖ three legacy gate warnings print one count below the rule and no read failure or gate id
+✖ one legacy gate warning prints the singular count
+✖ a gate alert and legacy warnings print the alert line and the count below the rule
+✖ the requests block marks each phone request relayed or refused, the name below the rule
+✖ the widget measures the rendered screen with no fixed records, includes content at fixed plus three, and never exceeds the pane
+ℹ tests 33
+ℹ pass 27
+ℹ fail 6
+```
+
+Exit code: 1.
+
+```console
+$ git show HEAD:pi/extensions/lib/screen.ts > pi/extensions/lib/screen.ts
+$ git diff --quiet -- pi/extensions/lib/screen.ts; echo $?
+0
+```
+
+With the rule line removed, five other tests of the file fail with this row.
+
+### What ran
+
+```console
+$ cd pi && npm ci --ignore-scripts --offline
+added 118 packages, and audited 119 packages in 2s
+found 0 vulnerabilities
+```
+
+Exit code: 0.
+
+```console
+$ cd pi && node --test --test-reporter=spec test/screen.test.ts
+ℹ tests 33
+ℹ pass 33
+ℹ fail 0
+ℹ skipped 0
+```
+
+Exit code: 0.
+
+```console
+$ cd pi && npm test
+ℹ tests 147
+ℹ pass 146
+ℹ fail 0
+ℹ skipped 1
+```
+
+Exit code: 0.
+
+```console
+$ cd pi && node scripts/lint.mjs
+lint ok: 32 files, pi 1.3.0
+```
+
+Exit code: 0.
+
+```console
+$ go run ./scripts/redact-evidence -check docs/v3-spike/320-gate-legacy-words/
+```
+
+Exit code: 0.
+
+```console
+$ git diff --check
+```
+
+Exit code: 0.
+
+```console
+$ grep -c '/Us''ers/' docs/v3-spike/320-gate-legacy-words/README.md
+0
+```
+
+Exit code: 1, as expected for no matching line.
+
+```console
+$ grep -cE '[[:space:]]+$' docs/v3-spike/320-gate-legacy-words/README.md
+0
+```
+
+Exit code: 1, as expected for no matching line.
+
+```console
+$ git status --porcelain --untracked-files=all
+ M docs/v3-spike/320-gate-legacy-words/README.md
+ M pi/test/screen.test.ts
+```
+
+Exit code: 0.
+
+```console
+$ git diff --stat
+ docs/v3-spike/320-gate-legacy-words/README.md | 43 +++++++++++++++++++++++----
+ pi/test/screen.test.ts                        |  1 +
+ 2 files changed, 39 insertions(+), 5 deletions(-)
+```
+
+Exit code: 0.

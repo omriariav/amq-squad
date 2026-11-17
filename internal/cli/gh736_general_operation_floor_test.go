@@ -8,14 +8,15 @@ import (
 )
 
 // TestGeneralOperationFloorUnchanged pins the one AMQ floor of 3.0 (5-amq-A
-// fix round): doctorMinAMQVersion is the release of the module go.mod pins,
-// v0.116.2, and the installed-binary floor is the same constant. Every 3.0
+// fix round, raised by the 3.3.0 pin move): doctorMinAMQVersion is the release
+// of the module go.mod pins, v0.140.0, and the installed-binary floor is the
+// same constant. Every 3.0
 // path needs that release's launch adapters and its mailbox, so there is no
 // separate, lower general-operation floor any more (gh#736's two floors
 // merged when the launch API became the only launch path). Raise it only
 // together with the go.mod pin.
 func TestGeneralOperationFloorUnchanged(t *testing.T) {
-	const want = "0.116.2"
+	const want = "0.140.0"
 	if doctorMinAMQVersion != want {
 		t.Fatalf("doctorMinAMQVersion = %q, want %q (raise it only with the go.mod pin)", doctorMinAMQVersion, want)
 	}
