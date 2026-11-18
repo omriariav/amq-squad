@@ -72,6 +72,7 @@ func v228SeedLiveRecord(t *testing.T, root string, rec launch.Record) string {
 	if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
+	stageForAgentDir(t, agentDir, rec)
 	return agentDir
 }
 

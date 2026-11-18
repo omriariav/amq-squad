@@ -20,9 +20,11 @@ func (f fakeLeads) Lead(root, handle string) (Destination, error) {
 }
 
 // writeLaunchRecord writes the launch record a launch leaves for a seat.
+// writeLaunchRecord writes the record the core stages for a seat's launch
+// (launch.StagedDir), the one lead routing reads (C5a).
 func writeLaunchRecord(t *testing.T, root, handle, role string) {
 	t.Helper()
-	dir := filepath.Join(root, "agents", handle, "extensions", "io.github.omriariav.amq-squad")
+	dir := filepath.Join(root, "extensions", "amq-squad", "launch", handle)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}

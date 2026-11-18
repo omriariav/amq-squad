@@ -152,7 +152,8 @@ func TestRemoteAttachRereadsTheFleetRegistry(t *testing.T) {
 	lib := filepath.Join(t.TempDir(), "lib")
 	libRoot := filepath.Join(lib, ".agent-mail", "w")
 	launch := fmt.Sprintf(`{"schema":1,"handle":"dev","role":"lead","binary":"codex","cwd":%q,"agent_pid":0,"started_at":"2026-10-24T11:00:00Z","root":%q}`, lib, libRoot)
-	mustWrite(t, filepath.Join(libRoot, "agents", "dev", "extensions", "io.github.omriariav.amq-squad", "launch.json"), launch)
+	// the record the core staged for dev's launch (C5a: lead routing reads it)
+	mustWrite(t, filepath.Join(libRoot, "extensions", "amq-squad", "launch", "dev", "launch.json"), launch)
 	if _, _, err := captureOutput(t, func() error {
 		return runFleet([]string{"add", "--fleet-file", file, "--name", "lib", "--root", libRoot, "--project-path", lib, "--repository", "owner/lib", "--lead", "dev", "--session", "w"})
 	}); err != nil {

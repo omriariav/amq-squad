@@ -273,9 +273,14 @@ func TestCloseSeatSignalsOnlyTheRecordedProcess(t *testing.T) {
 	}
 }
 
+// publishExecRaw writes a seat's exec record as seat-exec does since C5a
+// (launch.ExecPath, under the staged directory).
 func publishExecRaw(t *testing.T, q Squad, handle string, ex *launch.Exec) {
 	t.Helper()
-	if err := launch.WriteUnderRecordLock(filepath.Join(q.SessionRoot(), "agents", handle), launch.Record{Handle: handle, Exec: ex}); err != nil {
+	if err := os.MkdirAll(launch.ExecDir(q.SessionRoot(), handle), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := launch.WriteFile(launch.ExecPath(q.SessionRoot(), handle), launch.Record{Handle: handle, Exec: ex}); err != nil {
 		t.Fatal(err)
 	}
 }

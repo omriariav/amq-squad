@@ -35,15 +35,16 @@ const maxFile = 4 << 20
 // Run is `amq-squad seat-exec --seat <handle> <provider argv...>` (plan 4.3,
 // R4, R52). It verifies the AMQ root from AM_ROOT without following a
 // symlink, reads the staged launch record and role.md, checks both sha256
-// sums (and the rules file's), publishes the record and role into the seat's
-// extension directory, builds the scrubbed environment with the identity
-// from the record only, proves the identity with one read-only amq call,
-// re-verifies role and rules, and execs the provider in place. It adds no
-// provider flag. On success it does not return.
+// sums (and the rules file's), writes the exec record and the role and rules
+// snapshots under the staged directory (C5a; copies go to the seat's
+// extension directory for a rollback), builds the scrubbed environment with
+// the identity from the record only, proves the identity with one read-only
+// amq call, re-verifies role and rules, and execs the provider in place. It
+// adds no provider flag. On success it does not return.
 func Run(o Options) error {
 	o = o.withDefaults()
 	plan, err := prepare(o)
-	if plan.published != nil {
+	if plan.exec != nil || plan.published != nil {
 		state := plan.rec
 		// The raw start stamp lets a later close tell this process from a
 		// reused pid (exec keeps the pid and the stamp); prepare refused
@@ -54,11 +55,26 @@ func Run(o Options) error {
 			state.Exec = &launch.Exec{At: o.Now().UTC(), Outcome: "refused", ReasonCode: r.Code, Detail: r.Detail}
 		}
 		if b, merr := launch.Marshal(state); merr == nil {
-			if werr := plan.published.writeFile(launch.FileName, b); werr != nil && err == nil {
-				err = werr
+			// C5a: the exec record every 3.3.x reader uses, under the staged
+			// directory no seat can write
+			if plan.exec != nil {
+				if werr := plan.exec.writeFile(launch.FileName, b); werr != nil && err == nil {
+					err = werr
+				}
+			}
+			// the published copy in the seat's own agent directory, for a
+			// 3.3.0 binary after a rollback; no 3.3.x reader trusts it, so a
+			// failure to write it fails nothing
+			if plan.published != nil {
+				_ = plan.published.writeFile(launch.FileName, b)
 			}
 		}
-		plan.published.close()
+		if plan.exec != nil {
+			plan.exec.close()
+		}
+		if plan.published != nil {
+			plan.published.close()
+		}
 	}
 	if err != nil {
 		return err
@@ -78,9 +94,10 @@ type execPlan struct {
 	argv          []string // the argv exec'd
 	providerArgv  []string // the provider argv the adapter composed (recorded)
 	launcherArgv  []string // a pi seat's embedded-runtime launcher argv (recorded)
-	published     *anchor
-	token         string // a Claude seat's credential (never logged or recorded)
-	warning       string // launch warning printed before exec, never persisted with secrets
+	published     *anchor  // agents/<seat>/extensions/<layer>: the rollback copies, read by no 3.3.x reader
+	exec          *anchor  // <StagedDir>/exec: the exec record and the role and rules snapshots (C5a)
+	token         string   // a Claude seat's credential (never logged or recorded)
+	warning       string   // launch warning printed before exec, never persisted with secrets
 }
 
 func prepare(o Options) (execPlan, error) {
@@ -129,6 +146,13 @@ func prepare(o Options) (execPlan, error) {
 		return plan, err
 	}
 	plan.published = pub
+	// C5a: the exec record and the snapshots go under the staged directory,
+	// which no seat can write
+	ex, err := staged.walk("exec", true)
+	if err != nil {
+		return plan, err
+	}
+	plan.exec = ex
 	plan.rec = rec
 	plan.rec.Proof = nil // the published copy never carries the token
 	role, err := staged.readFile(launch.RoleFileName, maxFile)
@@ -201,21 +225,26 @@ func prepare(o Options) (execPlan, error) {
 		}
 		plan.token = tok
 	}
-	// The provider gets 0400 snapshots of the verified bytes in the seat's
-	// extension directory, never the mutable source paths.
-	rolePath := filepath.Join(pub.path, launch.RoleFileName)
+	// The provider gets 0400 snapshots of the verified bytes under the
+	// staged directory (C5a: <StagedDir>/exec, which no seat can write),
+	// never the mutable source paths. The seat's extension directory gets
+	// the same bytes for a 3.3.0 binary after a rollback; nothing in 3.3.x
+	// reads them.
+	rolePath := filepath.Join(ex.path, launch.RoleFileName)
 	rec.RolePath = rolePath
 	plan.rec = rec
 	plan.rec.Proof = nil
-	if err := pub.writeFileMode(launch.RoleFileName, role, 0o400); err != nil {
+	if err := ex.writeFileMode(launch.RoleFileName, role, 0o400); err != nil {
 		return plan, err
 	}
+	_ = pub.writeFileMode(launch.RoleFileName, role, 0o400)
 	rulesSnapshot := ""
 	if rules != nil {
-		rulesSnapshot = filepath.Join(pub.path, rulesSnapshotName)
-		if err := pub.writeFileMode(rulesSnapshotName, rules, 0o400); err != nil {
+		rulesSnapshot = filepath.Join(ex.path, rulesSnapshotName)
+		if err := ex.writeFileMode(rulesSnapshotName, rules, 0o400); err != nil {
 			return plan, err
 		}
+		_ = pub.writeFileMode(rulesSnapshotName, rules, 0o400)
 	}
 
 	if rec.Runtime == "pi" && rec.Resume {
@@ -238,7 +267,7 @@ func prepare(o Options) (execPlan, error) {
 	if o.BeforeRecheck != nil {
 		o.BeforeRecheck()
 	}
-	if err := recheck(rec, staged, pub, rules != nil); err != nil {
+	if err := recheck(rec, staged, ex, rules != nil); err != nil {
 		return plan, err
 	}
 	if err := sendProof(o, rec, plan.started); err != nil {
@@ -252,7 +281,7 @@ func prepare(o Options) (execPlan, error) {
 // the staged record, the identity amq env proved, which equals the
 // record's, this pid and its raw start stamp) and execs only on the
 // launcher's OK. The token never enters the provider's environment and the
-// published record carries no token.
+// exec record (and its rollback copy) carries no token.
 func sendProof(o Options, rec launch.Record, started string) error {
 	t := rec.Proof
 	if t == nil || t.Dir == "" || t.Name == "" || t.Token == "" {
@@ -298,14 +327,15 @@ func readRules(rec launch.Record) ([]byte, error) {
 }
 
 // recheck re-hashes role and rules immediately before exec: the staged role,
-// the published role snapshot, the rules source and its snapshot must all
+// the role snapshot the provider reads (snap: <StagedDir>/exec), the rules
+// source and its snapshot must all
 // still match the digests recorded at launch (the identity proof can take
 // seconds, and a file changed in that window must not reach the provider).
-func recheck(rec launch.Record, staged, pub *anchor, hasRules bool) error {
+func recheck(rec launch.Record, staged, snap *anchor, hasRules bool) error {
 	for _, f := range []struct {
 		dir  *anchor
 		name string
-	}{{staged, launch.RoleFileName}, {pub, launch.RoleFileName}} {
+	}{{staged, launch.RoleFileName}, {snap, launch.RoleFileName}} {
 		if b, err := f.dir.readFile(f.name, maxFile); err != nil || sha(b) != rec.RoleSHA256 {
 			return refusef(ReasonRoleMismatch, "%s changed before exec", filepath.Join(f.dir.path, f.name))
 		}
@@ -316,7 +346,7 @@ func recheck(rec launch.Record, staged, pub *anchor, hasRules bool) error {
 	if _, err := readRules(rec); err != nil {
 		return err
 	}
-	if b, err := pub.readFile(rulesSnapshotName, maxFile); err != nil || sha(b) != rec.RulesSHA256 {
+	if b, err := snap.readFile(rulesSnapshotName, maxFile); err != nil || sha(b) != rec.RulesSHA256 {
 		return refusef(ReasonRulesMismatch, "the rules snapshot changed before exec")
 	}
 	return nil

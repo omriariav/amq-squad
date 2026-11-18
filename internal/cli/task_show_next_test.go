@@ -38,6 +38,7 @@ func TestTaskShowJSONCarriesNextBesideTheTask(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	stageForAgentDir(t, leadDir, launch.Record{Handle: "cto", Root: root, Role: status.LeadRole, StartedAt: now})
 	holder := []task.NextEntry{{Verb: "task block", Who: task.NextHolder}, {Verb: "task done", Who: task.NextHolder}, {Verb: "task fail", Who: task.NextHolder}, {Verb: "task release", Who: task.NextHolder}}
 	lead := []task.NextEntry{{Verb: "task cancel", Who: task.NextLead}, {Verb: "task release", Who: task.NextLead}}
 	for _, c := range []struct {
@@ -107,6 +108,7 @@ func TestTaskShowNextMeIsAHandleAndTheRecordIsItsOwn(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
+		stageForAgentDir(t, d, launch.Record{Handle: handle, Root: root, Role: status.LeadRole, StartedAt: now})
 	}
 	for _, me := range []string{"seat-a/../cto", "../agents/cto", "../../elsewhere/cto", "/abs/agents/cto", "./cto", "seat-a/.."} {
 		if out, err := taskCLI(t, "show", added.ID, "--json", "--me", me); err == nil || !strings.Contains(err.Error(), "invalid --me") {

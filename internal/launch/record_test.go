@@ -190,7 +190,7 @@ func TestScanFindsRecordsAcrossSessions(t *testing.T) {
 			Root:      filepath.Join(project, ".agent-mail", session),
 			StartedAt: time.Now().UTC(),
 		}
-		if err := WriteUnderRecordLock(dir, rec); err != nil {
+		if err := stageForTest(dir, rec); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -229,7 +229,7 @@ func TestScanEntriesIncludesAgentDir(t *testing.T) {
 		Root:      filepath.Join(project, ".agent-mail", "stream1"),
 		StartedAt: time.Now().UTC(),
 	}
-	if err := WriteUnderRecordLock(agentDir, rec); err != nil {
+	if err := stageForTest(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
 
@@ -261,7 +261,7 @@ func TestScanEntriesInRootFindsExtensionRecordsUnderCustomBaseRoot(t *testing.T)
 		Root:     filepath.Join(baseRoot, "stream1"),
 		BaseRoot: baseRoot,
 	}
-	if err := WriteUnderRecordLock(agentDir, rec); err != nil {
+	if err := stageForTest(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
 
@@ -296,7 +296,7 @@ func TestScanMatchesBaseRootLayout(t *testing.T) {
 		Root:      filepath.Join(project, ".agent-mail"),
 		StartedAt: time.Now().UTC(),
 	}
-	if err := WriteUnderRecordLock(dir, rec); err != nil {
+	if err := stageForTest(dir, rec); err != nil {
 		t.Fatal(err)
 	}
 	recs, err := scanRecordsForTest(project)
@@ -319,7 +319,7 @@ func TestScanDedupesAcrossPatterns(t *testing.T) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := WriteUnderRecordLock(filepath.Dir(path), rec); err != nil {
+		if err := stageForTest(filepath.Dir(path), rec); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -358,4 +358,18 @@ func scanRecordsForTest(projectRoot string) ([]Record, error) {
 		out = append(out, e.Record)
 	}
 	return out, nil
+}
+
+// stageForTest writes rec as the record the core staged for the seat whose
+// agent directory is agentDir (C5a: the scan reads the staged records, never
+// one in the seat's own agent directory).
+func stageForTest(agentDir string, rec Record) error {
+	root, handle := filepath.Dir(filepath.Dir(agentDir)), filepath.Base(agentDir)
+	if rec.Root == "" {
+		rec.Root = root // the core stages Root: the session root
+	}
+	if err := os.MkdirAll(StagedDir(root, handle), 0o700); err != nil {
+		return err
+	}
+	return WriteFile(StagedPath(root, handle), rec)
 }

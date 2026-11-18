@@ -114,12 +114,12 @@ func collectTrain(o CollectOptions, in *Input, warn func(string, ...any)) {
 
 // seatLaunch is a seat's last launch from its records: the staged record
 // (compile's started_at, the proof ticket's issued_at, AMQ's apply), its
-// published record (seat-exec's outcome), the accepted proof (seat live),
-// the admitted wake, and the launch budget against LaunchCeiling from the
-// seat's own marks (its launch's start and its first message). A seat
-// without marks of this launch (launched before them, or by a scheduler
-// started by hand), or whose proof predates its start, has null marks and
-// no ceiling check.
+// exec record (seat-exec's outcome, C5a: under the staged directory), the
+// accepted proof (seat live), the admitted wake, and the launch budget
+// against LaunchCeiling from the seat's own marks (its launch's start and
+// its first message). A seat without marks of this launch (launched before
+// them, or by a scheduler started by hand), or whose proof predates its
+// start, has null marks and no ceiling check.
 func seatLaunch(root, handle string, staged launch.Record) *SeatLaunch {
 	sl := &SeatLaunch{LaunchID: staged.LaunchID, Outcome: "staged"}
 	if staged.Apply != nil {
@@ -130,7 +130,7 @@ func seatLaunch(root, handle string, staged launch.Record) *SeatLaunch {
 			sl.Outcome, sl.ReasonCode = "proof_expired", "proof_window_expired"
 		}
 	}
-	if pub, err := launch.Read(filepath.Join(root, "agents", handle)); err == nil && pub.LaunchID == staged.LaunchID && pub.Exec != nil && pub.Exec.Outcome == "refused" {
+	if pub, err := launch.ReadExec(root, handle); err == nil && pub.LaunchID == staged.LaunchID && pub.Exec != nil && pub.Exec.Outcome == "refused" {
 		sl.Outcome, sl.ReasonCode = "exec_refused", pub.Exec.ReasonCode
 	}
 	var live *time.Time

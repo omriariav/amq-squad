@@ -529,6 +529,11 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 		a.credRead = strings.Join(append([]string{cmd}, pos[:min(2, len(pos))]...), " ")
 	case cmd == "amq-squad" && (sub[0] == "seat" && sub[1] == "commit" || sub[0] == "scheduler" && sub[1] == "run"):
 		a.harness = "amq-squad " + sub[0] + " " + sub[1]
+	case cmd == "amq-squad" && sub[0] == "seat-exec":
+		// C5a (Codex pass 3, finding 2): AMQ's launch runs the wrapper; a
+		// seat that ran it would write seat-exec's exec record for its
+		// launch (a refusal the launcher reads)
+		a.harness = "amq-squad seat-exec"
 	case cmd == "amq-squad" && sub[0] == "team" && (sub[1] == "confirm" || sub[1] == "apply"):
 		a.ownerOnly = "amq-squad team " + sub[1]
 	case cmd == "git" && sub[0] == "merge" && !hasFlagPrefix(args, "--abort"):

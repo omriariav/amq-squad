@@ -21,8 +21,8 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/gatetarget"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/operatorauth"
-	"github.com/omriariav/amq-squad/v3/internal/role"
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
 
@@ -57,6 +57,9 @@ func newHookFixture(t *testing.T) hookFixture {
 	t.Setenv("AM_SESSION", "s1")
 	t.Setenv("AMQ_SQUAD_BRANCH", "")
 	t.Setenv("AMQ_SQUAD_RULES_PATH", "")
+	// a seat's own launch env (seat-exec sets the recorded rules digest)
+	// never reaches the fixture's seat: the tests run inside seats too
+	t.Setenv("AMQ_SQUAD_RULES_SHA256", "")
 	prevNow := hookNow
 	hookNow = func() time.Time { return f.now }
 	t.Cleanup(func() { hookNow = prevNow })
@@ -166,8 +169,11 @@ func withHookStdin(t *testing.T, body []byte) {
 
 func TestContextReportsSeededRoleRulesTaskAndGates(t *testing.T) {
 	f := newHookFixture(t)
-	mustWrite(t, role.Path(f.agentDir), "# Role: CTO\nOwn the architecture.\n")
-	mustWrite(t, filepath.Join(f.agentDir, "extensions", role.LayerName, "launch.json"), fmt.Sprintf(`{"schema":1,"handle":"cto","session":"s1","root":%q,"team_home":%q,"started_at":"2026-10-23T11:00:00Z"}`, f.root, f.project))
+	// seat-exec's exec record and role snapshot (C5a: under the staged
+	// directory)
+	execDir := filepath.Join(launch.StagedDir(f.root, "cto"), "exec")
+	mustWrite(t, filepath.Join(execDir, launch.RoleFileName), "# Role: CTO\nOwn the architecture.\n")
+	mustWrite(t, filepath.Join(execDir, launch.FileName), fmt.Sprintf(`{"schema":1,"handle":"cto","session":"s1","root":%q,"team_home":%q,"started_at":"2026-10-23T11:00:00Z"}`, f.root, f.project))
 	mustWrite(t, filepath.Join(f.project, ".amq-squad", "team-rules.md"), "# Team Rules\n")
 	// The 3.0 store under the session root (acceptance 7): cto finished t1,
 	// holds a claimed lease on t2; qa holds t3; t4 waits in the pool.
@@ -841,7 +847,7 @@ func TestEvidenceIngestConcurrentWritersDoNotInterleave(t *testing.T) {
 // asserted here.
 func TestHookVerbsColdRunBound(t *testing.T) {
 	f := newHookFixture(t)
-	mustWrite(t, role.Path(f.agentDir), "# Role\n")
+	mustWrite(t, filepath.Join(launch.StagedDir(f.root, "cto"), launch.RoleFileName), "# Role\n")
 	for i := 0; i < 20; i++ {
 		mode := answerNone
 		if i%2 == 0 {

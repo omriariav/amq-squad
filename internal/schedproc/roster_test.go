@@ -268,7 +268,7 @@ func TestLeadsRelaunchReachesTheSchedulerOverItsSocket(t *testing.T) {
 // still never planned (ensureWorktree's own refusal), and a handle outside
 // the seat list or a pool the seat does not serve is refused.
 func TestSlotsRosterAndItsPlan(t *testing.T) {
-	q := squadFixture(t)
+	q := withRepoRootSeat(squadFixture(t))
 	s := &Slots{Squad: q}
 	roster, excluded := s.Roster("")
 	if len(roster) != 3 || roster[0].Handle != "c1" || roster[1].Handle != "p1" || roster[2].Handle != "root" || roster[0].Pool != sonnet || len(excluded) != 0 {

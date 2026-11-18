@@ -180,9 +180,11 @@ func refusalCode(err error) string {
 	return ""
 }
 
+// published is the seat's exec record: since C5a seat-exec writes it under
+// the staged directory (launch.ExecPath), which every 3.3.x reader uses.
 func (f *fixture) published() launch.Record {
 	f.t.Helper()
-	rec, err := launch.Read(filepath.Join(f.root, "agents", "cto"))
+	rec, err := launch.ReadExec(f.root, "cto")
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -200,7 +202,7 @@ func TestSeatExecSetsIdentityRoleAndExecsInPlace(t *testing.T) {
 		t.Fatalf("exec %s %v: the argv must pass through unchanged", f.execPath, f.execArgv)
 	}
 	for name, want := range map[string]string{"AM_ME": "cto", "AM_ROOT": f.root, "AM_BASE_ROOT": filepath.Dir(f.root), "AM_SESSION": "s1",
-		"AMQ_SQUAD_BRANCH": "seat/cto", "AMQ_SQUAD_REQUEST_ID": "seat-req-inc1-7", "AMQ_SQUAD_RULES_PATH": filepath.Join(launch.ExtensionDir(filepath.Join(f.root, "agents", "cto")), "rules.md"), "AMQ_SQUAD_RULES_SHA256": f.rec.RulesSHA256} {
+		"AMQ_SQUAD_BRANCH": "seat/cto", "AMQ_SQUAD_REQUEST_ID": "seat-req-inc1-7", "AMQ_SQUAD_RULES_PATH": filepath.Join(launch.ExecDir(f.root, "cto"), "rules.md"), "AMQ_SQUAD_RULES_SHA256": f.rec.RulesSHA256} {
 		if got := Getenv(f.execEnv, name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}

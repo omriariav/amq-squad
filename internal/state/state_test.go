@@ -34,15 +34,26 @@ func fakeProbe(alive, match map[int]bool, calls *[]int) Probe {
 	}
 }
 
-// seedAgent writes a launch.json under the AMQ session/agents/<handle> layout
-// and returns the agent dir. Mirrors internal/cli.seedAgentRecord.
+// seedAgent writes the record the core stages for a seat's launch (since C5a
+// the snapshot scans the staged records) and returns the seat's agent dir.
+// Mirrors internal/cli.seedAgentRecord.
 func seedAgent(t *testing.T, base, session, handle string, rec launch.Record) string {
 	t.Helper()
-	agentDir := filepath.Join(base, session, "agents", handle)
+	root := filepath.Join(base, session)
+	agentDir := filepath.Join(root, "agents", handle)
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
+	if rec.Handle == "" {
+		rec.Handle = handle
+	}
+	if rec.Root == "" {
+		rec.Root = root // the core stages Root: the session root
+	}
+	if err := os.MkdirAll(launch.StagedDir(root, handle), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := launch.WriteFile(launch.StagedPath(root, handle), rec); err != nil {
 		t.Fatal(err)
 	}
 	return agentDir

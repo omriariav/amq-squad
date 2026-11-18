@@ -40,13 +40,25 @@ func writeTaskCLISeatPool(t *testing.T, root, handle string, pool task.Pool) {
 	writeTaskCLISeatRecord(t, root, handle, pool, &launch.Exec{Outcome: "exec", PID: os.Getpid(), ProcessStart: start})
 }
 
+// writeTaskCLISeatRecord writes the seat's launch as the core and seat-exec
+// do: the staged record, and, for an exec, the launcher's proof of it
+// (C5a: the claim pool reads these), plus the published record a 3.3.0
+// binary read.
 func writeTaskCLISeatRecord(t *testing.T, root, handle string, pool task.Pool, exec *launch.Exec) {
 	t.Helper()
 	agentDir := filepath.Join(root, "agents", handle)
+	rec := launch.Record{Handle: handle, Root: root, LaunchID: "launch-" + handle, Runtime: pool.Runtime, Model: pool.Model, Effort: pool.Effort, StartedAt: time.Now().UTC(), Exec: exec}
 	if err := launch.WithRecordLock(agentDir, func() error {
-		return launch.WriteUnderRecordLock(agentDir, launch.Record{Handle: handle, Root: root, Runtime: pool.Runtime, Model: pool.Model, Effort: pool.Effort, StartedAt: time.Now().UTC(), Exec: exec})
+		return launch.WriteUnderRecordLock(agentDir, rec)
 	}); err != nil {
 		t.Fatal(err)
+	}
+	rec.Exec = nil
+	stageForAgentDir(t, agentDir, rec)
+	if exec != nil && exec.Outcome == "exec" {
+		if err := launch.WriteProof(root, launch.ProofEntry{Handle: handle, LaunchID: rec.LaunchID, PID: exec.PID, Start: exec.ProcessStart, At: time.Now().UTC()}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

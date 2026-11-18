@@ -15,7 +15,6 @@ import (
 	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/redact"
-	"github.com/omriariav/amq-squad/v3/internal/role"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 	taskstore "github.com/omriariav/amq-squad/v3/internal/task"
 )
@@ -277,21 +276,30 @@ func orNone(s string) string {
 func buildHookContext(id hookIdentity, project string, now time.Time) hookContextData {
 	d := hookContextData{Seat: id, OpenGates: []hookGate{}}
 	warn := func(what string, err error) { d.Warnings = append(d.Warnings, what+": "+err.Error()) }
-	rec, err := launch.Read(id.AgentDir)
+	// C5a: seat-exec's exec record under the staged directory, never the
+	// copy in the seat's own agent directory, and only the current staged
+	// launch's: before seat-exec writes it (a seat launched before 3.3.x, a
+	// launcher that does not run it, or a restage whose seat-exec has not
+	// run), the core's staged record names the seat's tree.
+	staged, serr := launch.ReadStaged(id.Root, id.Handle)
+	rec, err := launch.ReadExec(id.Root, id.Handle)
 	if err != nil && !os.IsNotExist(err) {
 		warn("launch record", err)
 	}
-	if os.IsNotExist(err) {
-		// Before seat-exec publishes (or on a launcher that does not run it),
-		// the core's staged record names the seat's tree.
-		if raw, serr := os.ReadFile(filepath.Join(launch.StagedDir(id.Root, id.Handle), launch.FileName)); serr == nil {
-			rec, _ = launch.Decode(raw)
-		}
+	current := err == nil && (serr != nil || (staged.LaunchID != "" && rec.LaunchID == staged.LaunchID))
+	if !current && serr == nil {
+		rec = staged
 	}
 	d.Worktree = firstOf(rec.Worktree, rec.CWD)
 	recordHookReport(id, now)
 	project = firstOf(project, rec.TeamHome)
-	rolePath := role.ExistingPath(id.AgentDir)
+	// C5a: the role snapshot seat-exec wrote under the staged directory, else
+	// (a seat launched before 3.3.x) the role the core staged; never a role
+	// file in the seat's own agent directory
+	rolePath := filepath.Join(launch.ExecDir(id.Root, id.Handle), launch.RoleFileName)
+	if _, rerr := os.Stat(rolePath); rerr != nil || !current {
+		rolePath = filepath.Join(launch.StagedDir(id.Root, id.Handle), launch.RoleFileName)
+	}
 	if text, sum, err := readHookFile(rolePath); err == nil {
 		d.Role, d.RoleText = hookFileDigest{Path: rolePath, SHA256: sum}, text
 	} else {

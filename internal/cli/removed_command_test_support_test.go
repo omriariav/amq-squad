@@ -50,12 +50,14 @@ func seedNotifyLaunch(t *testing.T, project, base, session, handle string) strin
 func seedNotifyLaunchProfile(t *testing.T, project, base, profile, session, handle string) string {
 	t.Helper()
 	agentDir := filepath.Join(base, session, "agents", handle)
-	if err := launch.WriteUnderRecordLock(agentDir, launch.Record{
+	rec := launch.Record{
 		CWD: project, Binary: "codex", Handle: handle, Role: handle, Session: session,
 		Root: filepath.Join(base, session), AgentPID: seededDeadPID, StartedAt: notifyNow, TeamProfile: profile,
-	}); err != nil {
+	}
+	if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
+	stageForAgentDir(t, agentDir, rec)
 	return agentDir
 }
 
