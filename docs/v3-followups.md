@@ -71,7 +71,9 @@ promised by date.
      but against shell commands it is best effort.
    - D3, a gap beside it: a Claude seat could write the main checkout's
      `.claude` settings files and `.mcp.json`, and so loosen its own
-     permissions; closed in 3.3.1 (item 5). Codex seats run in Codex's
+     permissions. The guard protects the worktree's own `.claude/settings*.json`
+     (`internal/grants/grants.go:309`) but neither of these; planned for
+     3.3.1 (item 5). Codex seats run in Codex's
      OS sandbox; Claude and pi seats have no OS boundary of their own today.
    - The first step is a measurement (no change): whether Claude Code's own
      Bash sandbox, set in each Claude seat's own settings, can hold a Claude
