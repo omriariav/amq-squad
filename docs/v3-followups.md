@@ -68,7 +68,10 @@ promised by date.
      A seat runs as the same user, so a write that gets past the guard passes
      that check.
    - The guard lists the file as protected (`internal/cli/hook_guard_env.go:151`),
-     but against shell commands it is best effort. Codex seats run in Codex's
+     but against shell commands it is best effort.
+   - D3, a gap beside it: a Claude seat could write the main checkout's
+     `.claude` settings files and `.mcp.json`, and so loosen its own
+     permissions; closed in 3.3.1 (item 5). Codex seats run in Codex's
      OS sandbox; Claude and pi seats have no OS boundary of their own today.
    - The first step is a measurement (no change): whether Claude Code's own
      Bash sandbox, set in each Claude seat's own settings, can hold a Claude
@@ -83,12 +86,19 @@ promised by date.
      MCP servers can add such tools to a seat. For Claude seats, project MCP
      is neutralised in 3.3.1 (item 5).
 
-5. **In 3.3.1: the Claude-seat sandbox interim, with project MCP neutralised.**
-   Each Claude seat's own settings turn on Claude Code's Bash sandbox, so
-   its shell writes stay in its worktree and temp dir, with no unsandboxed
-   retry; seat-exec refuses sandbox keys in the worktree's settings; and the
-   seat loads no project MCP servers. pi seats have no such interim (pi has
-   no built-in sandbox); known limit 9's advice stands for them.
+5. **The Claude-seat interim, item 5 split: D3+D5 in 3.3.1; the sandbox in
+   3.3.2 after the rehearsal** (ruled 2026-11-19).
+   - 3.3.1, D3: the guard protects `.claude/settings*.json` and `.mcp.json`
+     in the seat's worktree and in the main checkout.
+   - 3.3.1, D5: MCP neutralised. The launch compiler adds
+     `--strict-mcp-config`, and seat-exec refuses a Claude argv without it or
+     with `--mcp-config`.
+   - 3.3.2: the Claude-seat sandbox itself (Claude Code's Bash sandbox, its
+     excluded commands, a per-seat `GOCACHE`, and seat-exec refusing
+     settings and sandbox keys a seat could use to loosen it), after a
+     rehearsal on the real binaries, which is the owner's word.
+   - pi seats have no such interim (pi has no built-in sandbox); known limit
+     9's advice stands for them.
 
 6. **U2's adoption choice, the owner's, after C5a PR 1.** AMQ's token admits
    the whole `<session root>/agents` tree (finding 4, under the C5 entry), so
