@@ -39,6 +39,11 @@ it (commit_not_on_branch).
 Exit codes: 0 done, 1 refused or error.
 `
 
+// releasePrepareRaiseHook runs as prepare raises each gate, before its
+// write. It is a variable only so a test can put another writer's raise of
+// the same gate there (3.3.x item 1: two prepares into a fresh session).
+var releasePrepareRaiseHook = func(gatestore.Spec) {}
+
 func runRelease(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 		fmt.Fprint(os.Stderr, releaseUsage)
@@ -83,7 +88,12 @@ func runRelease(args []string) error {
 		return fmt.Errorf("release: %w", err)
 	}
 	defer store.Close()
-	esc := mergetrain.StoreEscalator{Store: core.Store, Identity: core.Identity(), Now: hookNow, Squad: mergetrain.SquadOf(sel.Root)}
+	// 3.3.x item 1: no identity is taken here, before the session root may
+	// exist: the escalator stamps each gate at its raise, once the checks
+	// admitted it and the root exists (a prepare into a fresh session creates
+	// it then, a refused prepare never), and the flow, its Squad left empty,
+	// reads the gate store's identity at each check
+	esc := mergetrain.StoreEscalator{Store: core.Store, Identity: core.Identity(), Now: hookNow}
 	if transportErr == nil {
 		esc.Send = core.QuestionSender(ctx)
 	}
@@ -94,10 +104,11 @@ func runRelease(args []string) error {
 		// second line can say so
 		raise = func(spec gatestore.Spec) (gatestore.Record, error) {
 			spec.Facts = gatestore.SafeFacts("", *branch)
+			releasePrepareRaiseHook(spec)
 			return esc.Raise(spec)
 		}
 	}
-	flow := &releaseflow.Flow{Release: store, Gates: core.Store, Raise: raise, Lead: firstOf(sel.Handle, "lead"), Squad: mergetrain.SquadOf(sel.Root),
+	flow := &releaseflow.Flow{Release: store, Gates: core.Store, Raise: raise, Lead: firstOf(sel.Handle, "lead"), SquadNow: core.Store.Squad,
 		Exec: &releaseflow.GH{Bin: *ghBin}, RepoDir: sel.ProjectDir, Branch: *branch,
 		Accepted: func(rec gatestore.Record) error {
 			trust, err := operatorauth.LoadAuthorizationTrustStore(gateTrustStorePath())
