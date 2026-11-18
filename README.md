@@ -26,7 +26,7 @@ The model in five lines:
 
 ## Contents
 
-- [What's new in 3.3.1-rc.1](#whats-new-in-331-rc1)
+- [What's new in 3.3.1](#whats-new-in-331)
 - [Install](#install)
 - [Requirements](#requirements)
 - [First run](#first-run)
@@ -38,9 +38,9 @@ The model in five lines:
 - [Upgrading from v2](#upgrading-from-v2)
 - [Where the plan and evidence live](#where-the-plan-and-evidence-live)
 
-## What's new in 3.3.1-rc.1
+## What's new in 3.3.1
 
-3.3.1-rc.1 lets a gate raised into a new session be answered:
+3.3.1 lets a gate raised into a new session be answered:
 [docs/v3.3.1-release-notes.md](docs/v3.3.1-release-notes.md). In short:
 
 - `gate raise`, `release prepare`, the merge train and the growth gate give
@@ -60,7 +60,7 @@ Earlier releases are in their notes, listed under
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.3.1-rc.1
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.3.1
 amq-squad version
 ```
 
