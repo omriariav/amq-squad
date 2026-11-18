@@ -26,7 +26,7 @@ The model in five lines:
 
 ## Contents
 
-- [What's new in 3.3.0](#whats-new-in-330)
+- [What's new in 3.3.1-rc.1](#whats-new-in-331-rc1)
 - [Install](#install)
 - [Requirements](#requirements)
 - [First run](#first-run)
@@ -38,20 +38,20 @@ The model in five lines:
 - [Upgrading from v2](#upgrading-from-v2)
 - [Where the plan and evidence live](#where-the-plan-and-evidence-live)
 
-## What's new in 3.3.0
+## What's new in 3.3.1-rc.1
 
-3.3.0 makes answering from your phone work the same way more often:
-[docs/v3.3.0-release-notes.md](docs/v3.3.0-release-notes.md). In short:
+3.3.1-rc.1 lets a gate raised into a new session be answered:
+[docs/v3.3.1-release-notes.md](docs/v3.3.1-release-notes.md). In short:
 
-- An answer in a gate's thread after its time ran out gets the question asked
-  again in that thread, once, with a new window; answer again in the thread.
-- Every reply to a verified answer names the decision: `accepted <gate>
-  <class> approved` or `accepted <gate> <class> denied`.
-- The lead's screen says once, in its waiting header, to answer on the phone.
-- `status --json` and `task show --json` say which task moves are open next.
-- AMQ 0.140.0 is the floor: doctor refuses an older `amq`, `amq-remote` or
-  `amq-owner-sign`.
-- The notes list 3.3.0's known limits; what waits is in
+- `gate raise`, `release prepare`, the merge train and the growth gate give
+  a new session's gate an identity your answer matches; the `mkdir -p` step
+  before `release prepare` or `gate raise` is no longer needed.
+- The merge train finds a gate approved in a session it joined before the
+  session existed.
+- A growth gate raised while the transport was down can be answered.
+- A gate 3.3.0 already wrote is not repaired; the notes say how to raise it
+  again.
+- The notes list 3.3.1's known limits; what waits is in
   [docs/v3-followups.md](docs/v3-followups.md).
 
 Earlier releases are in their notes, listed under
@@ -60,7 +60,7 @@ Earlier releases are in their notes, listed under
 ## Install
 
 ```sh
-go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.3.0
+go install github.com/omriariav/amq-squad/v3/cmd/amq-squad@v3.3.1-rc.1
 amq-squad version
 ```
 
@@ -669,7 +669,7 @@ amq-squad migrate .amq-squad/team.json
 | The 3.0 plan, its rulings, phases and recorded limits | [docs/v3-plan.md](docs/v3-plan.md) |
 | The phase briefs and their rulings | [docs/v3-phase2-briefs.md](docs/v3-phase2-briefs.md) |
 | Execution logs and evidence per brief | [docs/v3-spike/](docs/v3-spike/) |
-| Release notes | [docs/v3.3.0-release-notes.md](docs/v3.3.0-release-notes.md), [docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md), [docs/v3.1.2-release-notes.md](docs/v3.1.2-release-notes.md), [docs/v3.1.1-release-notes.md](docs/v3.1.1-release-notes.md), [docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md), [docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md), [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
+| Release notes | [docs/v3.3.1-release-notes.md](docs/v3.3.1-release-notes.md), [docs/v3.3.0-release-notes.md](docs/v3.3.0-release-notes.md), [docs/v3.2.0-release-notes.md](docs/v3.2.0-release-notes.md), [docs/v3.1.2-release-notes.md](docs/v3.1.2-release-notes.md), [docs/v3.1.1-release-notes.md](docs/v3.1.1-release-notes.md), [docs/v3.1.0-release-notes.md](docs/v3.1.0-release-notes.md), [docs/v3.0.2-release-notes.md](docs/v3.0.2-release-notes.md), [docs/v3.0.1-release-notes.md](docs/v3.0.1-release-notes.md), [docs/v3.0.0-release-notes.md](docs/v3.0.0-release-notes.md) |
 | squad.yaml schema 1 | [docs/squad-yaml.md](docs/squad-yaml.md) |
 | Status contract, schema 1 | [docs/status-contract.md](docs/status-contract.md) |
 | Claude Code seat hooks | [docs/claude-hooks.md](docs/claude-hooks.md) |
