@@ -7,7 +7,7 @@ planning sessions that made them; nothing here is a release blocker.
 ## 3.3.x
 
 The list after the 3.3.0 release (2026-11-17), in the plan reviewer's order:
-items 1 to 6 are ruled first to sixth (reordered 2026-11-18 and 2026-11-19). Nothing here is
+items 1 to 6 are ruled first to sixth (reordered three times on 2026-11-18). Nothing here is
 promised by date. 3.3.1 is #1033 only (3.3.1-rc.1, 2026-11-18); #1036 is on v3
 but not in 3.3.1.
 
@@ -45,8 +45,8 @@ in `task show`; use a release build for a live squad.
      (`internal/remote/mailbox/mailbox.go:351`);
    - `Submit` then returns `native_error` (`:235-241`);
    - the phone's text is amq-remote's own `notDelivered` (`:736-737`).
-   It is tracked upstream, with amq-remote's author; the report is the
-   owner's to file. amq-squad never submits or admits. It reads the share's inbox only after a
+   It is amq-remote's defect; reporting it upstream is the owner's call.
+   amq-squad never submits or admits. It reads the share's inbox only after a
    delivery (`internal/buzz/inbound.go:146`; `internal/buzz/amqinbox.go:20-25`;
    `internal/cli/remote.go:63`). Its `amq-remote` calls are `up`
    (`internal/buzz/endpoint.go:108`), `service status`
@@ -180,11 +180,27 @@ in `task show`; use a release build for a live squad.
     (`internal/status/classify.go:114-115`, `:262`), so a lead whose role is
     `cto` shows none. Cosmetic, older than 3.3.
 15. **(y) Re-raise a 3.3.0 growth gate that carries no squad identity.** A
-    growth gate 3.3.0 wrote while the transport was down has no identity, and
+    growth gate 3.3.0 wrote while the transport was down has no identity:
+    its spec carries none (`v3.3.0:internal/cli/seat_commit.go:324`),
+    `Render` copies that empty squad into the record
+    (`v3.3.0:internal/gatestore/record.go:161`, `:180`), and `Create` writes
+    it (`v3.3.0:internal/cli/seat_commit.go:329-331`); only `Store.Raise`,
+    the path with a transport, fills it (`v3.3.0:internal/gatestore/store.go:145-150`).
     3.3.1 finds it again as the same request (`internal/cli/seat_commit.go:312`,
     `:316`), so it stays unanswerable; the 3.3.1 notes give the way out (a
     new gate for the same target). A later release re-raises such a record
     with the session's identity, with its failing row first.
+16. **The guard's credential class stops credential changes, not shell reads
+    of files that hold secrets** (best effort, under known limit 9). A write
+    to a listed credential path is the `credential_change` gate
+    (`internal/cli/hook_guard.go:219-224`; the list,
+    `internal/cli/hook_guard_env.go:235`), and a listed set of commands that
+    print the owner's GitHub or release credential is refused as
+    `credential_read` (`internal/cli/hook_guard.go:524-529`, `:256`). A
+    plain shell read of any other file is neither. Seen live: a pi solo
+    lead's shell read of a shell startup file printed a key into its
+    session, and its `sqlite` read of an app's local message store printed
+    message text.
 
 ## 3.2.x
 
