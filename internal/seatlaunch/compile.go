@@ -673,18 +673,29 @@ func overrideAllowed(overrides []launchapi.ConfigOverrideCapabilityV1, key, valu
 // absent session root), so Stage no longer refuses one that is missing.
 func Stage(c Compiled) error {
 	for i, rec := range c.Records {
-		dir := launch.StagedDir(rec.Root, rec.Handle)
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return err
-		}
-		if err := writeAtomic(filepath.Join(dir, launch.RoleFileName), c.Roles[i]); err != nil {
-			return err
-		}
-		if err := writeStaged(filepath.Join(dir, launch.FileName), rec); err != nil {
+		if err := stageOne(rec, c.Roles[i]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// stageOne is the core's staging of one seat record and its role.md: the
+// 0700 directory, then role.md and the record under the record's lock
+// (writeStaged's), so a lead's staging of the same handle (StageLead, which
+// removes role.md under that lock) never interleaves with it.
+func stageOne(rec launch.Record, role []byte) error {
+	dir := launch.StagedDir(rec.Root, rec.Handle)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, launch.FileName)
+	return withStagedLock(path, func() error {
+		if err := writeAtomic(filepath.Join(dir, launch.RoleFileName), role); err != nil {
+			return err
+		}
+		return launch.WriteFile(path, rec)
+	})
 }
 
 func writeAtomic(path string, data []byte) error {

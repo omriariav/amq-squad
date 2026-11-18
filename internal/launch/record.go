@@ -60,6 +60,12 @@ type Record struct {
 	Proof       *ProofTicket `json:"proof,omitempty"`      // staged only; the published copy has no token
 	Apply       *Apply       `json:"apply,omitempty"`
 	Exec        *Exec        `json:"exec,omitempty"`
+	// SquadLead marks the record the core staged for the squad's lead at its
+	// start (seatlaunch.StageLead, from `lead --team` and the start of a
+	// confirmed team; 3.3.1), never a roster seat's: the lead runs outside
+	// the roster, under no seat-exec, proof or worktree. A 3.3.0 decoder
+	// ignores it.
+	SquadLead bool `json:"squad_lead,omitempty"`
 
 	CWD              string     `json:"cwd"` // older fields live readers still use (3.0 writes CWD, Binary, TeamHome, StartedAt)
 	Binary           string     `json:"binary"`
@@ -78,6 +84,12 @@ type Record struct {
 	TeamHome         string     `json:"team_home,omitempty"`
 	Tmux             *TmuxInfo  `json:"tmux,omitempty"` // v2 pane identity, kept-dead fleet registry only
 }
+
+// LeadOnly reports the record the lead's start staged (SquadLead) for no
+// launch: no proof ticket and no AMQ apply, as a roster launch's record
+// always has. A lead an AMQ launch started keeps its launch's record, marked
+// SquadLead, which is not LeadOnly.
+func (r Record) LeadOnly() bool { return r.SquadLead && r.Proof == nil && r.Apply == nil }
 
 // Apply is the AMQ ApplyResult outcome the core saw for this launch (R48).
 type Apply struct {

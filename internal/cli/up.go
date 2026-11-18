@@ -24,6 +24,7 @@ import (
 
 	"github.com/omriariav/amq-squad/v3/internal/amqexec"
 	"github.com/omriariav/amq-squad/v3/internal/flock"
+	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/piruntime"
 	"github.com/omriariav/amq-squad/v3/internal/procinfo"
 	"github.com/omriariav/amq-squad/v3/internal/schedproc"
@@ -800,6 +801,34 @@ func UpLeadLock(project, root string) (*schedproc.LeadLock, error) {
 	}
 	defer unlock()
 	return takeLeadLock(root)
+}
+
+// UpStageLead is the lead's staging step (3.3.1; shared by `lead --team`,
+// which up's tmux runs, and the start of a confirmed team): after the root's
+// lead lock is this process's, the core stages the lead's own launch record
+// under the session root's core-owned launch directory
+// (seatlaunch.StageLead), the record task show's lead role and the owner's
+// phone read (C5a). q is the squad as compiled; its session root must be
+// root. The returned undo takes the staging back for a start that does not
+// go on (seatlaunch.UnstageLead).
+func UpStageLead(q seatlaunch.Squad, lead, root string) (string, func(), error) {
+	countShared("stage_lead")
+	if q.BaseRoot == "" {
+		q.BaseRoot = filepath.Join(q.ProjectRoot, ".agent-mail")
+	}
+	if filepath.Clean(q.SessionRoot()) != filepath.Clean(root) {
+		return "", nil, fmt.Errorf("the squad's session root %s is not the lead's root %s", q.SessionRoot(), root)
+	}
+	// under an AMQ launch of the lead's own handle, that launch's record is
+	// kept and marked (seatlaunch.StageLead)
+	launched := os.Getenv("AM_ME") == lead && os.Getenv("AM_ROOT") != ""
+	rec, err := seatlaunch.StageLead(q, lead, os.Getpid(), upNow(), launched)
+	if err != nil {
+		return "", nil, err
+	}
+	// undo: a start that does not go on takes its staging back
+	undo := func() { _ = seatlaunch.UnstageLead(root, lead, rec.LaunchID) }
+	return "the lead's launch record " + launch.StagedPath(root, lead) + " (launch " + rec.LaunchID + ")", undo, nil
 }
 
 // UpScheduler is the scheduler step: `amq-squad scheduler run --project`

@@ -139,6 +139,45 @@ func runLead(args []string) error {
 			return fmt.Errorf("lead: %w", err)
 		}
 		defer lock.Release()
+		// 3.3.1: the lead's own launch record, staged by the core under the
+		// session root (the record task show and the owner's phone trust),
+		// before anything starts
+		// the handle staged is the one this process runs as (its team
+		// identity), whatever squad.yaml says by the time it is read again
+		q, _, err := leadStageSquad(teamProject)
+		if err != nil {
+			return fmt.Errorf("lead: stage the lead's launch record: %w", err)
+		}
+		_, unstage, err := UpStageLead(q, teamIdentity.Handle, teamIdentity.Root)
+		if err != nil {
+			return fmt.Errorf("lead: stage the lead's launch record: %w", err)
+		}
+		// a lead whose pi never ran (its scheduler did not start, its
+		// runtime failed to load) takes its staging back; a lead that ran
+		// keeps its record after it stops, as a seat that ran keeps its
+		// (the spawn's evidence: runProcess's started hook after the
+		// child started, or a run that returned no error)
+		piRan := false
+		prevRun, prevStarted := piRun, piStartedHook
+		piStartedHook = func(pid int) {
+			piRan = true
+			if prevStarted != nil {
+				prevStarted(pid)
+			}
+		}
+		piRun = func(path string, argv, env []string) (int, error) {
+			code, err := prevRun(path, argv, env)
+			if err == nil {
+				piRan = true
+			}
+			return code, err
+		}
+		defer func() {
+			piRun, piStartedHook = prevRun, prevStarted
+			if !piRan {
+				unstage()
+			}
+		}()
 		if os.Getenv(leadStartEnv) == "" {
 			// the start of this launch, for the launch budget (brief 31-1)
 			os.Setenv(leadStartEnv, time.Now().UTC().Format(time.RFC3339Nano))
@@ -243,6 +282,10 @@ func runLead(args []string) error {
 	}
 	return piLaunch(piLaunchSpec{Seat: "lead", Flags: f, PiArgs: piArgs, Overlay: solo})
 }
+
+// leadStageSquad reads squad.yaml for the lead's staging (a test seam: a
+// squad.yaml that changed after the lead's identity was resolved).
+var leadStageSquad = squadOfProject
 
 // piSpawnNonce is the nonce runProcess hands the pi it spawns over fd 3
 // (the solo lead's, set while it runs).

@@ -865,6 +865,7 @@ type leadLauncher struct {
 	outcome         string
 	roster          []string
 	refusal, detail string
+	unstage         func() // takes back the lead's staging (3.3.1)
 }
 
 func (l *leadLauncher) Launch(ctx context.Context, _ fleet.LaunchRequest) error {
@@ -909,7 +910,16 @@ func (l *leadLauncher) Launch(ctx context.Context, _ fleet.LaunchRequest) error 
 				return "", refuse(schedproc.ReasonLeadRunning, "%v", err)
 			}
 			s.lock = lock
-			return "the lead lock of " + root + " is held by this lead (pid " + fmt.Sprint(s.self) + ")", nil
+			// 3.3.1: the lead's own launch record, staged by the core
+			// under the session root, before the scheduler starts
+			staged, undo, err := UpStageLead(q, lead, root)
+			if err != nil {
+				s.lock.Release()
+				s.lock = nil
+				return "", refuse("lead_stage_failed", "stage the lead's launch record: %v", err)
+			}
+			l.unstage = undo
+			return "the lead lock of " + root + " is held by this lead (pid " + fmt.Sprint(s.self) + "); " + staged, nil
 		}},
 	} {
 		if err := step(st.name, st.fn); err != nil {
@@ -929,6 +939,7 @@ func (l *leadLauncher) Launch(ctx context.Context, _ fleet.LaunchRequest) error 
 		s.sup = sup
 		return "scheduler run --project " + s.project + " supervised by the lead", nil
 	}); err != nil {
+		l.undoStage()
 		s.lock.Release()
 		s.lock = nil
 		return err
@@ -944,6 +955,7 @@ func (l *leadLauncher) Launch(ctx context.Context, _ fleet.LaunchRequest) error 
 	if err != nil {
 		s.sup.stop()
 		s.sup = nil
+		l.undoStage()
 		s.lock.Release()
 		s.lock = nil
 		return err
@@ -959,9 +971,19 @@ func (l *leadLauncher) Close(context.Context, fleet.LaunchRequest) error {
 		l.s.sup.stop()
 		l.s.sup = nil
 	}
+	l.undoStage()
 	l.s.lock.Release()
 	l.s.lock = nil
 	return nil
+}
+
+// undoStage takes back the lead's staging of a start that did not go on
+// (3.3.1): its scheduler or roster failed, or the mayor closed it.
+func (l *leadLauncher) undoStage() {
+	if l.unstage != nil {
+		l.unstage()
+		l.unstage = nil
+	}
 }
 
 // applyThroughLead is `team apply --digest D` under the solo lead: the

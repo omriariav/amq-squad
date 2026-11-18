@@ -141,7 +141,9 @@ type taskShowEnvelope struct {
 // taskNextCaller is whom task show's next is for: with no --me, every role;
 // with --me, the roles that handle holds: the task's lease holder, and the
 // lead when its launch record names the lead role (status.LeadRole, as the
-// status document's lead_handle). A handle that holds neither gets none.
+// status document's lead_handle) or is the squad lead's own (SquadLead: the
+// record the lead's start staged, 3.3.1). A handle that holds neither gets
+// none.
 func taskNextCaller(root, me string, t task.Task) task.NextCaller {
 	if me == "" {
 		return task.NextCaller{}
@@ -153,7 +155,7 @@ func taskNextCaller(root, me string, t task.Task) task.NextCaller {
 	// the record must be this handle's own: a record whose handle is another
 	// seat's names no role for me; and it is the record the core staged for
 	// the launch, never one in the seat's own agent directory (C5a)
-	if rec, err := launch.ReadStaged(root, me); err == nil && rec.Handle == me && rec.Role == status.LeadRole {
+	if rec, err := launch.ReadStaged(root, me); err == nil && rec.Handle == me && (rec.Role == status.LeadRole || rec.SquadLead) {
 		roles = append(roles, task.NextLead)
 	}
 	if len(roles) == 0 {
