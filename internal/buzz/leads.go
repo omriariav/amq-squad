@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/omriariav/amq-squad/v3/internal/fleet"
@@ -32,16 +31,14 @@ type LeadRegistry interface {
 
 // FleetLeads is the fleet registry as the lead authority: a destination is
 // a squad's registered lead, named as `handle` when exactly one squad has
-// that lead or as `squad/handle`; the seat's launch record in the squad's
-// root must still name a lead role (Roles, default DefaultLeadRoles), so a
-// registry entry that went stale never routes to an implementer. The
-// message goes to the squad's root through AMQ cross-project routing.
+// that lead or as `squad/handle`; the lead's launch record in the squad's
+// root must still carry lead authority (LaunchRecordLeads: its start's
+// record, squad.yaml's current lead), so a registry entry that went stale
+// never routes to an implementer or a former lead. The message goes to the
+// squad's root through AMQ cross-project routing.
 type FleetLeads struct {
 	Registry fleet.Registry
-	// Roles are the lead roles per squad name (that squad's configured lead
-	// role); a squad without an entry uses DefaultLeadRoles. Never pooled
-	// across squads (4-5 re-pass).
-	Roles map[string][]string
+	Current  CurrentLead
 }
 
 // AmbiguousLeadError is a lead handle that more than one squad has.
@@ -77,11 +74,7 @@ func (f FleetLeads) Lead(root, name string) (Destination, error) {
 		return Destination{}, e
 	}
 	s := found[0]
-	roles := f.Roles[s.Name]
-	if len(roles) == 0 {
-		roles = DefaultLeadRoles
-	}
-	if _, err := (LaunchRecordLeads{Roles: roles}).Lead(s.Root, handle); err != nil {
+	if _, err := (LaunchRecordLeads{Current: f.Current}).Lead(s.Root, handle); err != nil {
 		return Destination{}, fmt.Errorf("the fleet registry names %s the lead of %s, but the seat says otherwise: %w", handle, s.Name, err)
 	}
 	d := Destination{Root: s.Root, Handle: handle, Squad: s.Name}
@@ -114,16 +107,18 @@ func FleetDestinations(r fleet.Registry) []string {
 	return out
 }
 
-// DefaultLeadRoles are the roles that lead a squad: the catalog's generic
-// lead and the cto persona the 2.x teams lead with. A team's configured lead
-// role is added by the caller.
-var DefaultLeadRoles = []string{"lead", "cto"}
+// CurrentLead names the lead a squad's squad.yaml names now, read from the
+// repository the lead's staged record names (launch.Record.SquadProject),
+// at every check.
+type CurrentLead func(project string) (string, error)
 
-// LaunchRecordLeads answers from the record the core staged for the seat's
-// launch (<root>/extensions/amq-squad/launch/<handle>/, which no seat can
-// write; never a record in the seat's own agent directory, C5a): its role
-// must be one of Roles.
-type LaunchRecordLeads struct{ Roles []string }
+// LaunchRecordLeads answers from the record the core staged under
+// <root>/extensions/amq-squad/launch/<handle>/ (which no seat can write;
+// never a record in the seat's own agent directory, C5a): lead authority is
+// the record the lead's start staged (SquadLead) for the handle squad.yaml
+// names its lead now (3.3.1; launch.Record.HasLeadAuthority). A role id
+// ("cto", "lead") alone grants nothing; without Current nothing leads.
+type LaunchRecordLeads struct{ Current CurrentLead }
 
 func (l LaunchRecordLeads) Lead(root, handle string) (Destination, error) {
 	if !handleRe.MatchString(handle) {
@@ -136,11 +131,18 @@ func (l LaunchRecordLeads) Lead(root, handle string) (Destination, error) {
 	if err != nil {
 		return Destination{}, fmt.Errorf("%s: launch record unreadable: %v", handle, err)
 	}
-	if rec.Handle != "" && rec.Handle != handle {
-		return Destination{}, fmt.Errorf("%s: the launch record names handle %s", handle, rec.Handle)
+	if !rec.SquadLead || rec.SquadProject == "" {
+		return Destination{}, fmt.Errorf("%s is a %q seat, not the squad's lead: no lead start staged its record", handle, rec.Role)
 	}
-	if !slices.Contains(l.Roles, rec.Role) {
-		return Destination{}, fmt.Errorf("%s is a %q seat, not a lead (lead roles: %v)", handle, rec.Role, l.Roles)
+	if l.Current == nil {
+		return Destination{}, fmt.Errorf("%s: no squad.yaml to name the squad's current lead", handle)
+	}
+	cur, err := l.Current(rec.SquadProject)
+	if err != nil {
+		return Destination{}, fmt.Errorf("%s: the squad's current lead: %v", handle, err)
+	}
+	if !rec.HasLeadAuthority(cur) {
+		return Destination{}, fmt.Errorf("%s is no longer the squad's lead: %s names %s", handle, filepath.Join(rec.SquadProject, "squad.yaml"), cur)
 	}
 	return Destination{Root: root, Handle: handle}, nil
 }

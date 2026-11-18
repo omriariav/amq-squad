@@ -69,14 +69,9 @@ func TestC5aASeatWrittenLaunchRecordGrantsNoLeadRole(t *testing.T) {
 	if got := next(t, "seat-b"); !reflect.DeepEqual(got, []task.NextEntry{}) {
 		t.Errorf("a launch record seat-b wrote in its own agent directory gave it entries: %+v", got)
 	}
-	// the core staged cto's launch as the lead
-	staged := launch.StagedDir(root, "cto")
-	if err := os.MkdirAll(staged, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := launch.WriteFile(filepath.Join(staged, launch.FileName), launch.Record{Schema: launch.SchemaVersion, Handle: "cto", Root: root, Role: status.LeadRole, StartedAt: now}); err != nil {
-		t.Fatal(err)
-	}
+	// the core staged cto's record as the squad's lead (3.3.1: its lead
+	// start, squad.yaml's lead)
+	stageLeadFor(t, root, "cto")
 	want := []task.NextEntry{{Verb: "task cancel", Who: task.NextLead}, {Verb: "task release", Who: task.NextLead}}
 	if got := next(t, "cto"); !reflect.DeepEqual(got, want) {
 		t.Errorf("the record the core staged for cto's launch as the lead gave %+v, want %+v", got, want)
@@ -252,7 +247,7 @@ func TestC5aPresenceAndTheWakeDialogDecideNothing(t *testing.T) {
 	if p, err := taskClaimSeatPool(root, "worker", nil); err != nil || p != nil {
 		t.Errorf("presence made the seat live for the claim pool: %+v %v", p, err)
 	}
-	if d, err := (buzz.LaunchRecordLeads{Roles: buzz.DefaultLeadRoles}).Lead(root, "worker"); err == nil {
+	if d, err := (buzz.LaunchRecordLeads{Current: squadLeadNow}).Lead(root, "worker"); err == nil {
 		t.Errorf("presence routed the owner to an implementer: %+v", d)
 	}
 }

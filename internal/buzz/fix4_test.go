@@ -65,19 +65,20 @@ func TestShareJSONMustBePrivate(t *testing.T) {
 	}
 }
 
-// Medium 3: the lead roles are per squad; squad lib's seat cannot borrow
-// squad app's configured lead role.
+// Medium 3, 3.3.1: lead authority is per squad; squad lib's seat, whose
+// record no lead start of lib staged, cannot borrow squad app's lead (the
+// same role id, "architect", grants nothing).
 func TestFleetLeadRolesArePerSquad(t *testing.T) {
 	dir := realTempDir(t)
 	app, lib := filepath.Join(dir, "app", ".agent-mail", "s"), filepath.Join(dir, "lib", ".agent-mail", "s")
-	writeLaunchRecord(t, app, "arch", "architect")
+	writeLeadRecord(t, app, "arch", "")
 	writeLaunchRecord(t, lib, "dev", "architect")
 	reg := FleetLeads{Registry: fleet.Registry{Squads: []fleet.Squad{{Name: "app", Root: app, Lead: "arch", Session: "s"}, {Name: "lib", Root: lib, Lead: "dev", Session: "s"}}},
-		Roles: map[string][]string{"app": {"architect"}}}
+		Current: squadYAMLLead}
 	if _, err := reg.Lead("/op", "app/arch"); err != nil {
-		t.Fatalf("app's configured lead role: %v", err)
+		t.Fatalf("app's lead: %v", err)
 	}
 	if _, err := reg.Lead("/op", "lib/dev"); err == nil {
-		t.Fatal("lib's seat passed with app's configured lead role")
+		t.Fatal("lib's seat passed with app's lead role id")
 	}
 }

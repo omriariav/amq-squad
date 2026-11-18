@@ -20,6 +20,7 @@ import (
 // handle that is no squad's lead is refused at attach.
 func TestRemoteAttachToTheOperator(t *testing.T) {
 	f := newGateCLIFixture(t)
+	markLead(t, f.root, "cto") // 3.3.1: the squad's lead is its lead start's record, squad.yaml's lead
 	ep, mailer := &remoteFakeEndpoint{}, &remoteFakeMailer{}
 	prevE, prevM, prevS := remoteEndpoint, remoteMailer, remoteService
 	remoteEndpoint = func(string) buzz.Endpoint { return ep }

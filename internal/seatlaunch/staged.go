@@ -14,5 +14,10 @@ import (
 // so it either sees the restaged record and writes nothing, or finishes
 // before the restage replaces it whole.
 func writeStaged(path string, rec launch.Record) error {
-	return flock.WithLock(path+".lock", func() error { return launch.WriteFile(path, rec) })
+	return withStagedLock(path, func() error { return launch.WriteFile(path, rec) })
+}
+
+// withStagedLock runs fn under a staged record's sidecar lock.
+func withStagedLock(path string, fn func() error) error {
+	return flock.WithLock(path+".lock", fn)
 }

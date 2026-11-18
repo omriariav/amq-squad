@@ -129,7 +129,7 @@ func TestTheStartOfAConfirmedTeamRunsUpsSharedStepsAndNoInstallOrTmux(t *testing
 	if r.Outcome != "started" || !strings.HasPrefix(r.Detail, "roster_launched") {
 		t.Fatalf("start = %+v", r)
 	}
-	if got, want := sharedDelta(before), map[string]int{"compile": 1, "session": 1, "doctor": 1, "lead_lock": 1, "scheduler": 1, "roster": 1}; !maps.Equal(got, want) {
+	if got, want := sharedDelta(before), map[string]int{"compile": 1, "session": 1, "doctor": 1, "lead_lock": 1, "stage_lead": 1, "scheduler": 1, "roster": 1}; !maps.Equal(got, want) {
 		t.Fatalf("shared steps %v, want %v", got, want)
 	}
 	var names []string
@@ -207,7 +207,7 @@ func TestUpAndTheLeadTeamCountOnTheSameSharedSteps(t *testing.T) {
 	if _, _, err := captureOutput(t, func() error { return runLead([]string{"--team"}) }); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := sharedDelta(before), map[string]int{"lead_lock": 1, "scheduler": 1}; !maps.Equal(got, want) {
+	if got, want := sharedDelta(before), map[string]int{"lead_lock": 1, "stage_lead": 1, "scheduler": 1}; !maps.Equal(got, want) {
 		t.Fatalf("lead --team's shared steps %v, want %v", got, want)
 	}
 }

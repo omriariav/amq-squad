@@ -306,9 +306,11 @@ func testOwnerScriptDryRun(t *testing.T, opts ownerDryRunOptions) {
 		t.Fatalf("amq init: %v\n%s", err, out)
 	}
 	target, err := Resolve(squad, "lead-a", []string{"lead-b"})
+	// 3.3.1: lead-b, a routed destination, is the squad's lead (its start's
+	// record, squad.yaml's lead); lead-a is the attached mailbox
 	writeLaunchRecord(t, squad, "lead-a", "lead")
-	writeLaunchRecord(t, squad, "lead-b", "lead")
-	target.Registry = LaunchRecordLeads{Roles: DefaultLeadRoles}
+	writeLeadRecord(t, squad, "lead-b", "")
+	target.Registry = LaunchRecordLeads{Current: squadYAMLLead}
 	if err != nil {
 		t.Fatal(err)
 	}

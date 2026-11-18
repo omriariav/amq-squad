@@ -540,6 +540,12 @@ func seatLaunchState(root, handle string, now time.Time) (staged launch.Record, 
 	if staged, err = launch.Decode(raw); err != nil {
 		return launch.Record{}, nil, nil, false
 	}
+	// 3.3.1: the record the lead's start staged for no launch (LeadOnly)
+	// joins the lead's identity only: no roster launch staged it, so it has
+	// no launch screen and no launch warnings
+	if staged.LeadOnly() {
+		return staged, nil, nil, true
+	}
 	sl = seatLaunch(root, handle, staged)
 	warnings = append(seatWarnings(root, handle), launchWarnings(root, handle, staged, sl, now)...)
 	return staged, sl, warnings, true

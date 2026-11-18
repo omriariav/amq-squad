@@ -424,6 +424,10 @@ func runAMQCLI(ctx context.Context, amq string, args []string, stdin []byte, env
 	return stdout, stderr, 0, err
 }
 
+// errAnotherLaunch stops an update of a staged record another launch (or a
+// lead's start) staged since: nothing is written.
+var errAnotherLaunch = errors.New("the staged record is another launch's")
+
 // recordApply writes the AMQ apply outcome and the launch nonce into each
 // staged record (R48: the record keeps outcome, reason and detail).
 func recordApply(c Compiled, r launchapi.ApplyResultV1, detail string, now time.Time) {
@@ -431,6 +435,12 @@ func recordApply(c Compiled, r launchapi.ApplyResultV1, detail string, now time.
 		// Through the one staged-record writer (fix 3c (f)): only the apply
 		// fields change; the ticket stays as the launcher left it.
 		_ = launch.UpdateStaged(rec.Root, rec.Handle, func(cur *launch.Record) error {
+			// only this launch's record: a record a later launch or a
+			// lead's start staged for the handle since keeps its own
+			// (3.3.1, Codex on the lead's staging; markToken's rule)
+			if cur.LaunchID != rec.LaunchID {
+				return errAnotherLaunch
+			}
 			cur.LaunchNonce = r.BindingGeneration
 			cur.Apply = &launch.Apply{Outcome: r.Outcome, ReasonCode: r.ReasonCode, FailureDetail: amqDetail(detail), At: now.UTC()}
 			return nil

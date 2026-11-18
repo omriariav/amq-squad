@@ -70,6 +70,17 @@ func (m *syncMailer) Send(_ context.Context, mail buzz.Mail) (string, error) {
 	m.sent = append(m.sent, mail)
 	return fmt.Sprintf("m%d", len(m.sent)), nil
 }
+func (m *syncMailer) count(handle string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, s := range m.sent {
+		if s.To == handle {
+			n++
+		}
+	}
+	return n
+}
 func (m *syncMailer) to(handle string) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -105,6 +116,7 @@ func operatorFixture(t *testing.T) (gateCLIFixture, string, string, *syncEndpoin
 	}
 	raw, _ := json.Marshal(map[string]any{"status": "active", "last_seen": time.Now().UTC()})
 	mustWrite(t, filepath.Join(opRoot, "agents", "user", "presence.json"), string(raw))
+	markLead(t, f.root, "cto") // 3.3.1: app's lead is its lead start's record, squad.yaml's lead
 	return f, file, opRoot, ep, mailer
 }
 
@@ -154,6 +166,7 @@ func TestRemoteAttachRereadsTheFleetRegistry(t *testing.T) {
 	launch := fmt.Sprintf(`{"schema":1,"handle":"dev","role":"lead","binary":"codex","cwd":%q,"agent_pid":0,"started_at":"2026-10-24T11:00:00Z","root":%q}`, lib, libRoot)
 	// the record the core staged for dev's launch (C5a: lead routing reads it)
 	mustWrite(t, filepath.Join(libRoot, "extensions", "amq-squad", "launch", "dev", "launch.json"), launch)
+	markLead(t, libRoot, "dev") // 3.3.1: lib's lead is its lead start's record, squad.yaml's lead
 	if _, _, err := captureOutput(t, func() error {
 		return runFleet([]string{"add", "--fleet-file", file, "--name", "lib", "--root", libRoot, "--project-path", lib, "--repository", "owner/lib", "--lead", "dev", "--session", "w"})
 	}); err != nil {

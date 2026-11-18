@@ -38,6 +38,7 @@ func verifyTimeoutRow(st status.Status, gateID string) *status.Attention {
 // takes it away.
 func TestHungVerificationIsInTheStatusAttentionQueue(t *testing.T) {
 	f := newGateCLIFixture(t)
+	markLead(t, f.root, "cto") // 3.3.1: the squad's lead is its lead start's record, squad.yaml's lead
 	serve := f.serve()
 	prevD, prevT := remoteDialer, remoteVerifyTimeout
 	remoteVerifyTimeout = 200 * time.Millisecond
@@ -102,6 +103,7 @@ func TestGateAlertShownOnlyWhileTheGateIsOpen(t *testing.T) {
 // never started, even with the bound seat present.
 func TestAttachChecksTheBindingBeforeTheEndpoint(t *testing.T) {
 	f := newGateCLIFixture(t)
+	markLead(t, f.root, "cto") // 3.3.1: the squad's lead is its lead start's record, squad.yaml's lead
 	ep := &remoteFakeEndpoint{}
 	prevE := remoteEndpoint
 	remoteEndpoint = func(string) buzz.Endpoint { return ep }

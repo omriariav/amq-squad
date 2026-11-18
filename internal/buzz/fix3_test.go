@@ -50,7 +50,7 @@ func TestShareRootAndBodyKeyAreNotFollowed(t *testing.T) {
 func TestFleetLeadsChecksTheSeatRole(t *testing.T) {
 	root := filepath.Join(realTempDir(t), "app", ".agent-mail", "s")
 	writeLaunchRecord(t, root, "worker", "agent")
-	reg := FleetLeads{Registry: fleet.Registry{Squads: []fleet.Squad{{Name: "app", Root: root, Lead: "worker", Session: "s"}}}}
+	reg := FleetLeads{Registry: fleet.Registry{Squads: []fleet.Squad{{Name: "app", Root: root, Lead: "worker", Session: "s"}}}, Current: squadYAMLLead}
 	if _, err := reg.Lead("/op", "worker"); err == nil || !strings.Contains(err.Error(), "seat says otherwise") {
 		t.Fatalf("a registry lead whose seat is an implementer: %v", err)
 	}
@@ -66,10 +66,10 @@ func TestFleetLeadsChecksTheSeatRole(t *testing.T) {
 func TestFleetLeadsAmbiguousAndQualified(t *testing.T) {
 	dir := realTempDir(t)
 	app, lib := filepath.Join(dir, "app", ".agent-mail", "s"), filepath.Join(dir, "lib", ".agent-mail", "s")
-	writeLaunchRecord(t, app, "cto", "cto")
-	writeLaunchRecord(t, lib, "cto", "cto")
+	writeLeadRecord(t, app, "cto", "")
+	writeLeadRecord(t, lib, "cto", "")
 	r := fleet.Registry{Squads: []fleet.Squad{{Name: "app", Root: app, Lead: "cto", Session: "s"}, {Name: "lib", Root: lib, Lead: "cto", Session: "s"}}}
-	reg := FleetLeads{Registry: r}
+	reg := FleetLeads{Registry: r, Current: squadYAMLLead}
 	var amb *AmbiguousLeadError
 	if _, err := reg.Lead("/op", "cto"); !errors.As(err, &amb) || !slices.Equal(amb.Squads, []string{"app", "lib"}) {
 		t.Fatalf("bare cto: %v", err)

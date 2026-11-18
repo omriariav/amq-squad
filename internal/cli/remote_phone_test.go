@@ -34,6 +34,7 @@ func (c *cliThreads) Thread(_ context.Context, _, thread string) ([]buzz.ThreadE
 // change the attachment reads from status makes no post of its own.
 func TestRemoteAttachRelaysTheLeadsReply(t *testing.T) {
 	f := newGateCLIFixture(t)
+	markLead(t, f.root, "cto") // 3.3.1: the squad's lead is its lead start's record, squad.yaml's lead
 	ep, mailer := &remoteFakeEndpoint{}, &remoteFakeMailer{}
 	threads := &cliThreads{replies: map[string][]buzz.ThreadEntry{}}
 	prevE, prevM, prevS, prevT := remoteEndpoint, remoteMailer, remoteService, remoteThreads

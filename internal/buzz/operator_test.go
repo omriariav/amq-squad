@@ -16,14 +16,14 @@ import (
 func TestFleetLeads(t *testing.T) {
 	dir := realTempDir(t)
 	app, lib := filepath.Join(dir, "app", ".agent-mail", "s"), filepath.Join(dir, "lib", ".agent-mail", "w")
-	writeLaunchRecord(t, app, "lead-app", "lead")
-	writeLaunchRecord(t, lib, "lead-lib", "cto")
+	writeLeadRecord(t, app, "lead-app", "")
+	writeLeadRecord(t, lib, "lead-lib", "")
 	op := filepath.Join(dir, "op")
 	r := fleet.Registry{Operator: fleet.Operator{Root: op, Project: "fleet", Session: "ops"}, Squads: []fleet.Squad{
 		{Name: "app", Root: app, Lead: "lead-app", Session: "s"},
 		{Name: "lib", Root: lib, Lead: "lead-lib", Project: "libp"},
 	}}
-	reg := FleetLeads{Registry: r}
+	reg := FleetLeads{Registry: r, Current: squadYAMLLead}
 	d, err := reg.Lead(op, "lead-lib")
 	if err != nil || d.Root != lib || d.Handle != "lead-lib" || d.Project != "libp" || d.Session != "w" || d.Squad != "lib" {
 		t.Fatalf("lead-lib = %+v, %v", d, err)

@@ -258,6 +258,9 @@ func evaluateGuard(id hookIdentity, call guardCall, now time.Time) guardVerdict 
 		if a.harness != "" {
 			return out("deny", "harness_only", a.harness+" is the harness's: the commit step runs the verifier and records the verdict, never a seat (v3-5-verifier rule 2)")
 		}
+		if a.ownerOnly != "" && !strings.HasPrefix(a.ownerOnly, "amq-squad team ") {
+			return out("deny", "owner_only", a.ownerOnly+" is the owner's: it starts or stops the squad's lead, whose start stages the record the squad trusts as its lead's; never a seat or the lead's tools (3.3.1)")
+		}
 		if a.ownerOnly != "" {
 			return out("deny", "owner_only", a.ownerOnly+" is the owner's: a team is confirmed from the owner's own shell, the lead's pane (/confirm, a dialog with nothing to type) or the owner's signed bare yes replied to the lead's Buzz post of the plan, never by a seat or the lead's tools (R55)")
 		}
@@ -536,6 +539,11 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 		a.harness = "amq-squad seat-exec"
 	case cmd == "amq-squad" && sub[0] == "team" && (sub[1] == "confirm" || sub[1] == "apply"):
 		a.ownerOnly = "amq-squad team " + sub[1]
+	case cmd == "amq-squad" && (sub[0] == "lead" || sub[0] == "up" || sub[0] == "down"):
+		// 3.3.1: a lead's start stages the record the squad trusts as its
+		// lead's; a seat (or the lead's tools) never starts or stops one.
+		// Best effort, as for seat-exec (known limit 9, the shell class)
+		a.ownerOnly = "amq-squad " + sub[0]
 	case cmd == "git" && sub[0] == "merge" && !hasFlagPrefix(args, "--abort"):
 		a.merge = "git"
 	case cmd == "git" && sub[0] == "push":

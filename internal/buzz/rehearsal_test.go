@@ -109,7 +109,7 @@ func rehearseOwnerRun(ctx context.Context, t *testing.T, env []string, amqSquad,
 	}
 	// stand-in for the launch record the lead's launch leaves (owner-run 0.3):
 	// routing checks the seat's role, not only the registry
-	writeLaunchRecord(t, root, "cto", "cto")
+	writeLeadRecord(t, root, "cto", p)
 	if r := sh("0.3 amq init (operator)", "amq", "init", "--root", opRoot, "--agents", "buzz,user"); r.rc != 0 {
 		t.Fatalf("amq init: rc %d", r.rc)
 	}

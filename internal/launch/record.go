@@ -60,6 +60,20 @@ type Record struct {
 	Proof       *ProofTicket `json:"proof,omitempty"`      // staged only; the published copy has no token
 	Apply       *Apply       `json:"apply,omitempty"`
 	Exec        *Exec        `json:"exec,omitempty"`
+	// SquadLead marks the record the core staged for the squad's lead at its
+	// start, set (promoted) only once the start went on: its pi started, or
+	// the confirmed team's roster came up; a start that never ran (killed
+	// after staging) leaves it unset, so no authority (3.3.1 round 2). It is
+	// staged
+	// start (seatlaunch.StageLead, from `lead --team` and the start of a
+	// confirmed team; 3.3.1), never a roster seat's: the lead runs outside
+	// the roster, under no seat-exec, proof or worktree. A 3.3.0 decoder
+	// ignores it.
+	SquadLead bool `json:"squad_lead,omitempty"`
+	// SquadProject is the repository whose squad.yaml the lead's start
+	// staged it from (with SquadLead): lead authority is SquadLead for the
+	// handle that squad.yaml names its lead NOW (HasLeadAuthority).
+	SquadProject string `json:"squad_project,omitempty"`
 
 	CWD              string     `json:"cwd"` // older fields live readers still use (3.0 writes CWD, Binary, TeamHome, StartedAt)
 	Binary           string     `json:"binary"`
@@ -77,6 +91,20 @@ type Record struct {
 	TeamProfile      string     `json:"team_profile,omitempty"`
 	TeamHome         string     `json:"team_home,omitempty"`
 	Tmux             *TmuxInfo  `json:"tmux,omitempty"` // v2 pane identity, kept-dead fleet registry only
+}
+
+// LeadOnly reports the record a lead's start staged (SquadProject: pending
+// until the start promotes it SquadLead) for no launch: no proof ticket and
+// no AMQ apply, as a roster launch's record always has. A lead an AMQ launch
+// started keeps its launch's record, marked, which is not LeadOnly.
+func (r Record) LeadOnly() bool { return r.SquadProject != "" && r.Proof == nil && r.Apply == nil }
+
+// HasLeadAuthority reports lead authority (task show's lead role, the
+// owner's phone routing to a lead; 3.3.1): the record the lead's start
+// staged (SquadLead, from SquadProject) for the handle squad.yaml names its
+// lead now, current. A role id ("cto", "lead") alone grants nothing.
+func (r Record) HasLeadAuthority(current string) bool {
+	return r.SquadLead && r.SquadProject != "" && r.Handle != "" && r.Handle == current
 }
 
 // Apply is the AMQ ApplyResult outcome the core saw for this launch (R48).

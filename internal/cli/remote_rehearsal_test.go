@@ -24,6 +24,7 @@ func attachOnce(t *testing.T, f gateCLIFixture) string {
 // through remote attach, the gate accepted.
 func TestRehearsalThroughServe(t *testing.T) {
 	f := newGateCLIFixture(t)
+	markLead(t, f.root, "cto") // 3.3.1: the squad's lead is its lead start's record, squad.yaml's lead
 	serve := f.serve()
 	mailer := &remoteFakeMailer{}
 	prevM := remoteMailer

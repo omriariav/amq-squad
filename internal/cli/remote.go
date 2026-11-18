@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -343,22 +342,16 @@ func (f remoteFlags) mode(sel contextResolution, version string) (remoteMode, er
 			return remoteMode{}, errors.New("the fleet registry has no operator session (amq-squad fleet operator), or attach to one squad with --lead")
 		}
 		// the routing table holds the squads that validate now: each squad's
-		// lead role is its own (its squad.yaml lead role, else the default
-		// lead roles), never pooled, and its lead seat must name it; a squad
-		// that fails is left out with a problem, and a fleet with no valid
-		// squad refuses (4-5 re-pass)
-		roles := map[string][]string{}
-		for _, sq := range r.Squads {
-			if tm, err := team.ReadFor(sq.ProjectPath, ""); err == nil && strings.TrimSpace(tm.Lead) != "" {
-				roles[sq.Name] = []string{strings.TrimSpace(tm.Lead)}
-			}
-		}
+		// registered lead must carry lead authority (its start's record,
+		// squad.yaml's current lead, 3.3.1); a squad that fails is left out
+		// with a problem, and a fleet with no valid squad refuses (4-5
+		// re-pass)
 		valid := r
 		valid.Squads = nil
 		var problems []string
 		for _, sq := range r.Squads {
 			one := fleet.Registry{Squads: []fleet.Squad{sq}}
-			if _, err := (buzz.FleetLeads{Registry: one, Roles: roles}).Lead(r.Operator.Root, sq.Name+"/"+sq.Lead); err != nil {
+			if _, err := (buzz.FleetLeads{Registry: one, Current: squadLeadNow}).Lead(r.Operator.Root, sq.Name+"/"+sq.Lead); err != nil {
 				problems = append(problems, "squad "+sq.Name+" left out: "+err.Error())
 				continue
 			}
@@ -374,7 +367,7 @@ func (f remoteFlags) mode(sel contextResolution, version string) (remoteMode, er
 		if err != nil {
 			return remoteMode{}, err
 		}
-		t.Registry = buzz.FleetLeads{Registry: valid, Roles: roles}
+		t.Registry = buzz.FleetLeads{Registry: valid, Current: squadLeadNow}
 		if err := checkLeads(t); err != nil {
 			return remoteMode{}, err
 		}
@@ -392,18 +385,28 @@ func (f remoteFlags) mode(sel contextResolution, version string) (remoteMode, er
 	if err != nil {
 		return remoteMode{}, err
 	}
-	// single-squad mode: the seat roles the launch records carry
-	roles := slices.Clone(buzz.DefaultLeadRoles)
-	if tm, err := team.ReadFor(sel.ProjectDir, sel.Profile); err == nil && strings.TrimSpace(tm.Lead) != "" {
-		roles = append(roles, strings.TrimSpace(tm.Lead))
-	}
-	t.Registry = buzz.LaunchRecordLeads{Roles: roles}
+	// single-squad mode: the lead's own staged record and squad.yaml's
+	// current lead (3.3.1)
+	t.Registry = buzz.LaunchRecordLeads{Current: squadLeadNow}
 	if err := checkLeads(t); err != nil {
 		return remoteMode{}, err
 	}
 	return remoteMode{target: t, status: func() ([]byte, error) {
 		return json.Marshal(buildStatusContract(sel.Root, sel.ProjectDir, version, statusNow()))
 	}}, nil
+}
+
+// squadLeadNow is the lead squad.yaml names now in project (the repository
+// a lead's staged record names): the lead authority's current half (3.3.1).
+func squadLeadNow(project string) (string, error) {
+	s, err := team.LoadSquad(project)
+	if err != nil {
+		return "", err
+	}
+	if lead := strings.TrimSpace(s.Lead); lead != "" {
+		return lead, nil
+	}
+	return "", fmt.Errorf("%s names no lead", team.SquadPath(project))
 }
 
 // checkLeads refuses a destination the registry does not name as a lead.

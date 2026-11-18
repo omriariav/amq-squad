@@ -38,7 +38,7 @@ func TestTaskShowJSONCarriesNextBesideTheTask(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	stageForAgentDir(t, leadDir, launch.Record{Handle: "cto", Root: root, Role: status.LeadRole, StartedAt: now})
+	stageLeadFor(t, root, "cto") // 3.3.1: the lead's start's record, squad.yaml's lead
 	holder := []task.NextEntry{{Verb: "task block", Who: task.NextHolder}, {Verb: "task done", Who: task.NextHolder}, {Verb: "task fail", Who: task.NextHolder}, {Verb: "task release", Who: task.NextHolder}}
 	lead := []task.NextEntry{{Verb: "task cancel", Who: task.NextLead}, {Verb: "task release", Who: task.NextLead}}
 	for _, c := range []struct {
