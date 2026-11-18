@@ -3,11 +3,13 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/omriariav/amq-squad/v3/internal/yamlsub"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -119,9 +121,68 @@ func buildStatusContract(root, project, version string, now time.Time) status.St
 		Now: now, Gates: gates, PIDAlive: statusPIDAlive,
 	})
 	in.Warnings = append(warnings, in.Warnings...)
+	in.SquadLead = squadLeadFor(root)
 	result := withLaunchFailures(status.Build(in), in.Scheduler.LaunchFailures)
 	status.Plain(&result)
 	return result
+}
+
+// squadLeadFor is the lead the squad.yaml of root's own squad names (3.3.1:
+// the status document's lead_handle): the repository a squad's session
+// root lies under, <repo>/.agent-mail/<session> (seatlaunch's default base
+// root), whose squad.yaml names that session. A root of any other shape (a
+// profile's, a custom base root), or a squad.yaml that is not a small
+// regular file or names another session or no lead, gives "" (the
+// lead-roled seat then fills it, as before). It reads squad.yaml alone,
+// non-blocking and bounded (never the owner's files), for its session and
+// lead keys only.
+func squadLeadFor(root string) string {
+	root = filepath.Clean(root)
+	base := filepath.Dir(root)
+	if filepath.Base(base) != ".agent-mail" {
+		return ""
+	}
+	path := team.SquadPath(filepath.Dir(base))
+	raw, err := readSmallRegular(path, 1<<20)
+	if err != nil {
+		return ""
+	}
+	entries, err := yamlsub.Split(string(raw), path, false)
+	if err != nil {
+		return ""
+	}
+	var session, lead string
+	for _, e := range entries {
+		switch e.Key {
+		case "session":
+			session, _ = e.Scalar()
+		case "lead":
+			lead, _ = e.Scalar()
+		}
+	}
+	if session != filepath.Base(root) {
+		return ""
+	}
+	return strings.TrimSpace(lead)
+}
+
+// readSmallRegular reads a regular file of at most max bytes, opened
+// non-blocking: a FIFO, a device or a larger file is an error, never a
+// hang.
+func readSmallRegular(path string, max int64) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() || st.Size() > max {
+		return nil, fmt.Errorf("%s is not a regular file of at most %d bytes", path, max)
+	}
+	return io.ReadAll(io.LimitReader(f, max+1))
 }
 
 func writeStatusContractTable(out io.Writer, st status.Status) error {

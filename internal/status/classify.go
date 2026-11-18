@@ -98,7 +98,11 @@ type Input struct {
 	Warnings     []string
 	// brief 31-1: the lead record, the scheduler process (its launch
 	// record), the decisions log's tail and the merge train's last runs.
-	Lead          *Lead
+	Lead *Lead
+	// SquadLead is the lead the squad.yaml of this root's own squad names
+	// (its lead: handle), "" when there is none; it is the document's
+	// lead_handle (3.3.1).
+	SquadLead     string
 	SchedulerProc Scheduler
 	Decisions     []Decision
 	TrainRuns     []TrainRun
@@ -257,6 +261,12 @@ func Build(in Input) Status {
 			}
 		}
 		s.Attention = append(s.Attention, Attention{ID: "alert:" + a.ID, Kind: a.Kind, Severity: "high", Since: a.At, Subject: a.Subject, GateID: a.GateID, Bucket: BucketNeedsYou})
+	}
+	// the squad's lead as squad.yaml names it (3.3.1: v31's lead is cto with
+	// role cto), else, as before, the seat whose role is lead
+	if in.SquadLead != "" {
+		h := in.SquadLead
+		s.LeadHandle = &h
 	}
 	for _, st := range s.Seats {
 		if st.Role == LeadRole && s.LeadHandle == nil {
