@@ -7,11 +7,16 @@ planning sessions that made them; nothing here is a release blocker.
 ## 3.3.x
 
 The list after the 3.3.0 release (2026-11-17), in the plan reviewer's order:
-items 1 to 6 are ruled first to sixth (reordered 2026-11-18 and 2026-11-19). Nothing here is
-promised by date.
+items 1 to 6 are ruled first to sixth (reordered three times on 2026-11-18). Nothing here is
+promised by date. 3.3.1 is #1033 only (3.3.1-rc.1, 2026-11-18); #1036 is on v3
+but not in 3.3.1.
 
-1. **Done (#1033): the gate identity on a fresh session root** (3.3.0's known
-   limit 7).
+WARNING: v3 between 3.3.1 and 3.3.2 carries C5a without lead staging: a lead
+started by `up` from v3 is refused by Buzz lead routing and gets no lead role
+in `task show`; use a release build for a live squad.
+
+1. **Done (#1033, shipped in 3.3.1): the gate identity on a fresh session
+   root** (3.3.0's known limit 7).
    - The defect: a gate raised as the first write into a new session takes the
      store's squad identity before the root exists. `gate raise` takes
      `core.Store.Squad()` (`internal/cli/gate_store.go:99`), and `release
@@ -40,6 +45,7 @@ promised by date.
      (`internal/remote/mailbox/mailbox.go:351`);
    - `Submit` then returns `native_error` (`:235-241`);
    - the phone's text is amq-remote's own `notDelivered` (`:736-737`).
+   It is amq-remote's defect; reporting it upstream is the owner's call.
    amq-squad never submits or admits. It reads the share's inbox only after a
    delivery (`internal/buzz/inbound.go:146`; `internal/buzz/amqinbox.go:20-25`;
    `internal/cli/remote.go:63`). Its `amq-remote` calls are `up`
@@ -51,11 +57,12 @@ promised by date.
    amq-remote submits. The test's resend budget is unchanged. Sightings: three
    local in about 11 locked `make ci` runs since 2026-11-16 (the dated entry
    under Flakes and test robustness).
-3. **Done (#1036): C5a PR 1, 3.3.1's gate.** 3.3.0's known limit 8: a seat able to write its
-   own agent directory can be treated as the lead for Buzz routing and `task
-   show`; gate approvals are unaffected. C5a PR 1 moves the trusted harness
-   files out of the agent directory (the C5 entry under Leases, renewal and
-   seats).
+3. **On v3 (#1036), not in 3.3.1: C5a PR 1.** 3.3.0's known limit 8: a seat
+   able to write its own agent directory can be treated as the lead for Buzz
+   routing and `task show`; gate approvals are unaffected. C5a PR 1 moves the
+   trusted harness files out of the agent directory (the C5 entry under
+   Leases, renewal and seats). It left 3.3.1 with the lead staging (ruled
+   2026-11-18, after #1042's stopping rule) and ships in 3.3.2 (item 5).
 4. **The owner's grant is trusted as plain YAML, with no signature, and the
    protected-path guard is best effort for Claude and pi seats** (3.3.0's
    known limit 9; serious: for Claude and pi squads it can undo the owner's
@@ -88,23 +95,37 @@ promised by date.
      MCP servers can add such tools to a seat. For Claude seats, the launch
      check for project MCP moved to the 3.3.2 Claude-seat sandbox (item 5).
 
-5. **3.3.2: the Claude-seat sandbox, after a rehearsal on the real binaries
-   (the owner's word).** Path checks didn't converge; the sandbox carries the
-   boundary. D3 and D5 left 3.3.1 under the plan reviewer's stopping rule
-   (2026-11-19): #1039's PR-level Codex pass found a runtime-scoping
-   regression and an over-refusal, and #1039 was closed. 3.3.1 is #1033 and
-   #1036. Everything below moves to this item:
-   - the sandbox itself: Claude Code's Bash sandbox, its excluded commands, a
+5. **3.3.2, one item shipped together: the Claude-seat sandbox, C5a, and the
+   lead's own launch record**, after a rehearsal on the real binaries (the
+   owner's word). Each needs the others: C5a makes every trust decision read
+   the record the core staged; the lead's own record lets Buzz and `task
+   show` find a lead started by `up`; and the sandbox carries the boundary
+   that path checks did not (D3 and D5 left 3.3.1 under the plan reviewer's
+   stopping rule; #1039, #1041 and #1042 were closed).
+   - The sandbox: Claude Code's Bash sandbox, its excluded commands, a
      per-seat `GOCACHE`, and seat-exec refusing settings and sandbox keys a
-     seat could use to loosen it;
-   - D3: Write and Edit protection of Claude Code's configuration, agents and
-     skills;
-   - D5: the launch check for project MCP and plugins;
-   - the standalone-skill fix;
-   - Claude-only runtime scoping of the new checks;
-   - Unicode case folding in path matching.
-   - pi seats have no such interim (pi has no built-in sandbox); known limit
+     seat could use to loosen it; D3 (Write and Edit protection of Claude
+     Code's configuration, agents and skills); D5 (the launch check for
+     project MCP and plugins); the standalone-skill fix; Claude-only runtime
+     scoping of the new checks; Unicode case folding in path matching. pi
+     seats have no such interim (pi has no built-in sandbox); known limit
      9's advice stands for them.
+   - C5a: #1036, on v3 (item 3).
+   - The lead's own launch record: the lead's start stages it, and lead
+     authority comes only from it, for the lead squad.yaml names now.
+   - The phone attach: the rehearsal fleet file (item 8) is replaced here,
+     by a v31 fleet file (drafted outside the repository,
+     T/v331/fleet-v31-DRAFT.yaml), not before.
+   - Findings to carry:
+     - #1039: scope the `ln` check to Claude seats (treating every `ln`
+       operand as a write denied pi and Codex seats a harmless link); name
+       the blunt backslash check in agent frontmatter in the prompt.
+     - #1041: a seat that runs a lead process can make a record the squad
+       trusts (known limit 9's class, closed by the sandbox); a former lead
+       kept its authority.
+     - #1042: promote the lead's record only after its pi actually runs,
+       including the exit-70 preload path; promote a confirmed team only on
+       a complete roster, never on `roster_incomplete`.
 
 6. **U2's adoption choice, the owner's, after C5a PR 1.** AMQ's token admits
    the whole `<session root>/agents` tree (finding 4, under the C5 entry), so
@@ -116,9 +137,11 @@ promised by date.
    the share root the relay runs. The warning can name a root nothing uses.
 8. **The live phone attach runs on a rehearsal fleet file.** Its `--fleet-file`
    is a scratch fleet from the 2026-11 rehearsals, which drives presence (the
-   operator row reads stale) and lead routing. Gate routing is unaffected: the
-   attach's own `--project`/`--session` store is its main store. A proper live
-   fleet file is the owner's setup choice.
+   operator row reads stale) and lead routing: a message that names the lead
+   goes to the rehearsal squad's lead, not the live one. Gate routing is
+   unaffected: the attach's own `--project`/`--session` store is its main
+   store. It stays until 3.3.2 (ruled A1), which replaces it with the v31
+   fleet file (item 5).
 9. **One `/answer` test item:** a question row that is only blank, and a
    fixture with two same-label gates in reversed order (Codex's P2 on #1026).
 10. **Launch door folding: six limits of the launch family's static guard**
@@ -152,6 +175,32 @@ promised by date.
     runs only as a Claude Code hook or a pi extension; Codex seats rely on
     Codex's OS sandbox (their hooks are activity hooks,
     `internal/seatexec/codexhook.go:46-63`). Known limit 9 names them.
+14. **`status`'s `lead_handle` needs the role `lead`.** The status document
+    names the lead only for a seat whose role is `lead`
+    (`internal/status/classify.go:114-115`, `:262`), so a lead whose role is
+    `cto` shows none. Cosmetic, older than 3.3.
+15. **(y) Re-raise a 3.3.0 growth gate that carries no squad identity.** A
+    growth gate 3.3.0 wrote while the transport was down has no identity:
+    its spec carries none (`v3.3.0:internal/cli/seat_commit.go:324`),
+    `Render` copies that empty squad into the record
+    (`v3.3.0:internal/gatestore/record.go:161`, `:180`), and `Create` writes
+    it (`v3.3.0:internal/cli/seat_commit.go:329-331`); only `Store.Raise`,
+    the path with a transport, fills it (`v3.3.0:internal/gatestore/store.go:145-150`).
+    3.3.1 finds it again as the same request (`internal/cli/seat_commit.go:312`,
+    `:316`), so it stays unanswerable; the 3.3.1 notes give the way out (a
+    new gate for the same target). A later release re-raises such a record
+    with the session's identity, with its failing row first.
+16. **The guard's credential class stops credential changes, not shell reads
+    of files that hold secrets** (best effort, under known limit 9). A write
+    to a listed credential path is the `credential_change` gate
+    (`internal/cli/hook_guard.go:219-224`; the list,
+    `internal/cli/hook_guard_env.go:235`), and a listed set of commands that
+    print the owner's GitHub or release credential is refused as
+    `credential_read` (`internal/cli/hook_guard.go:524-529`, `:256`). A
+    plain shell read of any other file is neither. Seen live: a pi solo
+    lead's shell read of a shell startup file printed a key into its
+    session, and its `sqlite` read of an app's local message store printed
+    message text.
 
 ## 3.2.x
 
@@ -521,9 +570,10 @@ as #962 corrected it.
     from rc.2, 2026-11-10. Alone it changes nothing the owner sees; the
     known limit is the rc.2 notes' sentence on a Codex seat's drain
     approval. Brief: brief-320-C5a-v2.md.
-  - 3.3.1's gating item (ruled 2026-11-18; 3.3.0's known limit 8): a seat
-    able to write its own agent directory can be treated as the lead for
-    Buzz routing and `task show`; gate approvals are unaffected. C5a PR 1
+  - 3.3.0's known limit 8 (ruled 2026-11-18 as 3.3.1's gating item; moved to
+    3.3.2 after #1042's stopping rule, 3.3.x item 5): a seat able to write
+    its own agent directory can be treated as the lead for Buzz routing and
+    `task show`; gate approvals are unaffected. C5a PR 1 (#1036, on v3)
     fixes it by moving the trusted harness files out of the agent directory.
   - U2's finding 4 (measured 2026-11-18 at AMQ v0.153.0): AMQ's mailbox token
     (v0.145.0, #1496; `internal/launch/adapter_codex.go:270-285` at v0.153.0)
