@@ -25,7 +25,20 @@ import (
 const (
 	ClaudeHooksMissing       = claudeseat.HooksMissing
 	ClaudePermissionMismatch = claudeseat.PermissionMismatch
+	ClaudeProjectMCP         = claudeseat.ProjectMCP
 )
+
+// CheckClaudeProjectMCP refuses a Claude seat whose worktree or main
+// checkout enables project MCP servers or plugins (claudeseat.
+// ProjectMCPReasons): MCP servers run outside the guard, and AMQ does not
+// admit --strict-mcp-config, which would skip them (3.3.1 item 5, D5 (c)).
+func CheckClaudeProjectMCP(worktree string) error {
+	reasons := claudeseat.ProjectMCPReasons(worktree)
+	if len(reasons) == 0 {
+		return nil
+	}
+	return refusef(ClaudeProjectMCP, "this repository enables project MCP servers or plugins, or links its Claude settings out of the checkout (%s); Claude seats can't run with them until AMQ admits --strict-mcp-config: remove them (or repair the git pointer it names), or use a Codex seat", strings.Join(reasons, "; "))
+}
 
 // dropVar removes every entry of one variable from an environment.
 func dropVar(env []string, name string) []string {

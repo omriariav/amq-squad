@@ -7,10 +7,13 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // guardEnv answers the guard's questions about the seat's surroundings from
@@ -32,7 +35,10 @@ func (e *guardEnv) readGit() {
 	}
 	e.gitRead = true
 	read := func(dir, name string) string { // a git file's first line, "" if absent
-		raw, _ := os.ReadFile(filepath.Join(dir, name))
+		// bounded and non-blocking: a seat can point its .git at files it
+		// made (a FIFO would hang the hook into its fail-open watchdog;
+		// 3.3.1 item 5, Codex pass 10)
+		raw, _, _ := claudeseat.ReadMeta(filepath.Join(dir, name))
 		return strings.TrimSpace(string(raw))
 	}
 	rel := func(dir, p string) string {
@@ -159,6 +165,13 @@ func (e *guardEnv) protectedPath(written string, blockSafe bool) (string, bool) 
 	staged, serr := launch.ReadStaged(e.id.Root, e.id.Handle)
 	if serr == nil && staged.RulesPath != "" {
 		entries = append(entries, staged.RulesPath)
+	}
+	pinned := ""
+	if ex, err := launch.ReadExec(e.id.Root, e.id.Handle); err == nil && serr == nil && staged.LaunchID != "" && ex.LaunchID == staged.LaunchID {
+		pinned = ex.MainCheckout
+	}
+	if entry, ok := e.sessionConfigFile(target, staged.Worktree, pinned); ok {
+		return entry, true
 	}
 	// C5a (Codex pass 3, finding 1): every session's extensions/amq-squad/
 	// under the AMQ base root is the core's, not only this seat's session
@@ -365,4 +378,119 @@ func underAnySessionExt(baseRoot, target, cwd string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// sessionConfigFiles are the files Claude Code loads a seat session's
+// configuration from, which it reloads mid-session (3.3.1 item 5, D3), and
+// the directories whose move would replace them (the .claude directories,
+// and a main checkout root that is not the seat's own tree):
+// .claude/settings.json, .claude/settings.local.json and .mcp.json in the
+// seat's own worktree (its staged record's, whatever the hook's cwd), in
+// the repository the hook's cwd is in, and in each one's repository root
+// (claudeseat.MainCheckout: in a linked worktree Claude Code reads the local
+// settings file there; the bare common directory for a bare repository).
+func (e *guardEnv) sessionConfigFiles(worktree, pinned string) []string {
+	var checkouts []string
+	var out []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	// a root that is not the seat's own tree, and its ancestors: a move of
+	// any of them replaces every config file under it (Codex passes 2 and 6)
+	addRoot := func(m string) {
+		// the root and its ancestors, as written and symlink-resolved
+		// (Codex pass 12)
+		add(filepath.Clean(m))
+		if real, err := filepath.EvalSymlinks(m); err == nil {
+			add(filepath.Clean(real))
+		}
+		for _, d := range claudeseat.AncestorsBothForms(m) {
+			add(d)
+		}
+	}
+	// the root seat-exec pinned at the launch (the exec record of the
+	// current launch), whatever the seat's .git pointer says now
+	if pinned != "" {
+		checkouts = append(checkouts, pinned)
+		if filepath.Clean(pinned) != filepath.Clean(worktree) {
+			addRoot(pinned)
+		}
+	}
+	for _, c := range []string{worktree, e.repo} {
+		if c == "" {
+			continue
+		}
+		checkouts = append(checkouts, c)
+		if m := claudeseat.MainCheckout(c); m != "" {
+			checkouts = append(checkouts, m)
+			// a main checkout root that is not the seat's own tree: a move
+			// of it replaces every config file under it (Codex pass 2)
+			if filepath.Clean(m) != filepath.Clean(c) {
+				addRoot(m)
+			}
+		}
+	}
+	// the .mcp.json of every directory above the seat's tree, which Claude
+	// Code merges too (Codex pass 9)
+	if worktree != "" {
+		for _, d := range claudeseat.AncestorsBothForms(worktree) {
+			add(filepath.Join(d, ".mcp.json"))
+		}
+	}
+	for _, c := range checkouts {
+		// the .claude directory itself: a move or removal of it replaces
+		// the settings files under it (Codex pass 2)
+		add(filepath.Join(c, ".claude"))
+		for _, rel := range []string{filepath.Join(".claude", "settings.json"), filepath.Join(".claude", "settings.local.json"), ".mcp.json"} {
+			add(filepath.Join(c, rel))
+		}
+	}
+	return out
+}
+
+// sessionConfigFile reports target as one of sessionConfigFiles, compared
+// as canonical paths (a symlinked file, or a write through its link, is the
+// file it names) and without regard to case (a case-insensitive filesystem
+// writes .MCP.JSON to .mcp.json), never as a glob (a checkout path may hold
+// glob characters).
+func (e *guardEnv) sessionConfigFile(target, worktree, pinned string) (string, bool) {
+	for _, p := range e.sessionConfigFiles(worktree, pinned) {
+		forms := append([]string{filepath.Clean(p), canonicalGuardPath(p, "/")}, linkTargets(p)...)
+		for _, form := range forms {
+			// the same file under another Unicode normalization or case
+			// (macOS filesystems ignore both; Codex passes 1 and 8)
+			if strings.EqualFold(norm.NFC.String(form), norm.NFC.String(target)) {
+				return p, true
+			}
+		}
+	}
+	return "", false
+}
+
+// linkTargets are the paths a symlinked config file names, hop by hop (at
+// most 8), each canonical as far as it exists: a link whose target does not
+// exist yet still protects the file a write there would create (Codex pass
+// 3 on 3.3.1 item 5).
+func linkTargets(p string) []string {
+	var out []string
+	for i := 0; i < 8; i++ {
+		st, err := os.Lstat(p)
+		if err != nil || st.Mode()&os.ModeSymlink == 0 {
+			return out
+		}
+		t, err := os.Readlink(p)
+		if err != nil {
+			return out
+		}
+		if !filepath.IsAbs(t) {
+			t = filepath.Join(filepath.Dir(p), t)
+		}
+		out = append(out, filepath.Clean(t), canonicalGuardPath(t, "/"))
+		p = t
+	}
+	return out
 }

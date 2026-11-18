@@ -214,6 +214,9 @@ func prepare(o Options) (execPlan, error) {
 		if err := CheckClaudeHooks(o.Argv[1:]); err != nil {
 			return plan, err
 		}
+		if err := CheckClaudeProjectMCP(rec.Worktree); err != nil {
+			return plan, err
+		}
 		// The seat's own CLAUDE_CONFIG_DIR, seeded by the core for this
 		// launch (claudeseat.Write), is not checked here: brief 31-1 deleted
 		// the config-dir refusals. A dir the seat or the owner changed, an
@@ -232,6 +235,13 @@ func prepare(o Options) (execPlan, error) {
 	// reads them.
 	rolePath := filepath.Join(ex.path, launch.RoleFileName)
 	rec.RolePath = rolePath
+	if rec.Runtime == "claude" {
+		// the root Claude Code reads the session's local settings from, as
+		// it stands now, before the provider starts: the guard protects it
+		// for the whole launch, whatever the seat later writes to its .git
+		// pointer (Codex pass 5 on 3.3.1 item 5)
+		rec.MainCheckout = claudeseat.MainCheckout(rec.Worktree)
+	}
 	plan.rec = rec
 	plan.rec.Proof = nil
 	if err := ex.writeFileMode(launch.RoleFileName, role, 0o400); err != nil {

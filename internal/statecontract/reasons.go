@@ -177,6 +177,7 @@ func BlockReasons() ReasonList {
 			{Code: seatcommit.ReasonWorktree, Constant: "seatcommit.ReasonWorktree", Writers: []ReasonWriter{{Function: "seatcommit.Run", Door: "param seatcommit.(Result).refuse#0"}, {Function: "seatcommit.commitAndPush", Door: "param seatcommit.(Result).refuse#0"}, {Function: "seatcommit.run", Door: "param seatcommit.(Result).refuse#0"}}},
 			{Code: seatexec.ClaudeHooksMissing, Constant: "seatexec.ClaudeHooksMissing", Writers: []ReasonWriter{{Function: "seatexec.CheckClaudeHooks", Door: "param seatexec.refusef#0"}}},
 			{Code: seatexec.ClaudePermissionMismatch, Constant: "seatexec.ClaudePermissionMismatch", Writers: []ReasonWriter{{Function: "seatexec.CheckClaudePermission", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ClaudeProjectMCP, Constant: "seatexec.ClaudeProjectMCP", Writers: []ReasonWriter{{Function: "seatexec.CheckClaudeProjectMCP", Door: "param seatexec.refusef#0"}}},
 			{Code: seatexec.IdentityIncomplete, Constant: "seatexec.IdentityIncomplete", Writers: []ReasonWriter{{Function: "seatexec.checkIdentity", Door: "param seatexec.refusef#0"}, {Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}}},
 			{Code: seatexec.PiNotEmbedded, Constant: "seatexec.PiNotEmbedded", Writers: []ReasonWriter{{Function: "seatexec.piShimProvider", Door: "param seatexec.refusef#0"}}},
 			{Code: seatexec.SandboxPinsMissing, Constant: "seatexec.SandboxPinsMissing", Writers: []ReasonWriter{{Function: "seatexec.CheckCodexSandboxPins", Door: "param seatexec.refusef#0"}}},
@@ -310,6 +311,7 @@ func WaitReasons() ReasonList {
 			{Code: scheduler.WaitNoRosterSeat, Constant: "scheduler.WaitNoRosterSeat", Writers: []ReasonWriter{{Function: "scheduler.(*Scheduler).rosterNoIdleSeat", Door: "param scheduler.(*Scheduler).wait#1"}}},
 			{Code: seatexec.ClaudeHooksMissing, Constant: "seatexec.ClaudeHooksMissing", Writers: []ReasonWriter{{Function: "seatexec.CheckClaudeHooks", Door: "param seatexec.refusef#0"}}},
 			{Code: seatexec.ClaudePermissionMismatch, Constant: "seatexec.ClaudePermissionMismatch", Writers: []ReasonWriter{{Function: "seatexec.CheckClaudePermission", Door: "param seatexec.refusef#0"}}},
+			{Code: seatexec.ClaudeProjectMCP, Constant: "seatexec.ClaudeProjectMCP", Writers: []ReasonWriter{{Function: "seatexec.CheckClaudeProjectMCP", Door: "param seatexec.refusef#0"}}},
 			{Code: seatexec.IdentityIncomplete, Constant: "seatexec.IdentityIncomplete", Writers: []ReasonWriter{{Function: "seatexec.checkIdentity", Door: "param seatexec.refusef#0"}, {Function: "seatexec.prepare", Door: "param seatexec.refusef#0"}}},
 			{Code: seatexec.PiNotEmbedded, Constant: "seatexec.PiNotEmbedded", Writers: []ReasonWriter{{Function: "seatexec.piShimProvider", Door: "param seatexec.refusef#0"}}},
 			{Code: seatexec.SandboxPinsMissing, Constant: "seatexec.SandboxPinsMissing", Writers: []ReasonWriter{{Function: "seatexec.CheckCodexSandboxPins", Door: "param seatexec.refusef#0"}}},
@@ -490,6 +492,8 @@ func LaunchReasons() LaunchFamily {
 			"seatlaunch.ReasonRefused",
 			"seatlaunch.ReasonResourcePresent",
 			"seatlaunch.ReasonSeatNotUp",
+			// added after S2-3: 3.3.1 item 5 (D5 (c))
+			"seatexec.ClaudeProjectMCP",
 		},
 		Kept: []KeptWord{
 			{Word: "pending", Guard: "seatlaunch.WaitSeats", Why: "seatState starts every seat at pending; before WaitSeats returns, a seat still pending is rewritten to not_started with the reason code no_proof"},

@@ -34,16 +34,20 @@ type Record struct {
 	BaseRoot string `json:"base_root,omitempty"` // AM_BASE_ROOT
 	Session  string `json:"session"`             // AM_SESSION
 
-	Runtime        string   `json:"runtime,omitempty"` // claude | codex | pi
-	Model          string   `json:"model,omitempty"`
-	Effort         string   `json:"effort,omitempty"`
-	RolePath       string   `json:"role_path,omitempty"`
-	RoleSHA256     string   `json:"role_sha256,omitempty"`
-	RulesPath      string   `json:"rules_path,omitempty"`
-	RulesSHA256    string   `json:"rules_sha256,omitempty"`
-	Branch         string   `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
-	Base           string   `json:"base,omitempty"`   // the base branch's tip the launch put the worktree and branch on (3.0.2)
-	Worktree       string   `json:"worktree,omitempty"`
+	Runtime     string `json:"runtime,omitempty"` // claude | codex | pi
+	Model       string `json:"model,omitempty"`
+	Effort      string `json:"effort,omitempty"`
+	RolePath    string `json:"role_path,omitempty"`
+	RoleSHA256  string `json:"role_sha256,omitempty"`
+	RulesPath   string `json:"rules_path,omitempty"`
+	RulesSHA256 string `json:"rules_sha256,omitempty"`
+	Branch      string `json:"branch,omitempty"` // AMQ_SQUAD_BRANCH
+	Base        string `json:"base,omitempty"`   // the base branch's tip the launch put the worktree and branch on (3.0.2)
+	Worktree    string `json:"worktree,omitempty"`
+	// MainCheckout is the repository root Claude Code reads a Claude seat's
+	// local settings from, as seat-exec found it at the launch
+	// (claudeseat.MainCheckout); on the exec record only (3.3.1 item 5).
+	MainCheckout   string   `json:"main_checkout,omitempty"`
 	AMQPath        string   `json:"amq_path,omitempty"`          // the real amq (R51)
 	EnvNeeds       []string `json:"env_needs,omitempty"`         // names the runtime declares it needs
 	CredNeeds      []string `json:"credential_needs,omitempty"`  // credential names the registry entry declares

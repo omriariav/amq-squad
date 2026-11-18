@@ -548,7 +548,11 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 		if seats := env.seatCount(); seats+1 > env.grants.MaxSeats {
 			a.action, a.target = "spawn", gatetarget.Grow(env.id.Root, seats+1)
 		}
-	case cmd == "cp" || cmd == "install" || cmd == "ln":
+	case cmd == "ln":
+		// a hard link makes its source writable under another name: every
+		// operand is a write (3.3.1 item 5, Codex pass 6)
+		a.writes = append(a.writes, pos...)
+	case cmd == "cp" || cmd == "install":
 		a.writes = append(a.writes, pos[max(0, len(pos)-1):]...)
 	case cmd == "rm" || cmd == "mv" || cmd == "tee" || cmd == "touch" || cmd == "chmod" || cmd == "truncate" || cmd == "mkdir" || ((cmd == "sed" || cmd == "perl") && hasFlagPrefix(args, "-i")):
 		a.writes = append(a.writes, pos...)

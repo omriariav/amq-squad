@@ -311,6 +311,7 @@ export const LAUNCH_WORDS: Record<string, string> = {
 	// the Claude and pi checks
 	claude_hooks_missing: "its Claude command skips the hooks",
 	claude_permission_mismatch: "its Claude permission mode is not the recorded one",
+	claude_project_mcp: "its repository enables project MCP servers or plugins, which a Claude seat can't run with yet",
 	claude_token_insecure: "its Claude token file is not private",
 	pi_not_embedded: "this amq-squad carries no pi runtime",
 	pi_runtime_rejected: "this amq-squad's pi runtime was rejected",

@@ -204,10 +204,11 @@ test("row 7: every seat code, train rule and kind and relay name in Go's sources
 
 // Row 7 (S2-3): the contract's launch family and LAUNCH_WORDS agree both
 // ways. The count is internal/statecontract launch_test.go's: 54 S2-3
-// constants and 8 listed before, 4 kept words and 13 outside codes.
+// constants, 8 listed before and 1 added after (3.3.1 item 5's
+// claude_project_mcp), 4 kept words and 13 outside codes.
 test("row 7: the state contract's launch family and LAUNCH_WORDS agree both ways", () => {
 	const { codes, kept, outside } = stateContractLaunch();
-	assert.equal(codes.size, 62, `the contract's launch family holds ${codes.size} constants; 54 S2-3 constants and 8 listed before`);
+	assert.equal(codes.size, 63, `the contract's launch family holds ${codes.size} constants; 54 S2-3 constants, 8 listed before and 1 added after`);
 	assert.equal(kept.size, 4, `the contract's launch family keeps ${kept.size} words; pending, up, prepared and applied`);
 	assert.equal(outside.size, 13, `the contract's launch family has ${outside.size} outside codes; 13`);
 	const { block, wait } = stateContractReasons();
