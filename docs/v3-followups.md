@@ -68,13 +68,13 @@ promised by date.
      A seat runs as the same user, so a write that gets past the guard passes
      that check.
    - The guard lists the file as protected (`internal/cli/hook_guard_env.go:151`),
-     but against shell commands it is best effort.
+     but against shell commands it is best effort. Codex seats run in Codex's
+     OS sandbox; Claude and pi seats have no OS boundary of their own today.
    - D3, a gap beside it: a Claude seat could write the main checkout's
      `.claude` settings files and `.mcp.json`, and so loosen its own
      permissions. The guard protects the worktree's own `.claude/settings*.json`
-     (`internal/grants/grants.go:309`) but neither of these; planned for
-     3.3.1 (item 5). Codex seats run in Codex's
-     OS sandbox; Claude and pi seats have no OS boundary of their own today.
+     (`internal/grants/grants.go:309`) but neither of these. It moved to the
+     3.3.2 Claude-seat sandbox (item 5).
    - The first step is a measurement (no change): whether Claude Code's own
      Bash sandbox, set in each Claude seat's own settings, can hold a Claude
      seat to its worktree as an interim, and what pi offers (it has no
@@ -85,20 +85,24 @@ promised by date.
      then `classifyGuardCall` classifies shell commands and the Write/Edit family;
      for an MCP tool it looks only for send words, and for any other tool it
      returns no action (`internal/cli/hook_guard.go:414-431`). A project's
-     MCP servers can add such tools to a seat. For Claude seats, project MCP
-     is neutralised in 3.3.1 (item 5).
+     MCP servers can add such tools to a seat. For Claude seats, the launch
+     check for project MCP moved to the 3.3.2 Claude-seat sandbox (item 5).
 
-5. **The Claude-seat interim, item 5 split: D3+D5 in 3.3.1; the sandbox in
-   3.3.2 after the rehearsal** (ruled 2026-11-19).
-   - 3.3.1, D3: the guard protects `.claude/settings*.json` and `.mcp.json`
-     in the seat's worktree and in the main checkout.
-   - 3.3.1, D5: MCP neutralised. The launch compiler adds
-     `--strict-mcp-config`, and seat-exec refuses a Claude argv without it or
-     with `--mcp-config`.
-   - 3.3.2: the Claude-seat sandbox itself (Claude Code's Bash sandbox, its
-     excluded commands, a per-seat `GOCACHE`, and seat-exec refusing
-     settings and sandbox keys a seat could use to loosen it), after a
-     rehearsal on the real binaries, which is the owner's word.
+5. **3.3.2: the Claude-seat sandbox, after a rehearsal on the real binaries
+   (the owner's word).** Path checks didn't converge; the sandbox carries the
+   boundary. D3 and D5 left 3.3.1 under the plan reviewer's stopping rule
+   (2026-11-19): #1039's PR-level Codex pass found a runtime-scoping
+   regression and an over-refusal, and #1039 was closed. 3.3.1 is #1033 and
+   #1036. Everything below moves to this item:
+   - the sandbox itself: Claude Code's Bash sandbox, its excluded commands, a
+     per-seat `GOCACHE`, and seat-exec refusing settings and sandbox keys a
+     seat could use to loosen it;
+   - D3: Write and Edit protection of Claude Code's configuration, agents and
+     skills;
+   - D5: the launch check for project MCP and plugins;
+   - the standalone-skill fix;
+   - Claude-only runtime scoping of the new checks;
+   - Unicode case folding in path matching.
    - pi seats have no such interim (pi has no built-in sandbox); known limit
      9's advice stands for them.
 
