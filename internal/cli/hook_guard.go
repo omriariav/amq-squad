@@ -416,7 +416,14 @@ func classifyGuardCall(env *guardEnv, call guardCall) []guardAction {
 	case "Bash", "bash", "shell", "exec_command":
 		return classifyShell(env, call.Args["command"]+call.Args["cmd"], 0)
 	case "Write", "Edit", "MultiEdit", "NotebookEdit", "write", "edit":
-		writes := positionals([]string{call.Args["file_path"], call.Args["notebook_path"], call.Args["path"]})
+		// a tool's path is a path, whatever it starts with: a relative
+		// "-alias/..." is no option (3.3.1 item 5, Codex r2b pass 1)
+		var writes []string
+		for _, w := range []string{call.Args["file_path"], call.Args["notebook_path"], call.Args["path"]} {
+			if w != "" {
+				writes = append(writes, w)
+			}
+		}
 		safe := len(writes) == 1 && managedBlockKept(call.Tool, writes[0], call.CWD, call.Args)
 		return []guardAction{{writes: writes, blockSafe: safe}}
 	}
@@ -548,7 +555,11 @@ func classifyCommand(env *guardEnv, cmd string, args []string, a *guardAction) {
 		if seats := env.seatCount(); seats+1 > env.grants.MaxSeats {
 			a.action, a.target = "spawn", gatetarget.Grow(env.id.Root, seats+1)
 		}
-	case cmd == "cp" || cmd == "install" || cmd == "ln":
+	case cmd == "ln":
+		// a hard link makes its source writable under another name: every
+		// operand is a write (3.3.1 item 5, Codex pass 6)
+		a.writes = append(a.writes, pos...)
+	case cmd == "cp" || cmd == "install":
 		a.writes = append(a.writes, pos[max(0, len(pos)-1):]...)
 	case cmd == "rm" || cmd == "mv" || cmd == "tee" || cmd == "touch" || cmd == "chmod" || cmd == "truncate" || cmd == "mkdir" || ((cmd == "sed" || cmd == "perl") && hasFlagPrefix(args, "-i")):
 		a.writes = append(a.writes, pos...)

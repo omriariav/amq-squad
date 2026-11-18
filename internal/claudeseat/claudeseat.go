@@ -30,14 +30,18 @@
 package claudeseat
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/launch"
@@ -50,6 +54,7 @@ import (
 const (
 	PermissionMismatch = "claude_permission_mismatch" // the argv does not carry exactly the recorded mode, or carries a bypass
 	HooksMissing       = "claude_hooks_missing"       // the argv drops the user settings scope or skips hooks
+	ProjectMCP         = "claude_project_mcp"         // the seat's worktree or main checkout enables project MCP servers or plugins (ProjectMCPReasons)
 	AllowRulesPresent  = "claude_allow_rules_present" // a warning: a worktree settings file Claude merges carries allow rules
 	// HooksSilent is a warning: a Claude seat that ran (an accepted proof)
 	// made no hook report since its launch.
@@ -105,8 +110,8 @@ func pathKeys(p string) []string {
 // worktree is a main checkout (a .git directory), not a git worktree, or the
 // layout does not check out.
 func canonicalRoot(worktree string) string {
-	raw, err := os.ReadFile(filepath.Join(worktree, ".git"))
-	if err != nil {
+	raw, ok, err := ReadMeta(filepath.Join(worktree, ".git"))
+	if !ok || err != nil {
 		return ""
 	}
 	line := strings.TrimSpace(string(raw))
@@ -118,8 +123,8 @@ func canonicalRoot(worktree string) string {
 		gitdir = filepath.Join(worktree, gitdir)
 	}
 	gitdir = filepath.Clean(gitdir)
-	c, err := os.ReadFile(filepath.Join(gitdir, "commondir"))
-	if err != nil {
+	c, ok, err := ReadMeta(filepath.Join(gitdir, "commondir"))
+	if !ok || err != nil {
 		return ""
 	}
 	common := strings.TrimSpace(string(c))
@@ -127,7 +132,7 @@ func canonicalRoot(worktree string) string {
 		common = filepath.Join(gitdir, common)
 	}
 	common = filepath.Clean(common)
-	if filepath.Dir(gitdir) != filepath.Join(common, "worktrees") {
+	if !sameDirPath(filepath.Dir(gitdir), filepath.Join(common, "worktrees")) {
 		return ""
 	}
 	if filepath.Base(common) == ".git" {
@@ -306,4 +311,390 @@ func WorktreeAllowRules(worktree string) []string {
 		}
 	}
 	return out
+}
+
+// ProjectMCPReasons lists what, in the seat's worktree and in its main
+// checkout (a linked worktree's; Claude Code reads the local settings file
+// there), links the session's configuration out of the checkout (a symlinked
+// .claude, settings file or .mcp.json), or would let Claude Code start an
+// MCP server or a plugin the seat's launch did not bring: MCP servers run
+// outside the guard and outside any Bash sandbox, and AMQ v0.140.0 does not
+// admit --strict-mcp-config (3.3.1 item 5, D5 (c)). It reads:
+//
+//   - .mcp.json declaring any server;
+//   - .claude/settings.json and .claude/settings.local.json setting
+//     enableAllProjectMcpServers true, enabledMcpjsonServers, any
+//     enabledPlugins entry true, or extraKnownMarketplaces (a project file
+//     can register a marketplace and enable a plugin from it, and a plugin
+//     can bundle MCP servers);
+//   - a skills-directory plugin (.claude/skills/<dir>/.claude-plugin/
+//     plugin.json) declaring mcpServers or carrying a .mcp.json with a
+//     server, which Claude Code loads by its defaultEnabled in a trusted
+//     folder.
+//
+// A file it cannot read or parse counts as enabling (fail closed).
+func ProjectMCPReasons(worktree string) []string {
+	if !filepath.IsAbs(worktree) {
+		return []string{fmt.Sprintf("the launch records no absolute worktree (%q) to check", worktree)}
+	}
+	var out []string
+	checkouts := []string{worktree}
+	m := MainCheckout(worktree)
+	if m != "" && filepath.Clean(m) != filepath.Clean(worktree) {
+		checkouts = append(checkouts, m)
+	}
+	// a worktree whose git pointer cannot be followed has a repository root
+	// Claude Code may still find: it is refused, never assumed absent
+	// (Codex pass 7)
+	if st, err := os.Lstat(filepath.Join(worktree, ".git")); err == nil && !st.IsDir() && m == "" {
+		out = append(out, filepath.Join(worktree, ".git")+": its repository root cannot be followed")
+	}
+	// Every file is decoded with its keys exactly as written (Claude Code
+	// looks keys up exactly; Go's struct decoding would fold case and let a
+	// MCPSERVERS key mask mcpServers), and a value counts by JavaScript
+	// truthiness, as Claude Code reads it.
+	readObj := func(p string) (map[string]json.RawMessage, bool, error) {
+		raw, ok, err := readSmall(p)
+		if !ok || err != nil {
+			return nil, ok, err
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil, true, err
+		}
+		return m, true, nil
+	}
+	// servers: a .mcp.json declaring a server, wrapped in mcpServers or as a
+	// flat map (Claude Code's plugin loader takes either).
+	servers := func(p string) {
+		obj, ok, err := readObj(p)
+		switch {
+		case !ok:
+			return
+		case err != nil:
+			out = append(out, p+": unreadable")
+			return
+		}
+		// Claude Code's loader takes mcpServers when it is truthy, else the
+		// whole object as the server map (`G.mcpServers || G`)
+		if raw, has := obj["mcpServers"]; has && !falsy(raw, "null", "false", "0", `""`) {
+			var m map[string]json.RawMessage
+			if json.Unmarshal(raw, &m) != nil {
+				out = append(out, p+": mcpServers is not a server map")
+			} else if len(m) > 0 {
+				out = append(out, fmt.Sprintf("%s declares %d MCP server(s)", p, len(m)))
+			}
+			return
+		}
+		n := len(obj)
+		if _, has := obj["mcpServers"]; has {
+			n--
+		}
+		if n > 0 {
+			out = append(out, fmt.Sprintf("%s declares %d MCP server(s) as a flat map", p, n))
+		}
+	}
+	// Claude Code merges the .mcp.json of every directory above the
+	// session's working directory too (Codex pass 9)
+	for _, d := range ancestorsBothForms(worktree) {
+		p := filepath.Join(d, ".mcp.json")
+		// a symlinked one points the servers where the guard cannot hold
+		// them (Codex pass 10)
+		if st, err := os.Lstat(p); err == nil && st.Mode()&os.ModeSymlink != 0 {
+			out = append(out, p+" is a symlink")
+			continue
+		}
+		servers(p)
+	}
+	for _, c := range checkouts {
+		// a config path that is a symlink points the session's settings
+		// out of the checkout, where the guard cannot hold them (Codex pass
+		// 4: a dangling link, a moved target's parent)
+		for _, rel := range []string{".claude", filepath.Join(".claude", "settings.json"), filepath.Join(".claude", "settings.local.json"), ".mcp.json", filepath.Join(".claude", "agents"), filepath.Join(".claude", "skills")} {
+			p := filepath.Join(c, rel)
+			if st, err := os.Lstat(p); err == nil && st.Mode()&os.ModeSymlink != 0 {
+				out = append(out, p+" is a symlink")
+			}
+		}
+		servers(filepath.Join(c, ".mcp.json"))
+		for _, name := range []string{"settings.json", "settings.local.json"} {
+			p := filepath.Join(c, ".claude", name)
+			obj, ok, err := readObj(p)
+			switch {
+			case !ok:
+				continue
+			case err != nil:
+				out = append(out, p+": unreadable")
+				continue
+			}
+			if raw, has := obj["enableAllProjectMcpServers"]; has && !falsy(raw, "false", "null", "0", `""`) {
+				out = append(out, p+" sets enableAllProjectMcpServers")
+			}
+			if raw, has := obj["enabledMcpjsonServers"]; has && !falsy(raw, "null", "[]", "false") {
+				out = append(out, p+" sets enabledMcpjsonServers")
+			}
+			if raw, has := obj["enabledPlugins"]; has {
+				var plugins map[string]json.RawMessage
+				if json.Unmarshal(raw, &plugins) != nil && !falsy(raw, "null") {
+					out = append(out, p+": enabledPlugins is not a map")
+				}
+				var on []string
+				for k, v := range plugins {
+					if !falsy(v, "false", "null") {
+						on = append(on, k)
+					}
+				}
+				sort.Strings(on)
+				for _, k := range on {
+					out = append(out, p+" enables plugin "+k)
+				}
+			}
+			if raw, has := obj["extraKnownMarketplaces"]; has && !falsy(raw, "null", "{}") {
+				out = append(out, p+" sets extraKnownMarketplaces")
+			}
+		}
+		// project agents (.claude/agents, recursively) whose frontmatter
+		// declares mcpServers: Claude Code starts an agent's inline servers
+		// when the agent runs (Codex pass 6)
+		agents := filepath.Join(c, ".claude", "agents")
+		_ = filepath.WalkDir(agents, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if !os.IsNotExist(err) {
+					out = append(out, p+": unreadable")
+				}
+				return nil
+			}
+			// a link inside the agents tree points agents outside it;
+			// Claude Code follows it, this walk does not (Codex pass 7)
+			if d.Type()&fs.ModeSymlink != 0 {
+				out = append(out, p+" is a symlink")
+				return nil
+			}
+			if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
+				return nil
+			}
+			raw, _, rerr := readSmall(p)
+			if rerr != nil {
+				out = append(out, p+": unreadable")
+			} else if agentMayDeclareMCP(raw) {
+				out = append(out, p+" may declare mcpServers")
+			}
+			return nil
+		})
+		// the skills directory is listed, never globbed: a checkout path
+		// may hold glob characters
+		skills := filepath.Join(c, ".claude", "skills")
+		entries, err := os.ReadDir(skills)
+		if err != nil && !os.IsNotExist(err) {
+			out = append(out, skills+": unreadable")
+		}
+		// a link anywhere in the skills tree points a plugin, its manifest
+		// or a skill outside it (Codex pass 7; round 2, Codex r2 pass 2),
+		// and a file with a second name (a hard link) changes under a name
+		// the guard does not protect
+		_ = filepath.WalkDir(skills, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if !os.IsNotExist(err) && p != skills {
+					out = append(out, p+": unreadable")
+				}
+				return nil
+			}
+			if p == skills {
+				return nil
+			}
+			if d.Type()&fs.ModeSymlink != 0 {
+				out = append(out, p+" is a symlink")
+				return nil
+			}
+			if d.Type().IsRegular() {
+				if st, err := os.Lstat(p); err != nil {
+					out = append(out, p+": unreadable")
+				} else if hardLinked(st) {
+					out = append(out, p+" has another name (a hard link)")
+				}
+			}
+			return nil
+		})
+		for _, d := range entries {
+			dir := filepath.Join(skills, d.Name())
+			// an ordinary file is no plugin (Codex pass 3); a link was
+			// refused above
+			if !d.IsDir() || d.Type()&fs.ModeSymlink != 0 {
+				continue
+			}
+			// a skills-directory plugin (Claude Code loads it by its
+			// defaultEnabled in a trusted folder) can bring MCP servers, and
+			// agents and hooks that start them or run outside the guard:
+			// any such plugin refuses, whatever its manifest names (Codex
+			// pass 11)
+			// a standalone skill (no manifest) is no plugin: its .mcp.json,
+			// if any, is inert (round 2, fix 4)
+			mf := filepath.Join(dir, ".claude-plugin", "plugin.json")
+			if _, err := os.Lstat(mf); err == nil || !os.IsNotExist(err) {
+				out = append(out, filepath.Dir(filepath.Dir(mf))+" is a plugin (it can bring MCP servers, agents and hooks)")
+			}
+		}
+	}
+	return out
+}
+
+// agentMayDeclareMCP reports an agent file whose YAML frontmatter (from a
+// first non-blank line "---" to the next "---", or to the end of the file)
+// mentions "mcp" in any case, or holds a backslash: YAML can spell the
+// mcpServers key in a flow mapping, a quoted or tagged key, an anchor or a
+// merge, and in a double-quoted string with escapes, and every such
+// spelling needs one or the other. Without a YAML parser this refuses more
+// than Claude Code would load, never less (Codex pass 7).
+func agentMayDeclareMCP(raw []byte) bool {
+	lines := strings.Split(strings.TrimPrefix(string(raw), "\ufeff"), "\n")
+	start := 0
+	for start < len(lines) && strings.TrimSpace(lines[start]) == "" {
+		start++
+	}
+	if start == len(lines) || strings.TrimSpace(lines[start]) != "---" {
+		return false
+	}
+	var fm []string
+	for _, l := range lines[start+1:] {
+		if strings.TrimSpace(l) == "---" {
+			break
+		}
+		fm = append(fm, l)
+	}
+	text := strings.Join(fm, "\n")
+	return strings.Contains(strings.ToLower(text), "mcp") || strings.Contains(text, "\\")
+}
+
+// falsy reports a JSON value that is one of the given forms (compact).
+func falsy(raw json.RawMessage, forms ...string) bool {
+	var buf bytes.Buffer
+	if json.Compact(&buf, raw) != nil {
+		return false
+	}
+	return slices.Contains(forms, buf.String())
+}
+
+// Ancestors are the directories above dir, nearest first, up to the root.
+func Ancestors(dir string) []string {
+	var out []string
+	for d := filepath.Dir(filepath.Clean(dir)); ; d = filepath.Dir(d) {
+		out = append(out, d)
+		if filepath.Dir(d) == d {
+			return out
+		}
+	}
+}
+
+// sameDirPath reports two spellings of one directory, as written or with
+// their symlinks resolved (a commondir may name the common directory
+// through an alias; Codex pass 12).
+func sameDirPath(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, err1 := filepath.EvalSymlinks(a)
+	rb, err2 := filepath.EvalSymlinks(b)
+	return err1 == nil && err2 == nil && ra == rb
+}
+
+// ancestorsBothForms are the ancestors of dir as written and of dir with
+// its symlinks resolved (Claude Code walks up from its resolved working
+// directory; Codex pass 11), without duplicates.
+func ancestorsBothForms(dir string) []string {
+	out := Ancestors(dir)
+	if real, err := filepath.EvalSymlinks(dir); err == nil && filepath.Clean(real) != filepath.Clean(dir) {
+		seen := map[string]bool{}
+		for _, d := range out {
+			seen[d] = true
+		}
+		for _, d := range Ancestors(real) {
+			if !seen[d] {
+				out = append(out, d)
+			}
+		}
+	}
+	return out
+}
+
+// AncestorsBothForms is ancestorsBothForms for the guard.
+func AncestorsBothForms(dir string) []string { return ancestorsBothForms(dir) }
+
+// MainCheckout is the repository root Claude Code reads a session's local
+// settings from: dir itself when its .git is a directory, else the canonical
+// root of the linked worktree (canonicalRoot: the common git directory's
+// parent, or the common directory itself when it is bare), "" when neither
+// can be read.
+func MainCheckout(dir string) string {
+	st, err := os.Stat(filepath.Join(dir, ".git"))
+	if err != nil {
+		return ""
+	}
+	if st.IsDir() {
+		return dir
+	}
+	if r := canonicalRoot(dir); r != "" {
+		return r
+	}
+	// a submodule's or a --separate-git-dir checkout's pointer: a git
+	// directory of its own (HEAD, no commondir), whose checkout is dir
+	// itself (Codex pass 8)
+	raw, ok, err := ReadMeta(filepath.Join(dir, ".git"))
+	if !ok || err != nil {
+		return ""
+	}
+	line := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(line, "gitdir:") {
+		return ""
+	}
+	gitdir := strings.TrimSpace(strings.TrimPrefix(line, "gitdir:"))
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(dir, gitdir)
+	}
+	if _, ok, _ := ReadMeta(filepath.Join(gitdir, "commondir")); ok {
+		return ""
+	}
+	if _, ok, err := ReadMeta(filepath.Join(gitdir, "HEAD")); !ok || err != nil {
+		return ""
+	}
+	return dir
+}
+
+// maxConfigRead bounds a read of a file in a seat's tree.
+const maxConfigRead = 1 << 20
+
+// readSmall reads a file a seat can plant without blocking or exhausting
+// memory: opened non-blocking, it must be a regular file of at most
+// maxConfigRead bytes (a FIFO, a device or a larger file is an error, which
+// every caller counts against the seat). ok is false when it does not exist.
+func readSmall(p string) (data []byte, ok bool, err error) { return readBounded(p, true) }
+
+// ReadMeta reads git metadata in a seat's tree (a .git pointer, a
+// commondir) as readSmall does, but a hard link there is git's business,
+// not a config file's (Codex pass 7).
+func ReadMeta(p string) (data []byte, ok bool, err error) { return readBounded(p, false) }
+
+func readBounded(p string, rejectLinks bool) (data []byte, ok bool, err error) {
+	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, true, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, true, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, true, fmt.Errorf("%s is not a regular file", p)
+	}
+	if rejectLinks && hardLinked(st) {
+		return nil, true, fmt.Errorf("%s has another name (a hard link)", p)
+	}
+	data, err = io.ReadAll(io.LimitReader(f, maxConfigRead+1))
+	if err == nil && len(data) > maxConfigRead {
+		err = fmt.Errorf("%s is larger than %d bytes", p, maxConfigRead)
+	}
+	return data, true, err
 }

@@ -87,6 +87,11 @@ var s23ListedBefore = []string{
 	"seatexec.SandboxPinsMissing",
 }
 
+// launchAddedAfterS23 are the launch family's constants added after S2-3.
+var launchAddedAfterS23 = []string{
+	"seatexec.ClaudeProjectMCP", // 3.3.1 item 5, D5 (c)
+}
+
 // s23NotLaunch are the entries of s2NotTaskReasons that are no launch code;
 // every other entry is on the launch family's Outside list, so pi words it.
 var s23NotLaunch = map[string]string{
@@ -151,8 +156,8 @@ func s23Record(t *testing.T) (values, guarded []string) {
 	return values, guarded
 }
 
-// TestLaunchFamily: the count row (54 S2-3 constants, 8 listed before, 4
-// kept words), each S2-3 constant byte-equal to its literal on both lists,
+// TestLaunchFamily: the count row (54 S2-3 constants, 8 listed before, 1
+// added after, 4 kept words), each S2-3 constant byte-equal to its literal on both lists,
 // the family as S1-2b recorded it, its doors on both lists, each kept word
 // with its guard, every constant used at a family door in the family, and no
 // string literal at a family door but a kept word.
@@ -167,14 +172,17 @@ func TestLaunchFamily(t *testing.T) {
 	}
 
 	// the count row
-	if len(s23LaunchLiterals) != 54 || len(s23ListedBefore) != 8 || len(family.Constants) != 54+8 || len(family.Kept) != 4 {
-		t.Errorf("the launch family holds %d constants (S2-3 %d, before %d) and %d kept words; the count is 54 + 8 and 4", len(family.Constants), len(s23LaunchLiterals), len(s23ListedBefore), len(family.Kept))
+	if len(s23LaunchLiterals) != 54 || len(s23ListedBefore) != 8 || len(launchAddedAfterS23) != 1 || len(family.Constants) != 54+8+1 || len(family.Kept) != 4 {
+		t.Errorf("the launch family holds %d constants (S2-3 %d, before %d, after %d) and %d kept words; the count is 54 + 8 + 1 and 4", len(family.Constants), len(s23LaunchLiterals), len(s23ListedBefore), len(launchAddedAfterS23), len(family.Kept))
 	}
 	want := map[string]bool{}
 	for _, row := range s23LaunchLiterals {
 		want[row.constant] = true
 	}
 	for _, name := range s23ListedBefore {
+		want[name] = true
+	}
+	for _, name := range launchAddedAfterS23 {
 		want[name] = true
 	}
 	seen := map[string]bool{}
@@ -184,7 +192,7 @@ func TestLaunchFamily(t *testing.T) {
 		}
 		seen[name] = true
 		if !want[name] {
-			t.Errorf("the launch family names %s, which is neither an S2-3 constant nor listed before", name)
+			t.Errorf("the launch family names %s, which is neither an S2-3 constant, listed before, nor added after", name)
 		}
 		if codes["block"][name] == "" && codes["wait"][name] == "" {
 			t.Errorf("the launch family names %s, which is on neither list", name)

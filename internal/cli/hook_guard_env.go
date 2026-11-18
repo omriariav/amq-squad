@@ -6,11 +6,15 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
+	"github.com/omriariav/amq-squad/v3/internal/claudeseat"
 	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"github.com/omriariav/amq-squad/v3/internal/launch"
 	"github.com/omriariav/amq-squad/v3/internal/rules"
 	"github.com/omriariav/amq-squad/v3/internal/seatcommit"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // guardEnv answers the guard's questions about the seat's surroundings from
@@ -32,7 +36,10 @@ func (e *guardEnv) readGit() {
 	}
 	e.gitRead = true
 	read := func(dir, name string) string { // a git file's first line, "" if absent
-		raw, _ := os.ReadFile(filepath.Join(dir, name))
+		// bounded and non-blocking: a seat can point its .git at files it
+		// made (a FIFO would hang the hook into its fail-open watchdog;
+		// 3.3.1 item 5, Codex pass 10)
+		raw, _, _ := claudeseat.ReadMeta(filepath.Join(dir, name))
 		return strings.TrimSpace(string(raw))
 	}
 	rel := func(dir, p string) string {
@@ -159,6 +166,9 @@ func (e *guardEnv) protectedPath(written string, blockSafe bool) (string, bool) 
 	staged, serr := launch.ReadStaged(e.id.Root, e.id.Handle)
 	if serr == nil && staged.RulesPath != "" {
 		entries = append(entries, staged.RulesPath)
+	}
+	if entry, ok := e.sessionConfigMatch(target); ok {
+		return entry, true
 	}
 	// C5a (Codex pass 3, finding 1): every session's extensions/amq-squad/
 	// under the AMQ base root is the core's, not only this seat's session
@@ -365,4 +375,202 @@ func underAnySessionExt(baseRoot, target, cwd string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// sessionSeat is what the Claude-config protection is scoped by (3.3.1
+// item 5): the seat's own worktree from its staged record, the main
+// checkout seat-exec pinned on the current launch's exec record, and
+// whether the seat runs Claude Code. Only a Claude seat's session loads
+// Claude Code's configuration; a pi or Codex seat's writes to it are its own
+// business (round 2, fix 3). A staged record the guard cannot read is
+// treated as a Claude seat's (fail closed; a seat cannot write its staged
+// record).
+func (e *guardEnv) sessionSeat() (worktree, pinned string, claude, known bool) {
+	staged, serr := launch.ReadStaged(e.id.Root, e.id.Handle)
+	if serr != nil {
+		return "", "", true, false
+	}
+	if ex, err := launch.ReadExec(e.id.Root, e.id.Handle); err == nil && staged.LaunchID != "" && ex.LaunchID == staged.LaunchID {
+		pinned = ex.MainCheckout
+	}
+	return staged.Worktree, pinned, staged.Runtime == "claude", true
+}
+
+// sessionConfig is what Claude Code loads a seat session's configuration
+// from, and reloads mid-session (3.3.1 item 5, D3):
+//
+//   - files: .claude/settings.json, .claude/settings.local.json and
+//     .mcp.json in the seat's own worktree (its staged record's, whatever
+//     the hook's cwd), in the repository the hook's cwd is in, in each
+//     one's repository root (claudeseat.MainCheckout: in a linked worktree
+//     Claude Code reads the local settings file there; the bare common
+//     directory for a bare repository) and in the root seat-exec pinned on
+//     the current launch; the .claude directories themselves; a root that
+//     is not the seat's own tree and its ancestors (a move of any replaces
+//     its config); and the .mcp.json of every directory above the worktree;
+//   - trees: .claude/agents/ and .claude/skills/ in those checkouts,
+//     everything under which the launch check reads (round 2, fix 1).
+func (e *guardEnv) sessionConfig(worktree, pinned string) (files, trees []string) {
+	var checkouts []string
+	seen := map[string]bool{}
+	add := func(p string) {
+		if !seen[p] {
+			seen[p] = true
+			files = append(files, p)
+		}
+	}
+	addRoot := func(m string) {
+		add(filepath.Clean(m))
+		if real, err := filepath.EvalSymlinks(m); err == nil {
+			add(filepath.Clean(real))
+		}
+		for _, d := range claudeseat.AncestorsBothForms(m) {
+			add(d)
+		}
+	}
+	if pinned != "" {
+		checkouts = append(checkouts, pinned)
+		if filepath.Clean(pinned) != filepath.Clean(worktree) {
+			addRoot(pinned)
+		}
+	}
+	for _, c := range []string{worktree, e.repo} {
+		if c == "" {
+			continue
+		}
+		checkouts = append(checkouts, c)
+		if m := claudeseat.MainCheckout(c); m != "" {
+			checkouts = append(checkouts, m)
+			if filepath.Clean(m) != filepath.Clean(c) {
+				addRoot(m)
+			}
+		}
+	}
+	if worktree != "" {
+		for _, d := range claudeseat.AncestorsBothForms(worktree) {
+			add(filepath.Join(d, ".mcp.json"))
+		}
+	}
+	seenTree := map[string]bool{}
+	for _, c := range checkouts {
+		add(filepath.Join(c, ".claude"))
+		for _, rel := range []string{filepath.Join(".claude", "settings.json"), filepath.Join(".claude", "settings.local.json"), ".mcp.json"} {
+			add(filepath.Join(c, rel))
+		}
+		for _, rel := range []string{filepath.Join(".claude", "agents"), filepath.Join(".claude", "skills")} {
+			if p := filepath.Join(c, rel); !seenTree[p] {
+				seenTree[p] = true
+				trees = append(trees, p)
+			}
+		}
+	}
+	return files, trees
+}
+
+// guardForms are the spellings a protected path is compared in: as written,
+// canonical (symlinks resolved), and the targets of a symlink chain.
+func guardForms(p string) []string {
+	return append([]string{filepath.Clean(p), canonicalGuardPath(p, "/")}, linkTargets(p)...)
+}
+
+// guardKey folds a path for comparison: NFC-normalized and case-folded
+// (macOS filesystems ignore both; Codex passes 1 and 8).
+func guardKey(p string) string { return foldCase(norm.NFC.String(filepath.Clean(p))) }
+
+// foldCase maps each rune to the least rune of its case-folding orbit
+// (unicode.SimpleFold), so every spelling a case-insensitive filesystem
+// takes for the same name folds alike: ſ (long s) and S fold to s, the
+// Kelvin sign to k (Codex r2b pass 2). strings.ToLower keeps ſ.
+func foldCase(s string) string {
+	return strings.Map(func(r rune) rune {
+		least := r
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if f < least {
+				least = f
+			}
+		}
+		return least
+	}, s)
+}
+
+// guardUnder reports child as dir or under it, folded.
+func guardUnder(child, dir string) bool {
+	c, d := guardKey(child), guardKey(dir)
+	return c == d || strings.HasPrefix(c, strings.TrimSuffix(d, string(filepath.Separator))+string(filepath.Separator))
+}
+
+// sessionConfigMatch reports target as Claude Code session configuration
+// of a Claude seat: one of the files, or under one of the trees. Never a
+// glob comparison: a checkout path may hold glob characters.
+func (e *guardEnv) sessionConfigMatch(target string) (string, bool) {
+	worktree, pinned, claude, known := e.sessionSeat()
+	if !claude {
+		return "", false
+	}
+	// a staged record the guard cannot read names no worktree: protect the
+	// configuration by name wherever it is (round 2, Codex r2 pass 1)
+	if !known && claudeConfigByName(target) {
+		return target + " (Claude Code configuration; the seat's staged record is unreadable)", true
+	}
+	files, trees := e.sessionConfig(worktree, pinned)
+	for _, p := range files {
+		for _, form := range guardForms(p) {
+			if guardKey(form) == guardKey(target) {
+				return p, true
+			}
+		}
+	}
+	for _, d := range trees {
+		for _, form := range guardForms(d) {
+			if guardUnder(target, form) {
+				return d + "/", true
+			}
+		}
+	}
+	return "", false
+}
+
+// claudeConfigByName reports p as Claude Code configuration by its name
+// alone: a .mcp.json, a .claude directory, its settings files, or anything
+// under its agents or skills.
+func claudeConfigByName(p string) bool {
+	el := strings.Split(guardKey(p), string(filepath.Separator))
+	n := len(el)
+	is := func(k int, name string) bool { return k >= 0 && k < n && el[k] == foldCase(name) }
+	if is(n-1, ".mcp.json") || is(n-1, ".claude") {
+		return true
+	}
+	if is(n-2, ".claude") && (is(n-1, "settings.json") || is(n-1, "settings.local.json")) {
+		return true
+	}
+	for k := 0; k+1 < n; k++ {
+		if is(k, ".claude") && (is(k+1, "agents") || is(k+1, "skills")) {
+			return true
+		}
+	}
+	return false
+}
+
+// linkTargets are the paths a symlinked config file names, hop by hop (at
+// most 8), each canonical as far as it exists: a link whose target does not
+// exist yet still protects the file a write there would create (Codex pass
+// 3 on 3.3.1 item 5).
+func linkTargets(p string) []string {
+	var out []string
+	for i := 0; i < 8; i++ {
+		st, err := os.Lstat(p)
+		if err != nil || st.Mode()&os.ModeSymlink == 0 {
+			return out
+		}
+		t, err := os.Readlink(p)
+		if err != nil {
+			return out
+		}
+		if !filepath.IsAbs(t) {
+			t = filepath.Join(filepath.Dir(p), t)
+		}
+		out = append(out, filepath.Clean(t), canonicalGuardPath(t, "/"))
+		p = t
+	}
+	return out
 }

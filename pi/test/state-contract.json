@@ -921,6 +921,16 @@
           ]
         },
         {
+          "code": "claude_project_mcp",
+          "constant": "seatexec.ClaudeProjectMCP",
+          "writers": [
+            {
+              "function": "seatexec.CheckClaudeProjectMCP",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
           "code": "identity_incomplete",
           "constant": "seatexec.IdentityIncomplete",
           "writers": [
@@ -1896,6 +1906,16 @@
           ]
         },
         {
+          "code": "claude_project_mcp",
+          "constant": "seatexec.ClaudeProjectMCP",
+          "writers": [
+            {
+              "function": "seatexec.CheckClaudeProjectMCP",
+              "door": "param seatexec.refusef#0"
+            }
+          ]
+        },
+        {
           "code": "identity_incomplete",
           "constant": "seatexec.IdentityIncomplete",
           "writers": [
@@ -2774,7 +2794,8 @@
         "seatlaunch.ReasonProofUnknown",
         "seatlaunch.ReasonRefused",
         "seatlaunch.ReasonResourcePresent",
-        "seatlaunch.ReasonSeatNotUp"
+        "seatlaunch.ReasonSeatNotUp",
+        "seatexec.ClaudeProjectMCP"
       ],
       "kept": [
         {
