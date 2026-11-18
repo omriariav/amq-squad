@@ -30,7 +30,7 @@ anywhere else, or a null document, fails the check.
 | `generated_at` | RFC 3339 UTC |
 | `root`, `session` | the AMQ session root and session name |
 | `project_path` | the squad's repository root, when known |
-| `lead_handle` | the handle of the seat whose role is `lead`, `null` when no seat has it; in the fleet form, fleet.yaml's lead handle fills a null one (additive; 4-3 acceptance 7) |
+| `lead_handle` | the squad's lead: the handle the squad.yaml of this root's own squad (the repository the session root `<repo>/.agent-mail/<session>` lies in, its `session` this one) names its `lead` (3.3.1), else the handle of the seat whose role is `lead`, `null` when neither names one; in the fleet form, fleet.yaml's lead handle fills a null one (additive; 4-3 acceptance 7) |
 | `capabilities[]` | what this producer fills; see below |
 | `buckets[]` | the four buckets in display order: `id`, `label`, `rule` |
 | `counts` | rows per bucket: `all`, `needs_you`, `working`, `ready`, `inactive`; a row is a task, or a seat that holds no task |

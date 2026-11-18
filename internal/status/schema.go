@@ -134,9 +134,11 @@ type Status struct {
 	Root            string    `json:"root"`
 	Session         string    `json:"session"`
 	ProjectPath     string    `json:"project_path"`
-	// LeadHandle is the handle of the seat whose role is lead, null when no
-	// seat has that role (additive; 4-3 acceptance 7, from 2b-4's row 8). In
-	// the fleet form, fleet.yaml's lead handle fills it when it is null.
+	// LeadHandle is the squad's lead: the handle the squad.yaml of this
+	// root's own squad names its lead (3.3.1), else the handle of the seat whose role is
+	// lead, null when neither names one (additive; 4-3 acceptance 7, from
+	// 2b-4's row 8). In the fleet form, fleet.yaml's lead handle fills it
+	// when it is null.
 	LeadHandle   *string      `json:"lead_handle"`
 	Capabilities []string     `json:"capabilities"`
 	Buckets      []BucketInfo `json:"buckets"`

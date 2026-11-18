@@ -3,11 +3,13 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/omriariav/amq-squad/v3/internal/grants"
 	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -119,10 +121,113 @@ func buildStatusContract(root, project, version string, now time.Time) status.St
 		Now: now, Gates: gates, PIDAlive: statusPIDAlive,
 	})
 	in.Warnings = append(warnings, in.Warnings...)
+	in.SquadLead = squadLeadFor(root)
 	result := withLaunchFailures(status.Build(in), in.Scheduler.LaunchFailures)
 	status.Plain(&result)
 	return result
 }
+
+// squadLeadFor is the lead the squad.yaml of root's own squad names (3.3.1:
+// the status document's lead_handle): the repository a squad's session
+// root lies under, <repo>/.agent-mail/<session> (seatlaunch's default base
+// root), whose squad.yaml names that session. A root of any other shape (a
+// profile's, a custom base root), or a squad.yaml that is not a small
+// regular file or names another session or no lead, gives "" (the
+// lead-roled seat then fills it, as before). It reads squad.yaml
+// non-blocking and bounded, and parsed whole against the owner grant (read
+// the same way), as every reader of squad.yaml parses it.
+func squadLeadFor(root string) string {
+	root = filepath.Clean(root)
+	base := filepath.Dir(root)
+	if filepath.Base(base) != ".agent-mail" {
+		return ""
+	}
+	// the root must be its own repository's session root through any
+	// symlink: a linked <repo>/.agent-mail/<session> whose target is
+	// another repository's session is not this squad.yaml's (#1045 round
+	// 2); a mismatch, or a path that does not resolve, falls back
+	repo := filepath.Dir(base)
+	real, rerr := filepath.EvalSymlinks(root)
+	realRepo, perr := filepath.EvalSymlinks(repo)
+	if rerr != nil || perr != nil || real != filepath.Join(realRepo, ".agent-mail", filepath.Base(root)) {
+		return ""
+	}
+	path := team.SquadPath(repo)
+	raw, err := readSmallRegular(path, 1<<20)
+	if err != nil {
+		return ""
+	}
+	// parsed whole, as every reader of squad.yaml parses it (team.ParseSquad
+	// against the owner grant): a file squad.yaml's own parser refuses falls
+	// back (#1045 round 2, Codex passes 1 and 2)
+	owner, ok := ownerGrantForStatus()
+	if !ok {
+		return ""
+	}
+	s, err := team.ParseSquad(string(raw), path, owner)
+	if err != nil || s.Session != filepath.Base(root) {
+		return ""
+	}
+	return strings.TrimSpace(s.Lead)
+}
+
+// ownerGrantForStatus is the owner grant squad.yaml is parsed against, as
+// grants.LoadFrom reads it but non-blocking and bounded: the defaults when
+// the owner file is absent; not ok (the fallback) when it cannot be read,
+// does not parse, or is untrusted.
+func ownerGrantForStatus() (grants.Grants, bool) {
+	path := grants.OwnerPath()
+	if path == "" {
+		return grants.Defaults(), true
+	}
+	raw, err := readSmallRegular(path, 1<<20)
+	if os.IsNotExist(err) {
+		return grants.Defaults(), true
+	}
+	if err != nil {
+		return grants.Grants{}, false
+	}
+	g, err := grants.ParseOwner(string(raw), path)
+	if err != nil || grants.Insecure(path) != "" {
+		return grants.Grants{}, false
+	}
+	return g, true
+}
+
+// readSmallRegular reads a regular file of at most max bytes, opened
+// non-blocking: a FIFO, a device or a larger file is an error, never a
+// hang.
+func readSmallRegular(path string, max int64) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() || st.Size() > max {
+		return nil, fmt.Errorf("%s is not a regular file of at most %d bytes", path, max)
+	}
+	if readSmallRegularAfterStat != nil {
+		readSmallRegularAfterStat(path)
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil {
+		return nil, err
+	}
+	// a file that grew past max after the stat is refused too (#1045
+	// round 2)
+	if int64(len(raw)) > max {
+		return nil, fmt.Errorf("%s grew past %d bytes", path, max)
+	}
+	return raw, nil
+}
+
+// readSmallRegularAfterStat runs between readSmallRegular's stat and its
+// read (a test seam: a file that grows in between).
+var readSmallRegularAfterStat func(path string)
 
 func writeStatusContractTable(out io.Writer, st status.Status) error {
 	fmt.Fprintf(out, "Squad %s (root %s): %d needs you, %d working, %d ready, %d inactive\n",
