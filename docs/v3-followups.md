@@ -74,8 +74,10 @@ promised by date.
      Bash sandbox, set in each Claude seat's own settings, can hold a Claude
      seat to its worktree as an interim, and what pi offers (it has no
      built-in sandbox). Then the design: signed records for trusted state.
-   - L2, beside it: a tool the guard does not recognise passes unchecked.
-     `classifyGuardCall` classifies shell commands and the Write/Edit family;
+   - L2, beside it: a tool the guard does not recognise gets no
+     action-specific checks. Every tool's arguments are checked for the
+     owner's Claude token path first (`internal/cli/hook_guard.go:196-201`);
+     then `classifyGuardCall` classifies shell commands and the Write/Edit family;
      for an MCP tool it looks only for send words, and for any other tool it
      returns no action (`internal/cli/hook_guard.go:414-431`). A project's
      MCP servers can add such tools to a seat. For Claude seats, project MCP
