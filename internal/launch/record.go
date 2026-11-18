@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/omriariav/amq-squad/v3/internal/atomicfile"
@@ -130,6 +131,60 @@ func StagedDir(root, handle string) string {
 	return filepath.Join(root, "extensions", "amq-squad", "launch", handle)
 }
 
+// C5a (3.3.x): every record a decision trusts lives under StagedDir, which no
+// seat can write: a Claude or pi seat's write there is refused by the guard
+// (internal/cli/hook_guard_env.go protects the session root's
+// extensions/amq-squad/); a Codex seat writes only its worktree (the
+// workspace-write sandbox with writable_roots=[], internal/seatexec/codex.go),
+// and compile refuses a worktree that holds the session root
+// (internal/seatlaunch/compile.go). The published record in the seat's own
+// agent directory (Path, ExistingPath, Read) is still written, for a 3.3.0
+// binary after a rollback, and no 3.3.x reader trusts it.
+
+// StagedPath is the record the core staged for a seat's launch
+// (seatlaunch.Stage): the record a decision trusts (its handle, role, pool,
+// rules source and start).
+func StagedPath(root, handle string) string { return filepath.Join(StagedDir(root, handle), FileName) }
+
+// ExecDir is where seat-exec writes the seat's exec record and its role and
+// rules snapshots: <StagedDir>/exec.
+func ExecDir(root, handle string) string { return filepath.Join(StagedDir(root, handle), "exec") }
+
+// ExecPath is the seat's exec record: the staged record with seat-exec's
+// outcome (pid, start stamp, provider argv), never the proof token.
+func ExecPath(root, handle string) string { return filepath.Join(ExecDir(root, handle), FileName) }
+
+// ReadStaged reads the record the core staged for a seat's launch; its
+// handle must be the one asked for. os.ErrNotExist when there is none.
+func ReadStaged(root, handle string) (Record, error) {
+	return readSeatRecord(StagedPath(root, handle), handle)
+}
+
+// ReadExec reads a seat's exec record (written by seat-exec at its launch);
+// its handle must be the one asked for. os.ErrNotExist when there is none (a
+// seat launched before 3.3.x, or one seat-exec has not run for).
+func ReadExec(root, handle string) (Record, error) {
+	return readSeatRecord(ExecPath(root, handle), handle)
+}
+
+func readSeatRecord(path, handle string) (Record, error) {
+	if handle == "" || handle == "." || handle == ".." || strings.ContainsAny(handle, `/\`) {
+		return Record{}, fmt.Errorf("%q is not a seat handle", handle)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return Record{}, err
+	}
+	rec, err := Decode(b)
+	if err != nil {
+		return Record{}, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if rec.Handle != handle {
+		return Record{}, fmt.Errorf("%s names handle %q, not %q", path, rec.Handle, handle)
+	}
+	return rec, nil
+}
+
 // ExistingPath prefers the extension record and falls back to the legacy path.
 func ExistingPath(agentDir string) string {
 	p := Path(agentDir)
@@ -209,39 +264,62 @@ func ScanEntries(projectRoot string) ([]Entry, error) {
 	return ScanEntriesInRoot(projectRoot, filepath.Join(projectRoot, ".agent-mail"))
 }
 
-// ScanEntriesInRoot finds launch records under an AMQ base root, in the
-// extension and legacy layouts at the base root, session and profile/session
-// levels. A mailbox without a record is not inferred (3.0 drops that).
+// ScanEntriesInRoot finds the records the core staged for seat launches
+// under an AMQ base root (<session root>/extensions/amq-squad/launch/<h>/
+// launch.json), at the base root, session and profile/session levels. Each
+// Entry's AgentDir is that session root's agents/<h> (its mailbox, presence
+// and activity). A record a seat wrote in its own agent directory is never
+// read (C5a); a mailbox without a staged record is not inferred; and a
+// record is kept only where it names, as its root, the session root it was
+// found under (the core stages Root: the session root), so a record placed
+// under another directory of the base root never speaks for a session
+// there (Codex pass 2, finding 2).
 func ScanEntriesInRoot(_ string, baseRoot string) ([]Entry, error) {
 	seen := map[string]bool{}
 	var out []Entry
 	for _, levels := range [][]string{{"*", "*"}, {"*"}, nil} {
-		for _, legacy := range []bool{false, true} {
-			parts := append(append([]string{baseRoot}, levels...), "agents", "*")
-			if legacy {
-				parts = append(parts, FileName)
-			} else {
-				parts = append(parts, "extensions", LayerName, FileName)
+		parts := append(append([]string{baseRoot}, levels...), "extensions", "amq-squad", "launch", "*", FileName)
+		glob := filepath.Join(parts...)
+		matches, err := filepath.Glob(glob)
+		if err != nil {
+			return nil, fmt.Errorf("glob %s: %w", glob, err)
+		}
+		for _, m := range matches {
+			handle := filepath.Base(filepath.Dir(m))
+			root := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(m)))))
+			agentDir := filepath.Join(root, "agents", handle)
+			if seen[agentDir] {
+				continue
 			}
-			glob := filepath.Join(parts...)
-			matches, err := filepath.Glob(glob)
-			if err != nil {
-				return nil, fmt.Errorf("glob %s: %w", glob, err)
-			}
-			for _, m := range matches {
-				agentDir := filepath.Dir(m)
-				if !legacy {
-					agentDir = filepath.Dir(filepath.Dir(agentDir))
-				}
-				if seen[agentDir] {
-					continue
-				}
-				seen[agentDir] = true
-				if rec, err := Read(agentDir); err == nil {
-					out = append(out, Entry{Record: rec, AgentDir: agentDir, Source: FileName})
-				}
+			seen[agentDir] = true
+			if rec, err := ReadStaged(root, handle); err == nil && sameDir(recordRoot(rec), root) {
+				out = append(out, Entry{Record: rec, AgentDir: agentDir, Source: FileName})
 			}
 		}
 	}
 	return out, nil
+}
+
+// recordRoot is rec.Root, a relative one taken against rec.CWD as the
+// snapshot does (state.absoluteLaunchRoot).
+func recordRoot(rec Record) string {
+	root, cwd := strings.TrimSpace(rec.Root), strings.TrimSpace(rec.CWD)
+	if root != "" && !filepath.IsAbs(root) && filepath.IsAbs(cwd) {
+		return filepath.Join(cwd, root)
+	}
+	return root
+}
+
+// sameDir reports that a and b (both non-empty) name one directory, by their
+// cleaned absolute paths or their resolved ones.
+func sameDir(a, b string) bool {
+	if a == "" || b == "" || !filepath.IsAbs(a) || !filepath.IsAbs(b) {
+		return false
+	}
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	ra, err1 := filepath.EvalSymlinks(a)
+	rb, err2 := filepath.EvalSymlinks(b)
+	return err1 == nil && err2 == nil && ra == rb
 }

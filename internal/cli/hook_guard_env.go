@@ -153,9 +153,18 @@ func (e *guardEnv) protectedPath(written string, blockSafe bool) (string, bool) 
 		entries = append(entries, b+"/")
 	}
 	// The seat reads a rules snapshot (AMQ_SQUAD_RULES_PATH); the recorded
-	// rules source stays protected too (fix 3).
-	if rec, err := launch.Read(e.id.AgentDir); err == nil && rec.RulesPath != "" {
-		entries = append(entries, rec.RulesPath)
+	// rules source stays protected too (fix 3), as the core staged it for the
+	// launch, never as a record in the seat's own agent directory names it
+	// (C5a).
+	staged, serr := launch.ReadStaged(e.id.Root, e.id.Handle)
+	if serr == nil && staged.RulesPath != "" {
+		entries = append(entries, staged.RulesPath)
+	}
+	// C5a (Codex pass 3, finding 1): every session's extensions/amq-squad/
+	// under the AMQ base root is the core's, not only this seat's session
+	// root's: another session's staged records decide its routing and roles.
+	if entry, ok := underAnySessionExt(firstOf(staged.BaseRoot, firstOf(os.Getenv("AM_BASE_ROOT"), filepath.Dir(e.id.Root))), target, e.cwd); ok {
+		return entry, true
 	}
 	for _, entry := range entries {
 		if name, ok := strings.CutPrefix(entry, grants.ManagedPrefix); ok {
@@ -335,4 +344,25 @@ func splitShell(s string) []shellSegment {
 	}
 	end()
 	return segs
+}
+
+// underAnySessionExt reports that target lies in an extensions/amq-squad/
+// directory at any level under the AMQ base root (a session root, a
+// profile's session root, or the base root itself).
+func underAnySessionExt(baseRoot, target, cwd string) (string, bool) {
+	if baseRoot == "" {
+		return "", false
+	}
+	b := canonicalGuardPath(baseRoot, cwd)
+	rel, err := filepath.Rel(b, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	for i := 0; i+1 < len(parts); i++ {
+		if parts[i] == "extensions" && parts[i+1] == "amq-squad" {
+			return filepath.Join(append([]string{b}, parts[:i+2]...)...) + "/", true
+		}
+	}
+	return "", false
 }

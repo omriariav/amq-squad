@@ -34,7 +34,12 @@ func message(t *testing.T, root, owner, id, from, to, thread, subject, kind stri
 
 func launchRecord(t *testing.T, root, handle, binary, model string, pid int) {
 	t.Helper()
-	write(t, filepath.Join(root, "agents", handle, "extensions", "io.github.omriariav.amq-squad", "launch.json"),
+	// a launched seat has its AMQ mailbox, and seat-exec writes its exec
+	// record under the staged directory since C5a (launch.ExecPath)
+	if err := os.MkdirAll(filepath.Join(root, "agents", handle), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "extensions", "amq-squad", "launch", handle, "exec", "launch.json"),
 		fmt.Sprintf(`{"schema":1,"handle":%q,"role":"implementer","binary":%q,"model":%q,"cwd":"/repo","agent_pid":%d,"started_at":"2026-10-24T11:00:00Z","root":%q}`, handle, binary, model, pid, root))
 }
 

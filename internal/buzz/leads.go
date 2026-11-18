@@ -119,15 +119,17 @@ func FleetDestinations(r fleet.Registry) []string {
 // role is added by the caller.
 var DefaultLeadRoles = []string{"lead", "cto"}
 
-// LaunchRecordLeads answers from the launch record the launch wrote for the
-// seat (agents/<handle>/ under the root): its role must be one of Roles.
+// LaunchRecordLeads answers from the record the core staged for the seat's
+// launch (<root>/extensions/amq-squad/launch/<handle>/, which no seat can
+// write; never a record in the seat's own agent directory, C5a): its role
+// must be one of Roles.
 type LaunchRecordLeads struct{ Roles []string }
 
 func (l LaunchRecordLeads) Lead(root, handle string) (Destination, error) {
 	if !handleRe.MatchString(handle) {
 		return Destination{}, fmt.Errorf("%q is not an AMQ handle", handle)
 	}
-	rec, err := launch.Read(filepath.Join(root, "agents", handle))
+	rec, err := launch.ReadStaged(root, handle)
 	if errors.Is(err, os.ErrNotExist) {
 		return Destination{}, fmt.Errorf("%s has no launch record in this squad, so it is no lead seat", handle)
 	}

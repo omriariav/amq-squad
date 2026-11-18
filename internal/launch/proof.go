@@ -15,7 +15,7 @@ import (
 // The seat proof (2b-2 item 4, lead ruling): the launcher owns a Unix socket
 // per launch, mints a one-time token per seat into the staged record, and
 // counts a seat up only from a proof seat-exec sends over that socket. The
-// seat's published record is evidence only. Accepted proofs and alarms are
+// seat's exec record is evidence only. Accepted proofs and alarms are
 // written here, in the core-owned launch directory (StagedDir's parent),
 // which guard protects from seats.
 

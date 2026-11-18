@@ -135,9 +135,12 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 	dir := filepath.Join(o.Root, "agents", handle)
 	seat := SeatInput{Handle: handle, PromptState: "unknown"}
 	// The seat's role, runtime, model and effort join from its launch record
-	// (2b-2): the published one, else the core's staged one (before seat-exec
-	// publishes). Only the published record is a liveness signal.
+	// (2b-2): seat-exec's exec record (C5a: under the staged directory),
+	// else the core's staged one (before seat-exec writes it). Only the exec
+	// record is a liveness signal on this screen.
+	stagedLaunch := ""
 	if staged, sl, warnings, ok := seatLaunchState(o.Root, handle, o.Now); ok {
+		stagedLaunch = staged.LaunchID
 		joinLaunchRecord(&seat, staged)
 		// brief 31-1: the seat's worktree, branch and last launch, and the
 		// warnings of its launch
@@ -155,8 +158,13 @@ func collectSeat(o CollectOptions, handle string, last state.Message, warn func(
 		}
 		seat.Warnings, seat.AcknowledgedWarnings = splitCleared(warnings, clears[handle], staged.LaunchID)
 	}
-	rec, err := launch.Read(dir)
+	// C5a: seat-exec's exec record under the staged directory, never the
+	// copy in the seat's own agent directory, and only the current staged
+	// launch's (an earlier launch's exec record outlives a restage until
+	// seat-exec runs again)
+	rec, err := launch.ReadExec(o.Root, handle)
 	switch {
+	case err == nil && stagedLaunch != "" && rec.LaunchID != stagedLaunch:
 	case err == nil:
 		seat.HasSignal = true
 		joinLaunchRecord(&seat, rec)

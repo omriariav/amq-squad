@@ -82,6 +82,7 @@ func seedAgentRecord(t *testing.T, base, workstream, handle string, rec launch.R
 	if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
 		t.Fatal(err)
 	}
+	stageForAgentDir(t, agentDir, rec)
 	return agentDir
 }
 
@@ -102,6 +103,7 @@ func writeMemberLaunchRecord(t *testing.T, base, session, handle string, rec lau
 	if err := launch.WriteUnderRecordLock(agentDir, rec); err != nil {
 		t.Fatalf("write launch record: %v", err)
 	}
+	stageForAgentDir(t, agentDir, rec)
 }
 
 // From resume_shared_test.go:32-46

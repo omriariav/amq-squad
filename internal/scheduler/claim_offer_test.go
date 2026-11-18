@@ -34,7 +34,7 @@ func TestAdoptionFailsClosedWithoutAReadableSeatStart(t *testing.T) {
 	}{
 		{"no record", func(*testing.T, string) {}},
 		{"unreadable record", func(t *testing.T, root string) {
-			p := launch.Path(filepath.Join(root, "agents", "seat-a"))
+			p := launch.StagedPath(root, "seat-a")
 			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -43,10 +43,10 @@ func TestAdoptionFailsClosedWithoutAReadableSeatStart(t *testing.T) {
 			}
 		}},
 		{"zero start", func(t *testing.T, root string) {
-			agentDir := filepath.Join(root, "agents", "seat-a")
-			if err := launch.WithRecordLock(agentDir, func() error {
-				return launch.WriteUnderRecordLock(agentDir, launch.Record{Handle: "seat-a", Root: root})
-			}); err != nil {
+			if err := os.MkdirAll(launch.StagedDir(root, "seat-a"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := launch.WriteFile(launch.StagedPath(root, "seat-a"), launch.Record{Handle: "seat-a", Root: root}); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -83,10 +83,11 @@ func TestAdoptedSeatKeepsItsOwnLaunchAnchorUntilARealRelaunch(t *testing.T) {
 	}
 	writeLaunch := func(start time.Time) {
 		t.Helper()
-		agentDir := filepath.Join(root, "agents", "seat-a")
-		if err := launch.WithRecordLock(agentDir, func() error {
-			return launch.WriteUnderRecordLock(agentDir, launch.Record{Handle: "seat-a", Root: root, Runtime: sonnet.Runtime, Model: sonnet.Model, Effort: sonnet.Effort, StartedAt: start})
-		}); err != nil {
+		// the record the core stages for the launch (C5a: adoption reads it)
+		if err := os.MkdirAll(launch.StagedDir(root, "seat-a"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := launch.WriteFile(launch.StagedPath(root, "seat-a"), launch.Record{Handle: "seat-a", Root: root, Runtime: sonnet.Runtime, Model: sonnet.Model, Effort: sonnet.Effort, StartedAt: start}); err != nil {
 			t.Fatal(err)
 		}
 	}

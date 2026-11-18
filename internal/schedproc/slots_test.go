@@ -61,7 +61,12 @@ func squadFixture(t *testing.T) seatlaunch.Squad {
 	q := seatlaunch.Squad{ProjectRoot: repo, Session: "s1", Wrapper: "/opt/amq-squad", AMQPath: "/opt/amq", Seats: []seatlaunch.Seat{
 		{Handle: "c1", Runtime: "claude", Model: "sonnet", Effort: "medium", Role: "# Role\n\nimplementer\n", RoleName: "implementer", Worktree: filepath.Join(base, "wt", "c1")},
 		{Handle: "p1", Runtime: "pi", Role: "# Role\n\npi worker\n", RoleName: "implementer", Worktree: filepath.Join(base, "wt", "p1")},
-		{Handle: "root", Runtime: "claude", Model: "opus", Effort: "high", Role: "# Role\n\nlead\n", Worktree: repo},
+		// C5a: compile refuses a worktree overlapping the session root's
+		// extensions/ (the repository holds .agent-mail), so the fixture's
+		// third seat takes the derived <repo>/.worktrees/<handle>;
+		// withRepoRootSeat puts it back at the repository root for the
+		// rows of the slots' own refusal
+		{Handle: "root", Runtime: "claude", Model: "opus", Effort: "high", Role: "# Role\n\nlead\n", Worktree: filepath.Join(repo, ".worktrees", "root")},
 	}}
 	q, err := q.Normalize()
 	if err != nil {
@@ -73,12 +78,22 @@ func squadFixture(t *testing.T) seatlaunch.Squad {
 	return q
 }
 
+// withRepoRootSeat is q with its third seat's worktree at the repository
+// root, past compile's refusal (C5a), as a squad built by hand around
+// Normalize would be: the slots refuse to start it on their own
+// (ensureWorktree).
+func withRepoRootSeat(q seatlaunch.Squad) seatlaunch.Squad {
+	q.Seats = append([]seatlaunch.Seat(nil), q.Seats...)
+	q.Seats[2].Worktree = q.ProjectRoot
+	return q
+}
+
 // Slots: a request takes a free seat of its pool, whose worktree and branch
 // are created from the base branch with hooks off; a seat already in use
 // is not taken twice; a seat whose worktree is the repository root is never
 // started; a release frees it.
 func TestSlotsPlanWorktreesAndRelease(t *testing.T) {
-	q := squadFixture(t)
+	q := withRepoRootSeat(squadFixture(t))
 	s := &Slots{Squad: q}
 	claude := task.Pool{Runtime: "claude", Model: "sonnet", Effort: "medium"}
 	got, err := s.Plan(scheduler.SeatRequest{ID: "r1", Pool: claude})

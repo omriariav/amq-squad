@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -223,8 +222,8 @@ func Launch(ctx context.Context, q Squad, o Options) (Result, error) {
 	if err != nil {
 		return res, err
 	}
-	// A fresh nonce per launch: only a published record that carries it
-	// (and the seat's request id) is this launch's proof.
+	// A fresh nonce per launch: only an exec record that carries it (and the
+	// seat's request id) is this launch's evidence.
 	launchID := newLaunchID()
 	res.LaunchID = launchID
 	for i := range c.Records {
@@ -440,8 +439,8 @@ func recordApply(c Compiled, r launchapi.ApplyResultV1, detail string, now time.
 }
 
 // WaitSeats reports a seat up only when the launcher accepted its proof on
-// the socket (item 4); the seat's published record is evidence only: it can
-// name a refusal (this launch's id and the seat's request id), never an up.
+// the socket (item 4); seat-exec's exec record is evidence only: it can name
+// a refusal (this launch's id and the seat's request id), never an up.
 func WaitSeats(ctx context.Context, q Squad, launchID string, srv *proofServer, wait, poll time.Duration) []SeatState {
 	deadline := time.Now().Add(wait)
 	states := make([]SeatState, len(q.Seats))
@@ -479,8 +478,9 @@ func seatState(q Squad, s Seat, launchID string, srv *proofServer) SeatState {
 			return st
 		}
 	}
-	// Evidence only: seat-exec's own refusal for this launch.
-	rec, err := launch.Read(filepath.Join(q.SessionRoot(), "agents", s.Handle))
+	// Evidence only: seat-exec's own refusal for this launch, from its exec
+	// record under the staged directory (C5a), never the seat's own copy.
+	rec, err := launch.ReadExec(q.SessionRoot(), s.Handle)
 	if err == nil && rec.Exec != nil && rec.Exec.Outcome == "refused" && launchID != "" && rec.LaunchID == launchID && rec.RequestID == s.RequestID {
 		st.State, st.ReasonCode, st.Detail = ReasonRefused, rec.Exec.ReasonCode, rec.Exec.Detail
 	}

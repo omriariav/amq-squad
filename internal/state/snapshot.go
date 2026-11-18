@@ -23,9 +23,11 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 		return Snapshot{}, err
 	}
 
-	// Group entries by canonical profile/session namespace, preserving a stable
-	// legacy session root per namespace. Profiles may intentionally reuse a
-	// human session label; the snapshot must not merge their launch records.
+	// Group entries by canonical profile/session namespace and session root.
+	// Profiles may intentionally reuse a human session label; the snapshot
+	// must not merge their launch records, and a record under another root
+	// naming the same namespace never takes the session's root (C5a, Codex
+	// pass 2, finding 2).
 	type bucket struct {
 		root        string
 		session     string
@@ -40,11 +42,12 @@ func BuildWithThresholds(projectRoot, baseRoot string, probe Probe, th Threshold
 		profile := namespace.NormalizeProfile(e.Record.TeamProfile)
 		namespaceID := namespace.ID(profile, name)
 		root := sessionRoot(projectRoot, baseRoot, e.Record)
-		b, ok := bySession[namespaceID]
+		key := namespaceID + "\x00" + filepath.Clean(root)
+		b, ok := bySession[key]
 		if !ok {
 			b = &bucket{root: root, session: name, teamProfile: profile, namespaceID: namespaceID}
-			bySession[namespaceID] = b
-			order = append(order, namespaceID)
+			bySession[key] = b
+			order = append(order, key)
 		}
 		b.agents = append(b.agents, classifyAgent(e, probe, th.Heartbeat))
 	}

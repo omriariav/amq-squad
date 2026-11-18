@@ -136,7 +136,9 @@ func (s *Scheduler) AdoptUpRequest(handle, requestID string, pool task.Pool, at 
 		// lapsed-attempt boundary to the seat's own launch record StartedAt;
 		// using at here would let every scheduler restart erase the exclusion.
 		root := filepath.Clean(filepath.Join(s.Store.Dir, "..", "..", ".."))
-		if rec, err := launch.Read(filepath.Join(root, "agents", handle)); err == nil && !rec.StartedAt.IsZero() {
+		// C5a: the record the core staged for the launch, never one in the
+		// seat's own agent directory
+		if rec, err := launch.ReadStaged(root, handle); err == nil && !rec.StartedAt.IsZero() {
 			joinedAt = rec.StartedAt
 		}
 		s.seats[handle] = &seat{pool: pool, freeSince: at, lastActivity: at, joinedAt: joinedAt, requestID: requestID}

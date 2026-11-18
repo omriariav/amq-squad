@@ -18,8 +18,9 @@ Usage:
 AMQ's launch API runs this wrapper; it is not run by hand. AM_ME and AM_ROOT
 come from the environment, and --seat must equal AM_ME. There is no --root.
 seat-exec verifies the AMQ root without following a symlink, checks the
-staged launch record, the role.md and rules sha256, publishes role.md and
-launch.json into the seat's extension directory, scrubs credentials from the
+staged launch record, the role.md and rules sha256, writes launch.json and
+the role.md and rules.md snapshots under the staged launch directory (exec/),
+with copies in the seat's extension directory, scrubs credentials from the
 environment, sets AM_ME, AM_ROOT, AM_BASE_ROOT, AM_SESSION and
 AMQ_SQUAD_BRANCH from the record only, proves the identity with one read-only
 'amq env' check (it never drains), re-checks role and rules, and execs the

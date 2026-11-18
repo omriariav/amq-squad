@@ -326,8 +326,10 @@ class FaultTable(unittest.TestCase):
 
 class ContextInjection(unittest.TestCase):
     def seed(self, s):
-        ext = os.path.join(s.agent, "extensions", "io.github.omriariav.amq-squad")
-        s.write(os.path.join(ext, "role.md"), '# Role: CTO\nOwn the "architecture" \\ ok.\n')
+        # the role the core stages for the launch (C5a: the context reads the
+        # staged directory, never a role in the seat's own agent directory)
+        staged = os.path.join(s.root, "extensions", "amq-squad", "launch", "cto")
+        s.write(os.path.join(staged, "role.md"), '# Role: CTO\nOwn the "architecture" \\ ok.\n')
         rules = os.path.join(s.project, ".amq-squad", "team-rules.md")
         s.write(rules, "# Team Rules\n")
         s.env["AMQ_SQUAD_RULES_PATH"] = rules

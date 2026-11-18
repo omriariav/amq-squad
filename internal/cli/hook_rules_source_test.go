@@ -13,12 +13,11 @@ import (
 func TestGuardProtectsTheRecordedRulesSource(t *testing.T) {
 	f := newHookFixture(t)
 	source := filepath.Join(f.project, "custom", "squad-rules.md")
-	snapshot := filepath.Join(launch.ExtensionDir(f.agentDir), "rules.md")
+	snapshot := filepath.Join(launch.StagedDir(f.root, "cto"), "exec", "rules.md")
 	mustWrite(t, source, "# rules\n")
 	mustWrite(t, snapshot, "# rules\n")
-	if err := launch.WriteUnderRecordLock(f.agentDir, launch.Record{Handle: "cto", Root: f.root, Session: "s1", RulesPath: source}); err != nil {
-		t.Fatal(err)
-	}
+	// the record the core staged for the launch (C5a: the guard reads it)
+	stageSeatRecord(t, f.root, launch.Record{Handle: "cto", Root: f.root, Session: "s1", RulesPath: source})
 	t.Setenv("AMQ_SQUAD_RULES_PATH", snapshot)
 	for _, p := range []string{source, snapshot} {
 		if v := evaluateGuard(f.id(), guardCall{Tool: "Write", Args: map[string]string{"file_path": p}, CWD: f.repo}, f.now); v.ReasonCode != "protected_path" {

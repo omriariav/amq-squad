@@ -43,17 +43,24 @@ var taskSchedulerLive = func(root string) bool {
 var taskClaimSeatAlive = procinfo.Alive
 var taskClaimSeatStartToken = procinfo.StartToken
 
-func taskClaimSeatRecordLive(rec launch.Record) bool {
-	if rec.Exec == nil || rec.Exec.Outcome != "exec" || rec.Exec.PID <= 0 || rec.Exec.ProcessStart == "" || !taskClaimSeatAlive(rec.Exec.PID) {
+// taskClaimSeatLive: the seat the core staged is live when the launcher's
+// proof ledger (launch.ReadProof, written only by the core's proof server
+// and close, under the staged directory no seat can write) holds an open
+// proof for the staged launch whose pid still runs with its start stamp
+// (C5a: never the exec record the seat could write in its own directory).
+func taskClaimSeatLive(root, holder string, rec launch.Record) bool {
+	proof, err := launch.ReadProof(root, holder)
+	if err != nil || rec.LaunchID == "" || proof.LaunchID != rec.LaunchID || proof.Handle != holder || proof.ClosedAt != nil ||
+		proof.PID <= 0 || proof.Start == "" || !taskClaimSeatAlive(proof.PID) {
 		return false
 	}
-	stamp, ok := taskClaimSeatStartToken(rec.Exec.PID)
-	return ok && stamp == rec.Exec.ProcessStart
+	stamp, ok := taskClaimSeatStartToken(proof.PID)
+	return ok && stamp == proof.Start
 }
 
 func taskClaimSeatPool(root, holder string, flag *task.Pool) (*task.Pool, error) {
-	rec, err := launch.Read(filepath.Join(root, "agents", holder))
-	if err == nil && taskClaimSeatRecordLive(rec) && rec.Runtime != "" && (rec.Runtime == "pi" || rec.Model != "") {
+	rec, err := launch.ReadStaged(root, holder)
+	if err == nil && taskClaimSeatLive(root, holder, rec) && rec.Runtime != "" && (rec.Runtime == "pi" || rec.Model != "") {
 		p := task.Pool{Runtime: rec.Runtime, Model: rec.Model, Effort: rec.Effort}
 		if flag != nil && *flag != p {
 			return nil, taskClaimRefusal(task.RefusalClaimPoolMismatch,
@@ -144,8 +151,9 @@ func taskNextCaller(root, me string, t task.Task) task.NextCaller {
 		roles = append(roles, task.NextHolder)
 	}
 	// the record must be this handle's own: a record whose handle is another
-	// seat's names no role for me
-	if rec, err := launch.Read(filepath.Join(root, "agents", me)); err == nil && rec.Handle == me && rec.Role == status.LeadRole {
+	// seat's names no role for me; and it is the record the core staged for
+	// the launch, never one in the seat's own agent directory (C5a)
+	if rec, err := launch.ReadStaged(root, me); err == nil && rec.Handle == me && rec.Role == status.LeadRole {
 		roles = append(roles, task.NextLead)
 	}
 	if len(roles) == 0 {

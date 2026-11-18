@@ -458,6 +458,15 @@ func (q Squad) Normalize() (Squad, error) {
 		if !filepath.IsAbs(s.Worktree) {
 			return q, fmt.Errorf("seat %s: worktree %q must be absolute", s.Handle, s.Worktree)
 		}
+		// C5a: every session's extensions/ under the AMQ base root (the
+		// staged records, seat-exec's exec records, the proof ledgers,
+		// grants) is outside every seat's writes; a Codex seat writes its
+		// worktree under the workspace-write sandbox, so no seat's worktree
+		// may overlap the base root, holding it or lying under it (Codex
+		// pass 3: another session's extensions/ too).
+		if treeHolds(s.Worktree, q.BaseRoot) || treeHolds(q.BaseRoot, s.Worktree) {
+			return q, fmt.Errorf("seat %s: worktree %q overlaps the AMQ base root %s, whose sessions' extensions/ no seat may write; use a worktree outside %s (the default <project>/.worktrees/%s is fine)", s.Handle, s.Worktree, q.BaseRoot, q.BaseRoot, s.Handle)
+		}
 		if err := seatexec.ValidateNeeds(s.EnvNeeds, s.CredentialNeeds); err != nil {
 			return q, fmt.Errorf("seat %s: %w", s.Handle, err)
 		}
@@ -466,6 +475,42 @@ func (q Squad) Normalize() (Squad, error) {
 		}
 	}
 	return q, nil
+}
+
+// treeHolds reports that dir is tree or under it, by the cleaned paths and
+// by the paths with their existing part resolved (a symlink in either).
+func treeHolds(tree, dir string) bool {
+	under := func(t, d string) bool {
+		rel, err := filepath.Rel(t, d)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	}
+	tree, dir = filepath.Clean(tree), filepath.Clean(dir)
+	return under(tree, dir) || under(resolveExisting(tree), resolveExisting(dir))
+}
+
+// resolveExisting resolves the symlinks of p's longest existing prefix and
+// keeps the rest as written.
+func resolveExisting(p string) string {
+	anc := p
+	for {
+		if _, err := os.Lstat(anc); err == nil {
+			break
+		}
+		up := filepath.Dir(anc)
+		if up == anc {
+			return p
+		}
+		anc = up
+	}
+	r, err := filepath.EvalSymlinks(anc)
+	if err != nil {
+		return p
+	}
+	rest, err := filepath.Rel(anc, p)
+	if err != nil {
+		return p
+	}
+	return filepath.Join(r, rest)
 }
 
 // checkRoleDelivery: the role comes only from role.md; role text in

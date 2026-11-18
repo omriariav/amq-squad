@@ -67,7 +67,7 @@ func TestSeatExecRechecksRoleAndRulesBeforeExec(t *testing.T) {
 	if err := f.run(Options{}); err != nil {
 		t.Fatal(err)
 	}
-	ext := launch.ExtensionDir(filepath.Join(f.root, "agents", "cto"))
+	ext := launch.ExecDir(f.root, "cto") // C5a: the snapshots live under the staged directory
 	for name, path := range map[string]string{"role": Getenv(f.execEnv, "AMQ_SQUAD_ROLE_PATH"), "rules": Getenv(f.execEnv, "AMQ_SQUAD_RULES_PATH")} {
 		st, err := os.Stat(path)
 		if err != nil || filepath.Dir(path) != ext || st.Mode().Perm() != 0o400 {

@@ -286,7 +286,12 @@ func publishExec(t *testing.T, q Squad, handle string, exec *launch.Exec) {
 		t.Fatal(err)
 	}
 	rec.Exec = exec
-	if err := launch.WriteUnderRecordLock(filepath.Join(q.SessionRoot(), "agents", handle), rec); err != nil {
+	// as seat-exec writes it since C5a: the exec record under the staged
+	// directory
+	if err := os.MkdirAll(launch.ExecDir(q.SessionRoot(), handle), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := launch.WriteFile(launch.ExecPath(q.SessionRoot(), handle), rec); err != nil {
 		t.Fatal(err)
 	}
 }
