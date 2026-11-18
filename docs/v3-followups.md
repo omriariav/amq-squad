@@ -7,7 +7,7 @@ planning sessions that made them; nothing here is a release blocker.
 ## 3.3.x
 
 The list after the 3.3.0 release (2026-11-17), in the plan reviewer's order:
-items 1 to 5 are ruled first to fifth (reordered 2026-11-18). Nothing here is
+items 1 to 6 are ruled first to sixth (reordered 2026-11-18 and 2026-11-19). Nothing here is
 promised by date.
 
 1. **Done (#1033): the gate identity on a fresh session root** (3.3.0's known
@@ -51,7 +51,7 @@ promised by date.
    amq-remote submits. The test's resend budget is unchanged. Sightings: three
    local in about 11 locked `make ci` runs since 2026-11-16 (the dated entry
    under Flakes and test robustness).
-3. **C5a PR 1: 3.3.1's gate.** 3.3.0's known limit 8: a seat able to write its
+3. **Done (#1036): C5a PR 1, 3.3.1's gate.** 3.3.0's known limit 8: a seat able to write its
    own agent directory can be treated as the lead for Buzz routing and `task
    show`; gate approvals are unaffected. C5a PR 1 moves the trusted harness
    files out of the agent directory (the C5 entry under Leases, renewal and
@@ -74,23 +74,36 @@ promised by date.
      Bash sandbox, set in each Claude seat's own settings, can hold a Claude
      seat to its worktree as an interim, and what pi offers (it has no
      built-in sandbox). Then the design: signed records for trusted state.
+   - L2, beside it: a tool the guard does not recognise passes unchecked.
+     `classifyGuardCall` classifies shell commands and the Write/Edit family;
+     for an MCP tool it looks only for send words, and for any other tool it
+     returns no action (`internal/cli/hook_guard.go:414-431`). A project's
+     MCP servers can add such tools to a seat. For Claude seats, project MCP
+     is neutralised in 3.3.1 (item 5).
 
-5. **U2's adoption choice, the owner's, after C5a PR 1.** AMQ's token admits
+5. **In 3.3.1: the Claude-seat sandbox interim, with project MCP neutralised.**
+   Each Claude seat's own settings turn on Claude Code's Bash sandbox, so
+   its shell writes stay in its worktree and temp dir, with no unsandboxed
+   retry; seat-exec refuses sandbox keys in the worktree's settings; and the
+   seat loads no project MCP servers. pi seats have no such interim (pi has
+   no built-in sandbox); known limit 9's advice stands for them.
+
+6. **U2's adoption choice, the owner's, after C5a PR 1.** AMQ's token admits
    the whole `<session root>/agents` tree (finding 4, under the C5 entry), so
    v0.140.0 with `writable_roots=[]` stays until C5a PR 1 lands and the owner
    chooses. A per-handle form is asked of AMQ's author (the owner's message).
-6. **`remote status` checks the wrong root for the login service.** It calls
+7. **`remote status` checks the wrong root for the login service.** It calls
    `ServiceWarning(…, "")` with an empty root (`internal/cli/remote.go:508`),
    so `amq-remote service status` reports on amq-remote's default root, not on
    the share root the relay runs. The warning can name a root nothing uses.
-7. **The live phone attach runs on a rehearsal fleet file.** Its `--fleet-file`
+8. **The live phone attach runs on a rehearsal fleet file.** Its `--fleet-file`
    is a scratch fleet from the 2026-11 rehearsals, which drives presence (the
    operator row reads stale) and lead routing. Gate routing is unaffected: the
    attach's own `--project`/`--session` store is its main store. A proper live
    fleet file is the owner's setup choice.
-8. **One `/answer` test item:** a question row that is only blank, and a
+9. **One `/answer` test item:** a question row that is only blank, and a
    fixture with two same-label gates in reversed order (Codex's P2 on #1026).
-9. **Launch door folding: six limits of the launch family's static guard**
+10. **Launch door folding: six limits of the launch family's static guard**
    (S2-3, #1022). None of them is caught:
    - a code computed by a call no check folds;
    - an expression of constants only;
@@ -103,6 +116,24 @@ promised by date.
    - the stale-caller check runs per door group, not per function;
    - a nonconstant concatenation inline at a door, e.g.
      `firstNonEmpty(ev.Stage, "new_"+ev.Handle)` (Codex on #1022).
+
+11. **The `internal/cli` tests' environment.** The package's `TestMain`
+    clears a fixed list of AMQ variables (`AM_ROOT`, `AM_BASE_ROOT`,
+    `AM_SESSION`, `AM_ME`, `AMQ_GLOBAL_ROOT`;
+    `internal/cli/testmain_test.go:53-54`), so a run inside a seat or a shell
+    with other `AM_*` or `AMQ_SQUAD_*` variables set is not hermetic. Clear
+    every `AM_*` and `AMQ_SQUAD_*` variable by prefix, in `TestMain` or the
+    shared fixture.
+12. **L3: refuse an AMQ base root under a temp dir.** A session root under
+    `$TMPDIR` or `/tmp` sits where every seat sandbox allows writes (Codex's
+    workspace-write and Claude Code's sandbox both admit the temp dir), so
+    a seat could write it. Refuse such a base root where it is resolved.
+13. **L4: cursor-agent and grok seats are unconfined.** They run with
+    neither the guard nor a sandbox: their launch carries only model and
+    effort arguments (`internal/seatlaunch/compile.go:386-397`), and the guard
+    runs only as a Claude Code hook or a pi extension; Codex seats rely on
+    Codex's OS sandbox (their hooks are activity hooks,
+    `internal/seatexec/codexhook.go:46-63`). Known limit 9 names them.
 
 ## 3.2.x
 
