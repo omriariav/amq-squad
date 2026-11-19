@@ -34,12 +34,15 @@ func (e StoreEscalator) Raise(spec gatestore.Spec) (gatestore.Record, error) {
 	if spec.Squad == "" {
 		spec.Squad = e.Squad
 	}
-	if spec.Squad == "" {
-		spec.Squad = e.Store.Squad() // as 4-5's Store.Raise fills it
-	}
 	now := time.Now()
 	if e.Now != nil {
 		now = e.Now()
+	}
+	// as 4-5's Store.Raise fills it: the spec checked, then taken once the
+	// root exists (3.3.x item 1), never the path-only form of a missing root
+	spec, err := e.Store.StampSquad(spec, now, e.Identity)
+	if err != nil {
+		return gatestore.Record{}, err
 	}
 	if e.Send != nil {
 		rec, _, err := e.Store.Raise(spec, e.Identity, now, e.Send)
